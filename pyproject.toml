@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wm-states"
+version = "0.1.0"
+description = "Working memory states analysis scripts."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "joblib",
+  "llvmlite==0.44.*",
+  "matplotlib",
+  "numba==0.61.*",
+  "numpy",
+  "pandas",
+  "scikit-learn",
+  "scipy",
+  "seaborn",
+  "tqdm",
+  "tyro",
+]
+
+[tool.setuptools]
+packages = []
