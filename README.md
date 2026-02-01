@@ -26,11 +26,21 @@ Download the dataset from `https://datadryad.org/dataset/doi:10.5061/dryad.kkwh7
 ## Run scripts
 
 ```bash
+## Leave-one-out (decoding)
 # You may want to keep only 210921.mat in --data-dir for testing.
-python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001 --trial-selection-step-size 10 --n-jobs 8
+python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001 --trial-selection-step-size 10 --n-jobs-partition 8
 
 # You may want to compute 5 shuffles for testing.
 python scripts/decoding_confidence.py --data-dir data/nature --cache-dir cache/run_001 --n-decode-shuffle 500 --n-jobs 8
 
 python scripts/on_off_states.py --cache-dir cache/run_001 --off-duration-xmax 400
+
+## Leave-one-out (cell selection & decoding)
+# You may want to keep only 210921.mat in --data-dir for testing.
+python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001_loo --trial-selection-step-size 10 --n-jobs-partition 8 --loo-cell-selection
+
+# You may want to compute 5 shuffles for testing.
+python scripts/decoding_confidence.py --data-dir data/nature --cache-dir cache/run_001_loo --n-decode-shuffle 500 --n-jobs 8 --loo-cell-selection
+
+python scripts/on_off_states.py --cache-dir cache/run_001_loo --off-duration-xmax 400
 ```

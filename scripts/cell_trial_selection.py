@@ -1,4 +1,5 @@
 import builtins
+import json
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,6 +104,7 @@ def check_temporal_stability_preferred_trials(
     trial_start: int,
     trial_end: int,
     config: 'Config',
+    trial_holdout: int | None = None,
 ):
     """
     Correlation-based temporal stability check (stage 3) on trials with each cell's preferred cue.
@@ -123,10 +125,12 @@ def check_temporal_stability_preferred_trials(
     trial_boo_window[trial_start:trial_end] = True
 
     # precompute preferred-cue trial indices relative to the window start
-    cue_trials = {
-        cue: np.nonzero((cue_labels == cue) & trial_boo_window)[0] - trial_start
-        for cue in np.unique(preferred_cues)
-    }
+    cue_trials = {}
+    for cue in np.unique(preferred_cues):
+        idx = np.nonzero((cue_labels == cue) & trial_boo_window)[0]
+        if trial_holdout is not None:
+            idx = idx[idx != trial_holdout]
+        cue_trials[cue] = idx - trial_start
 
     # test-period firing rate for every trial (including incorrect) and selected cell
     spikes_window = spikes[trial_start:trial_end][:, :, active_cell_idx]
@@ -185,7 +189,8 @@ class Config:
     All time values are in milliseconds relative to cue onset; directory paths are
     resolved relative to the project root.
     """
-    n_jobs: int = 8 # Parallel CPU workers for non-numba steps
+    n_jobs_session: int = 1 # Parallel CPU workers across sessions
+    n_jobs_partition: int = 8 # Parallel CPU workers across partitions within a session
     seed: int = 42  # Random seed for any stochastic routines
 
     data_dir: Path = Path('data/nature') # Folder with {session}.mat files containing spks/isCorr/cueAngIdx/tc
@@ -193,6 +198,9 @@ class Config:
     log_messages: bool = True # Capture print output per session and persist to a log file
     console_messages: bool = False # Whether to also print per-session messages to the console
     log_filename: str = 'cell_trial_selection.log' # Log file name written to cache_dir when log_messages=True
+
+    loo_cell_selection: bool = False # Enable leave-one-out cell selection variants
+    loo_cue_labels: Path = Path('configs/loo_cue_labels.json') # JSON mapping sessions to candidate cue labels
 
     t_plot_start: int = -200 # PSTH start bin (inclusive) used for plotting
     t_plot_end: int = 1400 # PSTH final bin start (exclusive of window width)
@@ -223,8 +231,32 @@ class Config:
     trial_selection_window_size: int = 320 # Size of sliding trial window when subsampling
     trial_selection_step_size: int = 5 # Step size between consecutive trial windows
 
-def process_session(data_file: Path, config: Config):
+def load_loo_cue_labels(path: Path) -> dict[str, set[int]]:
+    """Return a mapping from session string -> set of candidate cue labels."""
+    mapping: dict[str, set[int]] = {}
+    if not path.exists():
+        return mapping
+    with open(path, 'r') as f:
+        data = json.load(f)
+    for item in data:
+        session = item.get('session')
+        cues = item.get('cue_labels', [])
+        if session is None:
+            continue
+        mapping[str(session)] = set(int(c) for c in cues)
+    return mapping
+
+def process_session(
+    data_file: Path,
+    config: Config,
+    loo_cue_map: dict[str, set[int]] | None = None,
+    n_jobs_partition: int = 1,
+):
     session = data_file.stem
+    session_loo_cues: set[int] = set()
+    if config.loo_cell_selection and loo_cue_map is not None:
+        session_loo_cues = loo_cue_map.get(session, set())
+    use_loo = config.loo_cell_selection and len(session_loo_cues) > 0
     log_lines = [] if config.log_messages else None
     builtin_print = builtins.print
     if log_lines is not None or config.console_messages:
@@ -274,28 +306,62 @@ def process_session(data_file: Path, config: Config):
     dt = t[1] - t[0]  # ms
     print(f'  Timestamps (ms): start {t[0]}, end {t[-1]}, step {dt}')
 
+    tasks: list[tuple[int, int, int | None]] = []
     for trial_start in range(0, num_trials - config.trial_selection_window_size + 1, config.trial_selection_step_size):
         trial_end = trial_start + config.trial_selection_window_size
-        print(f'  Trial window: {trial_start} to {trial_end} (size: {config.trial_selection_window_size})')
+        # baseline partition
+        tasks.append((trial_start, trial_end, None))
+        if use_loo:
+            trial_boo_window = np.zeros(num_trials, dtype=np.bool_)
+            trial_boo_window[trial_start:trial_end] = True
+            candidates = np.nonzero(
+                trial_boo_window
+                & trial_boo_correct
+                & np.isin(cue_labels, np.asarray(list(session_loo_cues), dtype=np.int64))
+            )[0]
+            for trial_holdout in candidates:
+                tasks.append((trial_start, trial_end, int(trial_holdout)))
+
+    def run_partition(trial_start: int, trial_end: int, trial_holdout: int | None):
+        label = 'baseline' if trial_holdout is None else f'LOO trial {trial_holdout}'
+        partition_logs = [] if log_lines is not None else None
+
+        def partition_print(*args, **kwargs):
+            sep = kwargs.pop('sep', ' ')
+            end = kwargs.pop('end', '\n')
+            message = sep.join(str(a) for a in args) + end
+            if partition_logs is not None:
+                partition_logs.append(message)
+            if config.console_messages:
+                builtin_print(*args, sep=sep, end=end, **kwargs)
+
+        partition_print(f'  Trial window: {trial_start} to {trial_end} (size: {config.trial_selection_window_size}) [{label}]')
 
         # boolean array for selected trials in the current window
         trial_boo_window = np.zeros(num_trials, dtype=np.bool_)
         trial_boo_window[trial_start:trial_end] = True
 
-        # combine with correct trials
+        # combine with correct trials and drop holdout trial if requested
         trial_boo_selected = trial_boo_correct & trial_boo_window
+        if trial_holdout is not None and 0 <= trial_holdout < num_trials:
+            trial_boo_selected[trial_holdout] = False
         num_trials_selected = np.sum(trial_boo_selected)
-        print(f'    Correct trials in window: {num_trials_selected}')
+        if num_trials_selected == 0:
+            partition_print(f'    Skipping {label}: no correct trials after holdout')
+            return None, partition_logs, trial_start
 
         cue_labels_selected = cue_labels[trial_boo_selected]
+        if cue_labels_selected.size == 0:
+            partition_print(f'    Skipping {label}: no cue labels after selection')
+            return None, partition_logs, trial_start
         labels_set_sel, labels_counts_sel = np.unique(cue_labels_selected, return_counts=True)
-        print(f'    Cue labels distribution w/ percent (selected trials):')
+        partition_print(f'    {label} - correct trials: {num_trials_selected}')
+        partition_print(f'    {label} - cue labels distribution w/ percent (selected trials):')
         for lbl, cnt in zip(labels_set_sel, labels_counts_sel):
-            print(f'      Label {lbl}: {cnt} trials ({cnt / num_trials_selected * 100:.2f}%)')
+            partition_print(f'      Label {lbl}: {cnt} trials ({cnt / num_trials_selected * 100:.2f}%)')
         
         trial_filtered_spikes = spikes[trial_boo_selected]
-        print(f'    Spike data shape (trials, time, cells)')
-        print(f'    Spike data shape (selected trials): {trial_filtered_spikes.shape}')
+        partition_print(f'    {label} - spike data shape (selected trials): {trial_filtered_spikes.shape}')
 
         # select cells based on firing rate during test period (selected trials)
         t_test_mask = (t >= config.t_test_start) & (t < config.t_test_end)
@@ -347,7 +413,7 @@ def process_session(data_file: Path, config: Config):
                 sliding_ratio_stage2[active_idx_stage2] = sliding_ratio
                 keep_stage2 = (sliding_ratio > config.var_ratio_threshold_sliding_over_all) & ~np.isnan(sliding_ratio)
                 cell_boo_selected[active_idx_stage2] = keep_stage2 # update selected cells after stage 2
-            print(f'    Cells remaining after temporal dependency check: {np.sum(cell_boo_selected)}')
+            partition_print(f'    {label} - cells remaining after temporal dependency check: {np.sum(cell_boo_selected)}')
         
         # select cells based on PEV during test period (selected cells and trials)
         if np.any(cell_boo_selected):
@@ -379,7 +445,7 @@ def process_session(data_file: Path, config: Config):
             pev_mat = pev_mat[keep_pev]
             pref_mat = pref_mat[keep_pev]
             cell_boo_selected[active_idx] = keep_pev # update selected cells after significant pev check
-            print(f'    Cells remaining after significant PEV check: {np.sum(cell_boo_selected)}')
+            partition_print(f'    {label} - cells remaining after significant PEV check: {np.sum(cell_boo_selected)}')
 
         # group cells by preferred cue location
         if np.any(cell_boo_selected):
@@ -404,6 +470,7 @@ def process_session(data_file: Path, config: Config):
                     trial_start,
                     trial_end,
                     config,
+                    trial_holdout=trial_holdout,
                 )
                 if not np.all(keep_stage3):
                     fr_mat = fr_mat[keep_stage3]
@@ -416,22 +483,22 @@ def process_session(data_file: Path, config: Config):
                     intercepts_stage3 = intercepts_stage3[keep_stage3]
                     r_stage3 = r_stage3[keep_stage3]
                     cell_boo_selected[active_idx] = keep_stage3
-                print(f'    Cells remaining after temporal stability check (stage 3): {np.sum(cell_boo_selected)}')
+                partition_print(f'    {label} - cells remaining after temporal stability check (stage 3): {np.sum(cell_boo_selected)}')
 
             group_boo = np.asarray([mean_pref_test == l for l in labels_set])
-            print(f'    group_boo.shape (label, cell): {group_boo.shape}')
+            partition_print(f'    {label} - group_boo.shape (label, cell): {group_boo.shape}')
             # count number of cells selective to each cue location
             num_cells_per_group = np.sum(group_boo, axis=1)
             # total PEV per group
             total_pev_per_group = np.asarray([mean_pev_test[group_boo[i]].sum() for i in range(len(labels_set))])
 
-            print(f'    Number of cells per group (preferred cue location):')
+            partition_print(f'    {label} - number of cells per group (preferred cue location):')
             for i, l in enumerate(labels_set):
-                print(f'      Label {l}: {num_cells_per_group[i]} cells, Total PEV: {total_pev_per_group[i]:.2f}')
+                partition_print(f'      Label {l}: {num_cells_per_group[i]} cells, Total PEV: {total_pev_per_group[i]:.2f}')
 
             if np.any(num_cells_per_group >= config.min_cell_per_group):
-                print(f'    Found a good session window from {session} with at least {config.min_cell_per_group} cells in one group.')
-                print(f'    The session window is {trial_start} to {trial_end} (size: {config.trial_selection_window_size})')
+                partition_print(f'    {label} - found a good session window from {session} with at least {config.min_cell_per_group} cells in one group.')
+                partition_print(f'    {label} - session window is {trial_start} to {trial_end} (size: {config.trial_selection_window_size})')
 
             cell_idx_selected = np.nonzero(cell_boo_selected)[0]
             trial_idx_selected = np.nonzero(trial_boo_selected)[0]
@@ -457,6 +524,7 @@ def process_session(data_file: Path, config: Config):
                 'session': session,
                 'trial_start': trial_start,
                 'trial_end': trial_end,
+                'trial_holdout': trial_holdout,
                 'num_trials_selected': num_trials_selected,
                 'num_cells_selected': np.sum(cell_boo_selected),
                 'cell_idx_selected': cell_idx_selected,
@@ -469,7 +537,27 @@ def process_session(data_file: Path, config: Config):
                 'max_total_pev_per_group': np.max(total_pev_per_group),
                 'cell_properties': cell_properties,
             }
-            outs.append(out)
+            return out, partition_logs, trial_start
+        return None, partition_logs, trial_start
+
+    if n_jobs_partition > 1:
+        partition_results = Parallel(n_jobs=n_jobs_partition, verbose=5)(
+            delayed(run_partition)(ts, te, th) for ts, te, th in tasks
+        )
+    else:
+        partition_results = [run_partition(ts, te, th) for ts, te, th in tasks]
+
+    partition_log_rows = []
+    for res_out, res_logs, res_trial_start in partition_results:
+        if res_out is not None:
+            outs.append(res_out)
+        if res_logs is not None:
+            partition_log_rows.append((res_trial_start, res_logs))
+
+    if log_lines is not None and partition_log_rows:
+        partition_log_rows.sort(key=lambda x: x[0])
+        for _, logs in partition_log_rows:
+            log_lines.extend(logs)
 
     return session, outs, log_lines
 
@@ -478,8 +566,21 @@ def main(config: Config):
     cache_dir = config.cache_dir
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    session_results = Parallel(n_jobs=config.n_jobs, verbose=10)(
-        delayed(process_session)(data_file, config)
+    # enforce single-level parallelism; prefer partition-level if both are requested
+    jobs_session = config.n_jobs_session
+    jobs_partition = config.n_jobs_partition
+    if jobs_session > 1 and jobs_partition > 1:
+        jobs_session = 1
+    elif jobs_session > 1:
+        jobs_partition = 1
+
+    loo_cue_map: dict[str, set[int]] | None = None
+    if config.loo_cell_selection:
+        loo_cue_map = load_loo_cue_labels(config.loo_cue_labels)
+        print(f'Loaded LOO cue labels for {len(loo_cue_map)} sessions from {config.loo_cue_labels}')
+
+    session_results = Parallel(n_jobs=jobs_session, verbose=10)(
+        delayed(process_session)(data_file, config, loo_cue_map, jobs_partition)
         for data_file in data_files
     )
     outs = []
