@@ -1,0 +1,30 @@
+{
+  "figures": [
+    {
+      "session": "210921",
+      "trial_start": 0,
+      "trial_end": 320,
+      "cells": [4, 10, 12]
+    },
+    {
+      "session": "210921",
+      "trial_start": 0,
+      "trial_end": 320,
+      "trial_holdout": 15,
+      "cells": [4]
+    },
+    {
+      "session": "210921",
+      "trial_start": 0,
+      "trial_end": 320,
+      "cell_start": 120,
+      "cell_end": 140
+    },
+    {
+      "session": "210921",
+      "trial_start": 0,
+      "trial_end": 320,
+      "cell_start": 0
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import json
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -10,7 +11,7 @@ import tyro
 from joblib import Parallel, delayed
 from numba import njit
 from scipy.io import loadmat
-from scipy.stats import circmean, linregress
+from scipy.stats import circmean, linregress, spearmanr
 
 
 @njit(cache=True)
@@ -231,6 +232,9 @@ class Config:
     trial_selection_window_size: int = 320 # Size of sliding trial window when subsampling
     trial_selection_step_size: int = 5 # Step size between consecutive trial windows
 
+    save_extended_diagnostics: bool = False # Save additional diagnostic measures and figures
+    diagnostics_figure_config: Path | None = None # Optional JSON config listing which per-cell diagnostic figures to save
+
 def load_loo_cue_labels(path: Path) -> dict[str, set[int]]:
     """Return a mapping from session string -> set of candidate cue labels."""
     mapping: dict[str, set[int]] = {}
@@ -246,11 +250,201 @@ def load_loo_cue_labels(path: Path) -> dict[str, set[int]]:
         mapping[str(session)] = set(int(c) for c in cues)
     return mapping
 
+def load_diagnostics_figure_targets(
+    path: Path | None,
+) -> tuple[dict[tuple[str, int, int, int | None], dict[str, Any]], list[str]]:
+    """
+    Load figure targets from JSON.
+
+    Schema:
+    {
+      "figures": [
+        {"session": "210921", "trial_start": 0, "trial_end": 320, "cells": [4, 10]},
+        {"session": "210921", "trial_start": 0, "trial_end": 320, "trial_holdout": 15, "cells": [4]},
+        {"session": "210921", "trial_start": 0, "trial_end": 320, "cell_start": 20, "cell_end": 40}
+      ]
+    }
+    """
+    targets: dict[tuple[str, int, int, int | None], dict[str, Any]] = {}
+    warnings: list[str] = []
+    if path is None:
+        return targets, warnings
+    if not path.exists():
+        warnings.append(f'Diagnostics figure config not found at {path}; no figures will be saved.')
+        return targets, warnings
+    with open(path, 'r') as f:
+        payload = json.load(f)
+    entries = payload.get('figures', []) if isinstance(payload, dict) else payload
+    if not isinstance(entries, list):
+        warnings.append(f'Diagnostics figure config at {path} must contain a list under "figures".')
+        return targets, warnings
+    for idx, item in enumerate(entries):
+        if not isinstance(item, dict):
+            warnings.append(f'Ignoring figure entry #{idx}: entry must be an object.')
+            continue
+        session = item.get('session')
+        trial_start = item.get('trial_start')
+        trial_end = item.get('trial_end')
+        cells = item.get('cells')
+        cell_start = item.get('cell_start')
+        cell_end = item.get('cell_end')
+        if session is None or trial_start is None or trial_end is None:
+            warnings.append(f'Ignoring figure entry #{idx}: requires session, trial_start, and trial_end.')
+            continue
+        if cells is not None and not isinstance(cells, list):
+            warnings.append(f'Ignoring figure entry #{idx}: cells must be a list when provided.')
+            continue
+        if cell_start is None and cell_end is None and cells is None:
+            warnings.append(
+                f'Ignoring figure entry #{idx}: provide at least one of cells, cell_start, or cell_end.'
+            )
+            continue
+        try:
+            key = (
+                str(session),
+                int(trial_start),
+                int(trial_end),
+                int(item['trial_holdout']) if 'trial_holdout' in item and item['trial_holdout'] is not None else None,
+            )
+            cell_set = set() if cells is None else {int(c) for c in cells}
+            range_start = None if cell_start is None else int(cell_start)
+            range_end = None if cell_end is None else int(cell_end)
+        except (TypeError, ValueError):
+            warnings.append(f'Ignoring figure entry #{idx}: failed to parse integer fields.')
+            continue
+
+        if (
+            range_start is not None
+            and range_end is not None
+            and range_start > range_end
+        ):
+            warnings.append(
+                f'Ignoring figure entry #{idx}: cell_start ({range_start}) > cell_end ({range_end}).'
+            )
+            continue
+
+        entry = targets.setdefault(key, {'cells': set(), 'ranges': []})
+        entry['cells'].update(cell_set)
+        if range_start is not None or range_end is not None:
+            entry['ranges'].append((range_start, range_end))
+    return targets, warnings
+
+def compute_extended_partition_metrics(
+    spikes_window: np.ndarray,
+    baseline_mask: np.ndarray,
+    delay_mask: np.ndarray,
+    presence_mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Return per-cell metrics and per-trial counts used by optional diagnostics and plotting.
+    """
+    num_trials_partition = spikes_window.shape[0]
+    num_cells_total = spikes_window.shape[2]
+
+    presence_ratio = np.full(num_cells_total, np.nan, dtype=np.float64)
+    r_s_baseline = np.full(num_cells_total, np.nan, dtype=np.float64)
+    cv_residual_baseline = np.full(num_cells_total, np.nan, dtype=np.float64)
+    baseline_counts = np.full((num_trials_partition, num_cells_total), np.nan, dtype=np.float64)
+    delay_counts = np.full((num_trials_partition, num_cells_total), np.nan, dtype=np.float64)
+
+    if num_trials_partition == 0:
+        return presence_ratio, r_s_baseline, cv_residual_baseline, baseline_counts, delay_counts
+
+    if np.any(presence_mask):
+        counts = np.sum(spikes_window[:, presence_mask, :], axis=1)
+        presence_ratio = np.mean(counts > 0, axis=0).astype(np.float64)
+
+    if np.any(baseline_mask):
+        baseline_counts = np.sum(spikes_window[:, baseline_mask, :], axis=1).astype(np.float64)
+        relative_trial_idx = np.arange(num_trials_partition, dtype=np.int64)
+        if num_trials_partition >= 2:
+            for i_cell in range(num_cells_total):
+                x = baseline_counts[:, i_cell]
+                if np.all(x == x[0]):
+                    continue
+                r_s_baseline[i_cell] = spearmanr(relative_trial_idx, x).statistic
+
+            mean_baseline = np.mean(baseline_counts, axis=0)
+            std_baseline = np.std(baseline_counts, axis=0, ddof=1)
+            cv_baseline = np.full(num_cells_total, np.nan, dtype=np.float64)
+            valid_mean = mean_baseline > 0
+            cv_baseline[valid_mean] = std_baseline[valid_mean] / mean_baseline[valid_mean]
+            valid_fit = np.isfinite(cv_baseline) & (cv_baseline > 0) & np.isfinite(mean_baseline) & (mean_baseline > 0)
+            if np.sum(valid_fit) >= 2:
+                x_fit = np.log10(mean_baseline[valid_fit])
+                y_fit = np.log10(cv_baseline[valid_fit])
+                if np.unique(x_fit).size >= 2:
+                    fit = linregress(x_fit, y_fit)
+                    y_hat = fit.intercept + fit.slope * x_fit
+                    residual = y_fit - y_hat
+                    residual_mean = residual.mean()
+                    residual_std = residual.std()
+                    if np.isfinite(residual_std) and residual_std > 0:
+                        cv_residual_baseline[valid_fit] = (residual - residual_mean) / residual_std
+
+    if np.any(delay_mask):
+        delay_counts = np.sum(spikes_window[:, delay_mask, :], axis=1).astype(np.float64)
+
+    return presence_ratio, r_s_baseline, cv_residual_baseline, baseline_counts, delay_counts
+
+def save_diagnostic_cell_figure(
+    figure_file: Path,
+    session: str,
+    trial_start: int,
+    trial_end: int,
+    trial_holdout: int | None,
+    cell_idx: int,
+    reject_reason: str,
+    presence_ratio: float,
+    r_s_baseline: float,
+    cv_residual_baseline: float,
+    baseline_counts: np.ndarray,
+    delay_counts: np.ndarray,
+):
+    """
+    Save one per-cell diagnostics figure with vertically stacked baseline/delay spike-count traces.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    holdout_label = 'holdout_none' if trial_holdout is None else f'holdout_{trial_holdout}'
+    x = np.arange(baseline_counts.shape[0], dtype=np.int64)
+    def fmt(v: float) -> str:
+        return 'NaN' if np.isnan(v) else f'{v:.3f}'
+
+    def flagged_value(v: float, is_flagged: bool) -> str:
+        if np.isnan(v):
+            return 'NaN'
+        prefix = '*' if is_flagged else ''
+        return f'{prefix}{v:.3f}'
+
+    fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+    ax_baseline, ax_delay = axes
+    ax_baseline.plot(x, baseline_counts, linewidth=1.5)
+    ax_baseline.set_ylabel('Baseline spike count')
+    ax_baseline.set_title(
+        f'Session {session} | [{trial_start}, {trial_end}) | {holdout_label} | cell {cell_idx}\n'
+        f'reject_reason={reject_reason}\n'
+        f'presence_ratio={flagged_value(presence_ratio, presence_ratio < 0.9)}, '
+        f'r_s_baseline={flagged_value(r_s_baseline, np.abs(r_s_baseline) > 0.3)}, '
+        f'cv_residual_baseline={flagged_value(cv_residual_baseline, cv_residual_baseline > 2.0)}'
+    )
+
+    ax_delay.plot(x, delay_counts, linewidth=1.5)
+    ax_delay.set_ylabel('Delay spike count')
+    ax_delay.set_xlabel('Relative trial index')
+    fig.tight_layout()
+    fig.savefig(figure_file, dpi=160)
+    plt.close(fig)
+
 def process_session(
     data_file: Path,
     config: Config,
     loo_cue_map: dict[str, set[int]] | None = None,
     n_jobs_partition: int = 1,
+    figure_targets: dict[tuple[str, int, int, int | None], dict[str, Any]] | None = None,
+    figures_dir: Path | None = None,
 ):
     session = data_file.stem
     session_loo_cues: set[int] = set()
@@ -274,6 +468,8 @@ def process_session(
     print = session_print
     print(f'Processing session: {session}')
     outs = []
+    diagnostics_rows: list[dict[str, Any]] = []
+    matched_figure_keys: set[tuple[str, int, int, int | None]] = set()
 
     # load data
     data = loadmat(data_file)
@@ -283,7 +479,7 @@ def process_session(
     num_trials = len(trial_boo_correct)
     if num_trials < config.trial_selection_window_size:
         print(f'  Skipping session {session} due to insufficient trials ({num_trials} < {config.trial_selection_window_size})')
-        return session, outs, log_lines
+        return session, outs, log_lines, diagnostics_rows, matched_figure_keys
     num_trials_correct = np.sum(trial_boo_correct)
     print(f'  Total trials: {num_trials}, Correct trials: {num_trials_correct}')
 
@@ -305,6 +501,19 @@ def process_session(
     t = np.asarray(data['tc']).flatten()
     dt = t[1] - t[0]  # ms
     print(f'  Timestamps (ms): start {t[0]}, end {t[-1]}, step {dt}')
+    num_cells_total = spikes.shape[2]
+
+    # fixed diagnostics windows (ms)
+    diag_presence_mask = (t >= -400) & (t < 1400)
+    diag_baseline_mask = (t >= -400) & (t < 0)
+    diag_delay_mask = (t >= 500) & (t < 1400)
+    if config.save_extended_diagnostics:
+        if not np.any(diag_presence_mask):
+            print('  Warning: diagnostics presence window (-400 to 1400 ms) has zero bins; presence_ratio will be NaN.')
+        if not np.any(diag_baseline_mask):
+            print('  Warning: diagnostics baseline window (-400 to 0 ms) has zero bins; r_s_baseline/cv_residual_baseline will be NaN.')
+        if not np.any(diag_delay_mask):
+            print('  Warning: diagnostics delay window (500 to 1400 ms) has zero bins; delay line plots will be NaN.')
 
     tasks: list[tuple[int, int, int | None]] = []
     for trial_start in range(0, num_trials - config.trial_selection_window_size + 1, config.trial_selection_step_size):
@@ -337,6 +546,121 @@ def process_session(
 
         partition_print(f'  Trial window: {trial_start} to {trial_end} (size: {config.trial_selection_window_size}) [{label}]')
 
+        rejection_reason = np.full(num_cells_total, 'pass', dtype=object)
+
+        # diagnostics always use all trials in the partition window (correct + incorrect, and keep held-out trial)
+        if config.save_extended_diagnostics:
+            spikes_window_all = spikes[trial_start:trial_end]
+            presence_ratio, r_s_baseline, cv_residual_baseline, baseline_counts_diag, delay_counts_diag = compute_extended_partition_metrics(
+                spikes_window_all,
+                baseline_mask=diag_baseline_mask,
+                delay_mask=diag_delay_mask,
+                presence_mask=diag_presence_mask,
+            )
+        else:
+            presence_ratio = np.full(num_cells_total, np.nan, dtype=np.float64)
+            r_s_baseline = np.full(num_cells_total, np.nan, dtype=np.float64)
+            cv_residual_baseline = np.full(num_cells_total, np.nan, dtype=np.float64)
+            baseline_counts_diag = np.full((trial_end - trial_start, num_cells_total), np.nan, dtype=np.float64)
+            delay_counts_diag = np.full((trial_end - trial_start, num_cells_total), np.nan, dtype=np.float64)
+
+        def finalize_partition(out: dict[str, Any] | None):
+            matched_key: tuple[str, int, int, int | None] | None = None
+            if (
+                config.save_extended_diagnostics
+                and figure_targets is not None
+                and figures_dir is not None
+            ):
+                figure_key = (session, trial_start, trial_end, trial_holdout)
+                target_spec = figure_targets.get(figure_key)
+                if target_spec is not None:
+                    matched_key = figure_key
+                    figures_dir.mkdir(parents=True, exist_ok=True)
+                    holdout_tag = 'holdout_none' if trial_holdout is None else f'holdout_{trial_holdout}'
+
+                    requested_cell_set = set(int(c) for c in target_spec.get('cells', set()))
+                    for range_start, range_end in target_spec.get('ranges', []):
+                        start = 0 if range_start is None else int(range_start)
+                        end = num_cells_total - 1 if range_end is None else int(range_end)
+                        if start > end:
+                            partition_print(
+                                f'    Warning: skipping invalid cell range [{start}, {end}] for '
+                                f'session={session}, window=[{trial_start}, {trial_end}), trial_holdout={trial_holdout}.'
+                            )
+                            continue
+                        if end < 0 or start > (num_cells_total - 1):
+                            partition_print(
+                                f'    Warning: skipping out-of-bounds cell range [{start}, {end}] for '
+                                f'session={session}, window=[{trial_start}, {trial_end}), trial_holdout={trial_holdout}.'
+                            )
+                            continue
+                        clipped_start = max(start, 0)
+                        clipped_end = min(end, num_cells_total - 1)
+                        if clipped_start != start or clipped_end != end:
+                            partition_print(
+                                f'    Warning: clipped cell range [{start}, {end}] to [{clipped_start}, {clipped_end}] for '
+                                f'session={session}, window=[{trial_start}, {trial_end}), trial_holdout={trial_holdout}.'
+                            )
+                        requested_cell_set.update(range(clipped_start, clipped_end + 1))
+
+                    requested_cells = sorted(requested_cell_set)
+                    if len(requested_cells) == 0:
+                        partition_print(
+                            f'    Warning: no valid cells found in diagnostics figure target for session={session}, '
+                            f'window=[{trial_start}, {trial_end}), trial_holdout={trial_holdout}.'
+                        )
+
+                    for cell_idx in requested_cells:
+                        if cell_idx < 0 or cell_idx >= num_cells_total:
+                            partition_print(
+                                f'    Warning: skipping figure for invalid cell index {cell_idx} in session={session}, '
+                                f'window=[{trial_start}, {trial_end}), trial_holdout={trial_holdout}.'
+                            )
+                            continue
+                        figure_file = figures_dir / (
+                            f'session_{session}__trial_{trial_start}_{trial_end}__{holdout_tag}__cell_{cell_idx}.png'
+                        )
+                        try:
+                            save_diagnostic_cell_figure(
+                                figure_file=figure_file,
+                                session=session,
+                                trial_start=trial_start,
+                                trial_end=trial_end,
+                                trial_holdout=trial_holdout,
+                                cell_idx=cell_idx,
+                                reject_reason=str(rejection_reason[cell_idx]),
+                                presence_ratio=float(presence_ratio[cell_idx]),
+                                r_s_baseline=float(r_s_baseline[cell_idx]),
+                                cv_residual_baseline=float(cv_residual_baseline[cell_idx]),
+                                baseline_counts=baseline_counts_diag[:, cell_idx],
+                                delay_counts=delay_counts_diag[:, cell_idx],
+                            )
+                        except Exception as e:
+                            partition_print(
+                                f'    Warning: failed to save diagnostics figure for session={session}, '
+                                f'window=[{trial_start}, {trial_end}), trial_holdout={trial_holdout}, '
+                                f'cell={cell_idx}: {type(e).__name__}: {e}'
+                            )
+
+            partition_diagnostics_rows: list[dict[str, Any]] = []
+            if config.save_extended_diagnostics:
+                is_rejected = rejection_reason != 'pass'
+                for i_cell in range(num_cells_total):
+                    partition_diagnostics_rows.append({
+                        'session': session,
+                        'trial_start': trial_start,
+                        'trial_end': trial_end,
+                        'trial_holdout': trial_holdout,
+                        'cell_idx': i_cell,
+                        'is_rejected': bool(is_rejected[i_cell]),
+                        'rejection_reason': str(rejection_reason[i_cell]),
+                        'presence_ratio': float(presence_ratio[i_cell]),
+                        'r_s_baseline': float(r_s_baseline[i_cell]),
+                        'cv_residual_baseline': float(cv_residual_baseline[i_cell]),
+                    })
+
+            return out, partition_logs, trial_start, partition_diagnostics_rows, matched_key
+
         # boolean array for selected trials in the current window
         trial_boo_window = np.zeros(num_trials, dtype=np.bool_)
         trial_boo_window[trial_start:trial_end] = True
@@ -348,12 +672,14 @@ def process_session(
         num_trials_selected = np.sum(trial_boo_selected)
         if num_trials_selected == 0:
             partition_print(f'    Skipping {label}: no correct trials after holdout')
-            return None, partition_logs, trial_start
+            rejection_reason[:] = 'fail_no_correct_trials'
+            return finalize_partition(None)
 
         cue_labels_selected = cue_labels[trial_boo_selected]
         if cue_labels_selected.size == 0:
             partition_print(f'    Skipping {label}: no cue labels after selection')
-            return None, partition_logs, trial_start
+            rejection_reason[:] = 'fail_no_correct_trials'
+            return finalize_partition(None)
         labels_set_sel, labels_counts_sel = np.unique(cue_labels_selected, return_counts=True)
         partition_print(f'    {label} - correct trials: {num_trials_selected}')
         partition_print(f'    {label} - cue labels distribution w/ percent (selected trials):')
@@ -371,14 +697,16 @@ def process_session(
         total_time_s = num_trials_selected * np.sum(t_test_mask) * bin_width_s
         mean_firing_rate_hz = total_spike_counts / total_time_s
         cell_boo_selected = mean_firing_rate_hz >= config.min_fr_test
+        fail_min_fr_mask = (~cell_boo_selected) & (rejection_reason == 'pass')
+        rejection_reason[fail_min_fr_mask] = 'fail_min_fr_test'
 
         var_ratio_stage1 = None
         sliding_ratio_stage2 = None
         # select cells based on temporal dependency check (stage 1 and 2)
         if config.temp_dep_detection and num_trials_selected >= config.min_trial_for_temp_check and np.any(cell_boo_selected):
-            num_cells_total = mean_firing_rate_hz.shape[0]
-            var_ratio_stage1 = np.full(num_cells_total, np.nan)
-            sliding_ratio_stage2 = np.full(num_cells_total, np.nan)
+            num_cells_total_stage = mean_firing_rate_hz.shape[0]
+            var_ratio_stage1 = np.full(num_cells_total_stage, np.nan)
+            sliding_ratio_stage2 = np.full(num_cells_total_stage, np.nan)
             # stage 1: delay vs. baseline variance ratio estimated using all selected trials (higher is better)
             baseline_mask = (t >= config.temp_check_baseline_start) & (t < config.temp_check_baseline_end)
             delay_mask = (t >= config.temp_check_delay_start) & (t < config.temp_check_delay_end)
@@ -395,6 +723,11 @@ def process_session(
                 var_ratio = delay_var / baseline_var
             var_ratio_stage1[active_idx] = var_ratio
             keep_stage1 = (var_ratio > config.var_ratio_threshold_delay_over_baseline) & ~np.isnan(var_ratio)
+            fail_stage1_idx = active_idx[~keep_stage1]
+            fail_stage1_mask = np.zeros_like(rejection_reason, dtype=np.bool_)
+            fail_stage1_mask[fail_stage1_idx] = True
+            fail_stage1_mask &= (rejection_reason == 'pass')
+            rejection_reason[fail_stage1_mask] = 'fail_temp_dep_stage1'
             cell_boo_selected[active_idx] = keep_stage1 # update selected cells after stage 1
             if np.any(keep_stage1):
                 # stage 2: baseline variance ratio estimated using sliding windows vs. all selected trials (higher is better)
@@ -412,6 +745,11 @@ def process_session(
                     sliding_ratio = sliding_var / baseline_var
                 sliding_ratio_stage2[active_idx_stage2] = sliding_ratio
                 keep_stage2 = (sliding_ratio > config.var_ratio_threshold_sliding_over_all) & ~np.isnan(sliding_ratio)
+                fail_stage2_idx = active_idx_stage2[~keep_stage2]
+                fail_stage2_mask = np.zeros_like(rejection_reason, dtype=np.bool_)
+                fail_stage2_mask[fail_stage2_idx] = True
+                fail_stage2_mask &= (rejection_reason == 'pass')
+                rejection_reason[fail_stage2_mask] = 'fail_temp_dep_stage2'
                 cell_boo_selected[active_idx_stage2] = keep_stage2 # update selected cells after stage 2
             partition_print(f'    {label} - cells remaining after temporal dependency check: {np.sum(cell_boo_selected)}')
         
@@ -441,6 +779,11 @@ def process_session(
             keep_pev = np.asarray([
                 get_periods(pev_mat[i_cell], config.sig_pev_duration / config.t_test_step, config.sig_pev_threshold).shape[0] > 0 
                 for i_cell in range(num_cells_selected)]) # pev consistently higher than sig_pev_threshold for at least sig_pev_duration
+            fail_pev_idx = active_idx[~keep_pev]
+            fail_pev_mask = np.zeros_like(rejection_reason, dtype=np.bool_)
+            fail_pev_mask[fail_pev_idx] = True
+            fail_pev_mask &= (rejection_reason == 'pass')
+            rejection_reason[fail_pev_mask] = 'fail_sig_pev'
             fr_mat = fr_mat[keep_pev]
             pev_mat = pev_mat[keep_pev]
             pref_mat = pref_mat[keep_pev]
@@ -472,6 +815,11 @@ def process_session(
                     config,
                     trial_holdout=trial_holdout,
                 )
+                fail_stage3_idx = active_idx[~keep_stage3]
+                fail_stage3_mask = np.zeros_like(rejection_reason, dtype=np.bool_)
+                fail_stage3_mask[fail_stage3_idx] = True
+                fail_stage3_mask &= (rejection_reason == 'pass')
+                rejection_reason[fail_stage3_mask] = 'fail_temp_dep_stage3'
                 if not np.all(keep_stage3):
                     fr_mat = fr_mat[keep_stage3]
                     pev_mat = pev_mat[keep_stage3]
@@ -537,8 +885,8 @@ def process_session(
                 'max_total_pev_per_group': np.max(total_pev_per_group),
                 'cell_properties': cell_properties,
             }
-            return out, partition_logs, trial_start
-        return None, partition_logs, trial_start
+            return finalize_partition(out)
+        return finalize_partition(None)
 
     if n_jobs_partition > 1:
         partition_results = Parallel(n_jobs=n_jobs_partition, verbose=5)(
@@ -548,9 +896,13 @@ def process_session(
         partition_results = [run_partition(ts, te, th) for ts, te, th in tasks]
 
     partition_log_rows = []
-    for res_out, res_logs, res_trial_start in partition_results:
+    for res_out, res_logs, res_trial_start, partition_diagnostics, matched_key in partition_results:
         if res_out is not None:
             outs.append(res_out)
+        if config.save_extended_diagnostics and len(partition_diagnostics) > 0:
+            diagnostics_rows.extend(partition_diagnostics)
+        if matched_key is not None:
+            matched_figure_keys.add(matched_key)
         if res_logs is not None:
             partition_log_rows.append((res_trial_start, res_logs))
 
@@ -559,12 +911,14 @@ def process_session(
         for _, logs in partition_log_rows:
             log_lines.extend(logs)
 
-    return session, outs, log_lines
+    return session, outs, log_lines, diagnostics_rows, matched_figure_keys
 
 def main(config: Config):
     data_files = sorted(config.data_dir.glob('*.mat'))
     cache_dir = config.cache_dir
     cache_dir.mkdir(parents=True, exist_ok=True)
+    diagnostics_dir = cache_dir / 'diagnostics'
+    figures_dir = diagnostics_dir / 'figures'
 
     # enforce single-level parallelism; prefer partition-level if both are requested
     jobs_session = config.n_jobs_session
@@ -579,16 +933,46 @@ def main(config: Config):
         loo_cue_map = load_loo_cue_labels(config.loo_cue_labels)
         print(f'Loaded LOO cue labels for {len(loo_cue_map)} sessions from {config.loo_cue_labels}')
 
+    figure_targets: dict[tuple[str, int, int, int | None], dict[str, Any]] = {}
+    if config.save_extended_diagnostics:
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        figure_targets, figure_config_warnings = load_diagnostics_figure_targets(config.diagnostics_figure_config)
+        for warning in figure_config_warnings:
+            print(f'Warning: {warning}')
+        if len(figure_targets) > 0:
+            figures_dir.mkdir(parents=True, exist_ok=True)
+            print(
+                f'Loaded diagnostics figure config with {len(figure_targets)} partition target(s) '
+                f'from {config.diagnostics_figure_config}'
+            )
+
     session_results = Parallel(n_jobs=jobs_session, verbose=10)(
-        delayed(process_session)(data_file, config, loo_cue_map, jobs_partition)
+        delayed(process_session)(data_file, config, loo_cue_map, jobs_partition, figure_targets, figures_dir)
         for data_file in data_files
     )
     outs = []
+    diagnostics_rows: list[dict[str, Any]] = []
+    matched_figure_keys_all: set[tuple[str, int, int, int | None]] = set()
     session_logs: list[tuple[str, str]] = []
-    for session, session_outs, log_lines in session_results:
+    for session, session_outs, log_lines, session_diagnostics, session_matched_keys in session_results:
         outs.extend(session_outs)
+        if config.save_extended_diagnostics:
+            diagnostics_rows.extend(session_diagnostics)
+            matched_figure_keys_all.update(session_matched_keys)
         if config.log_messages and log_lines is not None:
             session_logs.append((session, ''.join(log_lines)))
+
+    if config.save_extended_diagnostics and len(figure_targets) > 0:
+        unmatched_figure_keys = set(figure_targets.keys()) - matched_figure_keys_all
+        for key in sorted(
+            unmatched_figure_keys,
+            key=lambda x: (x[0], x[1], x[2], -1 if x[3] is None else x[3]),
+        ):
+            holdout_text = 'baseline' if key[3] is None else f'holdout {key[3]}'
+            print(
+                f'Warning: diagnostics figure target not found; skipping session={key[0]}, '
+                f'window=[{key[1]}, {key[2]}), {holdout_text}.'
+            )
 
     if config.log_messages:
         log_file = cache_dir / config.log_filename
@@ -611,6 +995,28 @@ def main(config: Config):
     csv_file = cache_dir / 'cell_trial_selection.csv'
     df_out.to_csv(csv_file, index=False)
     print(f'Saved cell trial selection results to {csv_file}')
+
+    if config.save_extended_diagnostics:
+        diagnostics_file = diagnostics_dir / 'cell_rejection_diagnostics.csv'
+        diagnostics_columns = [
+            'session',
+            'trial_start',
+            'trial_end',
+            'trial_holdout',
+            'cell_idx',
+            'is_rejected',
+            'rejection_reason',
+            'presence_ratio',
+            'r_s_baseline',
+            'cv_residual_baseline',
+        ]
+        if len(diagnostics_rows) > 0:
+            diagnostics_df = pd.DataFrame(diagnostics_rows)
+            diagnostics_df = diagnostics_df[diagnostics_columns]
+        else:
+            diagnostics_df = pd.DataFrame(columns=diagnostics_columns)
+        diagnostics_df.to_csv(diagnostics_file, index=False)
+        print(f'Saved extended diagnostics to {diagnostics_file}')
 
 
 if __name__ == '__main__':
