@@ -215,11 +215,13 @@ class Config:
 
     min_cell_per_group: int = 12 # Minimum cells per cue location to keep for downstream analyses
     min_fr_test: float = 1.0 # Hz threshold on mean firing rate during the test window
+    min_presence_ratio: float = 0.9 # Fraction of selected-correct trials where a cell must fire at least once in [-400, 1400) ms
     temp_dep_detection: bool = True # Drop cells that show strong temporal dependence
     min_trial_for_temp_check: int = 50 # Require this many trials before running temporal checks
     var_ratio_threshold_delay_over_baseline: float = 1.2 # Delay-vs-baseline variance ratio cutoff (stage 1)
     var_ratio_threshold_sliding_over_all: float = 0.8 # Sliding-window-vs-global baseline variance ratio cutoff (stage 2)
     temp_dep_r_threshold: float = 0.5 # Minimum correlation coefficient to flag temporal dependence
+    temp_dep_r_threshold_baseline: float = 0.5 # |Pearson r| cutoff for baseline-count drift over selected-correct trials (stage 3 baseline)
     sig_pev_threshold: float = 2.5 # Percent explained variance threshold to call a bin selective
     sig_pev_duration: int = 100 # Minimum contiguous duration (ms) a cell must stay selective
     pev_clip_at: float = 0 # Lower bound when clipping PEV values
@@ -546,7 +548,18 @@ def process_session(
 
         partition_print(f'  Trial window: {trial_start} to {trial_end} (size: {config.trial_selection_window_size}) [{label}]')
 
-        rejection_reason = np.full(num_cells_total, 'pass', dtype=object)
+        rejection_reasons: list[list[str]] = [[] for _ in range(num_cells_total)]
+
+        def add_rejection_reason(mask: np.ndarray, reason: str):
+            idx = np.nonzero(mask)[0]
+            for i_cell in idx:
+                rejection_reasons[int(i_cell)].append(reason)
+
+        def get_rejection_reason_array() -> np.ndarray:
+            reasons = np.empty(num_cells_total, dtype=object)
+            for i_cell, reasons_list in enumerate(rejection_reasons):
+                reasons[i_cell] = 'pass' if len(reasons_list) == 0 else '|'.join(reasons_list)
+            return reasons
 
         # diagnostics always use all trials in the partition window (correct + incorrect, and keep held-out trial)
         if config.save_extended_diagnostics:
@@ -565,6 +578,7 @@ def process_session(
             delay_counts_diag = np.full((trial_end - trial_start, num_cells_total), np.nan, dtype=np.float64)
 
         def finalize_partition(out: dict[str, Any] | None):
+            rejection_reason = get_rejection_reason_array()
             matched_key: tuple[str, int, int, int | None] | None = None
             if (
                 config.save_extended_diagnostics
@@ -644,7 +658,7 @@ def process_session(
 
             partition_diagnostics_rows: list[dict[str, Any]] = []
             if config.save_extended_diagnostics:
-                is_rejected = rejection_reason != 'pass'
+                is_rejected = np.asarray([len(r) > 0 for r in rejection_reasons], dtype=np.bool_)
                 for i_cell in range(num_cells_total):
                     partition_diagnostics_rows.append({
                         'session': session,
@@ -672,13 +686,13 @@ def process_session(
         num_trials_selected = np.sum(trial_boo_selected)
         if num_trials_selected == 0:
             partition_print(f'    Skipping {label}: no correct trials after holdout')
-            rejection_reason[:] = 'fail_no_correct_trials'
+            add_rejection_reason(np.ones(num_cells_total, dtype=np.bool_), 'fail_no_correct_trials')
             return finalize_partition(None)
 
         cue_labels_selected = cue_labels[trial_boo_selected]
         if cue_labels_selected.size == 0:
             partition_print(f'    Skipping {label}: no cue labels after selection')
-            rejection_reason[:] = 'fail_no_correct_trials'
+            add_rejection_reason(np.ones(num_cells_total, dtype=np.bool_), 'fail_no_correct_trials')
             return finalize_partition(None)
         labels_set_sel, labels_counts_sel = np.unique(cue_labels_selected, return_counts=True)
         partition_print(f'    {label} - correct trials: {num_trials_selected}')
@@ -689,204 +703,339 @@ def process_session(
         trial_filtered_spikes = spikes[trial_boo_selected]
         partition_print(f'    {label} - spike data shape (selected trials): {trial_filtered_spikes.shape}')
 
-        # select cells based on firing rate during test period (selected trials)
+        # Evaluate all criteria on all cells; final selection keeps cells with zero failures.
+        cell_boo_selected = np.ones(num_cells_total, dtype=np.bool_)
+
+        # criterion 1: minimum firing rate during the test period (selected-correct trials)
         t_test_mask = (t >= config.t_test_start) & (t < config.t_test_end)
         bin_width_s = dt / 1000.0 # convert ms to seconds
-        spikes_test_period = trial_filtered_spikes[:, t_test_mask, :]
-        total_spike_counts = np.sum(spikes_test_period, axis=(0, 1))
-        total_time_s = num_trials_selected * np.sum(t_test_mask) * bin_width_s
-        mean_firing_rate_hz = total_spike_counts / total_time_s
-        cell_boo_selected = mean_firing_rate_hz >= config.min_fr_test
-        fail_min_fr_mask = (~cell_boo_selected) & (rejection_reason == 'pass')
-        rejection_reason[fail_min_fr_mask] = 'fail_min_fr_test'
+        mean_firing_rate_hz = np.full(num_cells_total, np.nan, dtype=np.float64)
+        if np.sum(t_test_mask) == 0 or not np.isfinite(bin_width_s) or bin_width_s <= 0:
+            fail_not_app = np.ones(num_cells_total, dtype=np.bool_)
+            add_rejection_reason(fail_not_app, 'fail_min_fr_test_not_applicable')
+            cell_boo_selected &= ~fail_not_app
+        else:
+            spikes_test_period = trial_filtered_spikes[:, t_test_mask, :]
+            total_spike_counts = np.sum(spikes_test_period, axis=(0, 1))
+            total_time_s = num_trials_selected * np.sum(t_test_mask) * bin_width_s
+            if not np.isfinite(total_time_s) or total_time_s <= 0:
+                fail_not_app = np.ones(num_cells_total, dtype=np.bool_)
+                add_rejection_reason(fail_not_app, 'fail_min_fr_test_not_applicable')
+                cell_boo_selected &= ~fail_not_app
+            else:
+                mean_firing_rate_hz = total_spike_counts / total_time_s
+                finite_fr = np.isfinite(mean_firing_rate_hz)
+                fail_not_app = ~finite_fr
+                fail_min_fr = finite_fr & (mean_firing_rate_hz < config.min_fr_test)
+                add_rejection_reason(fail_not_app, 'fail_min_fr_test_not_applicable')
+                add_rejection_reason(fail_min_fr, 'fail_min_fr_test')
+                cell_boo_selected &= ~(fail_not_app | fail_min_fr)
+        partition_print(f'    {label} - cells remaining after min firing-rate check: {np.sum(cell_boo_selected)}')
+
+        # criterion 2: minimum presence ratio in [-400, 1400) ms (selected-correct trials)
+        presence_ratio_selection = np.full(num_cells_total, np.nan, dtype=np.float64)
+        if not np.any(diag_presence_mask):
+            fail_not_app = np.ones(num_cells_total, dtype=np.bool_)
+            add_rejection_reason(fail_not_app, 'fail_min_presence_ratio_not_applicable')
+            cell_boo_selected &= ~fail_not_app
+        else:
+            presence_counts = np.sum(trial_filtered_spikes[:, diag_presence_mask, :], axis=1)
+            presence_ratio_selection = np.mean(presence_counts > 0, axis=0).astype(np.float64)
+            finite_presence = np.isfinite(presence_ratio_selection)
+            fail_not_app = ~finite_presence
+            fail_min_presence = finite_presence & (presence_ratio_selection < config.min_presence_ratio)
+            add_rejection_reason(fail_not_app, 'fail_min_presence_ratio_not_applicable')
+            add_rejection_reason(fail_min_presence, 'fail_min_presence_ratio')
+            cell_boo_selected &= ~(fail_not_app | fail_min_presence)
+        partition_print(f'    {label} - cells remaining after presence-ratio check: {np.sum(cell_boo_selected)}')
 
         var_ratio_stage1 = None
         sliding_ratio_stage2 = None
-        # select cells based on temporal dependency check (stage 1 and 2)
-        if config.temp_dep_detection and num_trials_selected >= config.min_trial_for_temp_check and np.any(cell_boo_selected):
-            num_cells_total_stage = mean_firing_rate_hz.shape[0]
-            var_ratio_stage1 = np.full(num_cells_total_stage, np.nan)
-            sliding_ratio_stage2 = np.full(num_cells_total_stage, np.nan)
-            # stage 1: delay vs. baseline variance ratio estimated using all selected trials (higher is better)
-            baseline_mask = (t >= config.temp_check_baseline_start) & (t < config.temp_check_baseline_end)
-            delay_mask = (t >= config.temp_check_delay_start) & (t < config.temp_check_delay_end)
-            active_idx = np.nonzero(cell_boo_selected)[0] # indices of active cells after fr check
-            # compute trial-averaged firing rates for active cells in baseline and delay windows
-            cell_filtered_spikes = trial_filtered_spikes[:, :, active_idx] # shape: (trial, time, cell)
-            baseline_counts = np.sum(cell_filtered_spikes[:, baseline_mask, :], axis=1) # shape: (trial, cell)
-            delay_counts = np.sum(cell_filtered_spikes[:, delay_mask, :], axis=1)
-            baseline_rates = baseline_counts / (np.sum(baseline_mask) * bin_width_s) # shape: (trial, cell)
-            delay_rates = delay_counts / (np.sum(delay_mask) * bin_width_s)
-            baseline_var = np.var(baseline_rates, axis=0, ddof=1) # shape: (cell,)
-            delay_var = np.var(delay_rates, axis=0, ddof=1)
-            with np.errstate(divide='ignore', invalid='ignore'):
-                var_ratio = delay_var / baseline_var
-            var_ratio_stage1[active_idx] = var_ratio
-            keep_stage1 = (var_ratio > config.var_ratio_threshold_delay_over_baseline) & ~np.isnan(var_ratio)
-            fail_stage1_idx = active_idx[~keep_stage1]
-            fail_stage1_mask = np.zeros_like(rejection_reason, dtype=np.bool_)
-            fail_stage1_mask[fail_stage1_idx] = True
-            fail_stage1_mask &= (rejection_reason == 'pass')
-            rejection_reason[fail_stage1_mask] = 'fail_temp_dep_stage1'
-            cell_boo_selected[active_idx] = keep_stage1 # update selected cells after stage 1
-            if np.any(keep_stage1):
-                # stage 2: baseline variance ratio estimated using sliding windows vs. all selected trials (higher is better)
-                active_idx_stage2 = active_idx[keep_stage1] # indices of active cells after stage 1
-                baseline_rates = baseline_rates[:, keep_stage1]
-                baseline_var = baseline_var[keep_stage1]
+        slopes_stage3 = None
+        intercepts_stage3 = None
+        r_stage3 = None
+        r_stage3_baseline = None
+
+        # temporal dependency criteria (stages 1 and 2) are skipped when temp_dep_detection=False
+        if config.temp_dep_detection:
+            var_ratio_stage1 = np.full(num_cells_total, np.nan, dtype=np.float64)
+            sliding_ratio_stage2 = np.full(num_cells_total, np.nan, dtype=np.float64)
+
+            temp_baseline_mask = (t >= config.temp_check_baseline_start) & (t < config.temp_check_baseline_end)
+            temp_delay_mask = (t >= config.temp_check_delay_start) & (t < config.temp_check_delay_end)
+
+            baseline_rates_temp = None
+            baseline_var_temp = None
+            if np.any(temp_baseline_mask) and num_trials_selected >= 2 and np.isfinite(bin_width_s) and bin_width_s > 0:
+                baseline_counts_temp = np.sum(trial_filtered_spikes[:, temp_baseline_mask, :], axis=1)
+                baseline_rates_temp = baseline_counts_temp / (np.sum(temp_baseline_mask) * bin_width_s)
+                baseline_var_temp = np.var(baseline_rates_temp, axis=0, ddof=1)
+
+            stage1_global_ok = (
+                num_trials_selected >= config.min_trial_for_temp_check
+                and num_trials_selected >= 2
+                and np.any(temp_baseline_mask)
+                and np.any(temp_delay_mask)
+                and np.isfinite(bin_width_s)
+                and bin_width_s > 0
+            )
+            if not stage1_global_ok:
+                fail_not_app = np.ones(num_cells_total, dtype=np.bool_)
+                add_rejection_reason(fail_not_app, 'fail_temp_dep_stage1_not_applicable')
+                cell_boo_selected &= ~fail_not_app
+            else:
+                delay_counts_temp = np.sum(trial_filtered_spikes[:, temp_delay_mask, :], axis=1)
+                delay_rates_temp = delay_counts_temp / (np.sum(temp_delay_mask) * bin_width_s)
+                delay_var_temp = np.var(delay_rates_temp, axis=0, ddof=1)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    var_ratio = delay_var_temp / baseline_var_temp
+                var_ratio_stage1[:] = var_ratio
+                finite_stage1 = np.isfinite(var_ratio)
+                fail_not_app = ~finite_stage1
+                fail_stage1 = finite_stage1 & (var_ratio <= config.var_ratio_threshold_delay_over_baseline)
+                add_rejection_reason(fail_not_app, 'fail_temp_dep_stage1_not_applicable')
+                add_rejection_reason(fail_stage1, 'fail_temp_dep_stage1')
+                cell_boo_selected &= ~(fail_not_app | fail_stage1)
+            partition_print(f'    {label} - cells remaining after temporal dependency check (stage 1): {np.sum(cell_boo_selected)}')
+
+            stage2_global_ok = (
+                num_trials_selected >= config.min_trial_for_temp_check
+                and config.min_trial_for_temp_check >= 2
+                and np.any(temp_baseline_mask)
+                and np.isfinite(bin_width_s)
+                and bin_width_s > 0
+            )
+            if not stage2_global_ok:
+                fail_not_app = np.ones(num_cells_total, dtype=np.bool_)
+                add_rejection_reason(fail_not_app, 'fail_temp_dep_stage2_not_applicable')
+                cell_boo_selected &= ~fail_not_app
+            else:
                 windows = np.lib.stride_tricks.sliding_window_view(
-                    baseline_rates,
+                    baseline_rates_temp,
                     window_shape=config.min_trial_for_temp_check,
                     axis=0,
-                ) # shape: (num_windows, cell, window_size)
-                window_var = np.var(windows, axis=-1, ddof=1) # shape: (num_windows, cell)
-                sliding_var = np.mean(window_var, axis=0) # shape: (cell,)
+                )
+                window_var = np.var(windows, axis=-1, ddof=1)
+                sliding_var = np.mean(window_var, axis=0)
                 with np.errstate(divide='ignore', invalid='ignore'):
-                    sliding_ratio = sliding_var / baseline_var
-                sliding_ratio_stage2[active_idx_stage2] = sliding_ratio
-                keep_stage2 = (sliding_ratio > config.var_ratio_threshold_sliding_over_all) & ~np.isnan(sliding_ratio)
-                fail_stage2_idx = active_idx_stage2[~keep_stage2]
-                fail_stage2_mask = np.zeros_like(rejection_reason, dtype=np.bool_)
-                fail_stage2_mask[fail_stage2_idx] = True
-                fail_stage2_mask &= (rejection_reason == 'pass')
-                rejection_reason[fail_stage2_mask] = 'fail_temp_dep_stage2'
-                cell_boo_selected[active_idx_stage2] = keep_stage2 # update selected cells after stage 2
-            partition_print(f'    {label} - cells remaining after temporal dependency check: {np.sum(cell_boo_selected)}')
-        
-        # select cells based on PEV during test period (selected cells and trials)
-        if np.any(cell_boo_selected):
-            active_idx = np.nonzero(cell_boo_selected)[0] # indices of active cells after fr and temp dep check (stage 1 and 2)
-            num_cells_selected = len(active_idx)
-            cell_filtered_spikes = trial_filtered_spikes[:, :, active_idx] # (trial, time, cell)
-            
-            fr_list = [] # time-resolved firing rate of each cell
-            pev_list = [] # time-resolved pev of each cell
-            pref_list = [] # time-resolved preferred cue of each cell
+                    sliding_ratio = sliding_var / baseline_var_temp
+                sliding_ratio_stage2[:] = sliding_ratio
+                finite_stage2 = np.isfinite(sliding_ratio)
+                fail_not_app = ~finite_stage2
+                fail_stage2 = finite_stage2 & (sliding_ratio <= config.var_ratio_threshold_sliding_over_all)
+                add_rejection_reason(fail_not_app, 'fail_temp_dep_stage2_not_applicable')
+                add_rejection_reason(fail_stage2, 'fail_temp_dep_stage2')
+                cell_boo_selected &= ~(fail_not_app | fail_stage2)
+            partition_print(f'    {label} - cells remaining after temporal dependency check (stage 2): {np.sum(cell_boo_selected)}')
+
+            # criterion: baseline activity trend over selected-correct trials (Pearson r)
+            r_stage3_baseline = np.full(num_cells_total, np.nan, dtype=np.float64)
+            stage3_baseline_global_ok = num_trials_selected >= 2 and np.any(diag_baseline_mask)
+            if not stage3_baseline_global_ok:
+                fail_not_app = np.ones(num_cells_total, dtype=np.bool_)
+                add_rejection_reason(fail_not_app, 'fail_temp_dep_stage3_baseline_not_applicable')
+                cell_boo_selected &= ~fail_not_app
+            else:
+                baseline_counts_stage3 = np.sum(trial_filtered_spikes[:, diag_baseline_mask, :], axis=1).astype(np.float64)
+                x = np.arange(num_trials_selected, dtype=np.float64)
+                x_centered = x - x.mean()
+                x_norm = np.sqrt(np.sum(x_centered ** 2))
+                if not np.isfinite(x_norm) or x_norm <= 0:
+                    fail_not_app = np.ones(num_cells_total, dtype=np.bool_)
+                    add_rejection_reason(fail_not_app, 'fail_temp_dep_stage3_baseline_not_applicable')
+                    cell_boo_selected &= ~fail_not_app
+                else:
+                    fail_not_app = np.zeros(num_cells_total, dtype=np.bool_)
+                    fail_stage3_baseline = np.zeros(num_cells_total, dtype=np.bool_)
+                    for i_cell in range(num_cells_total):
+                        y = baseline_counts_stage3[:, i_cell]
+                        if not np.all(np.isfinite(y)):
+                            fail_not_app[i_cell] = True
+                            continue
+                        y_centered = y - y.mean()
+                        y_norm = np.sqrt(np.sum(y_centered ** 2))
+                        if not np.isfinite(y_norm) or y_norm <= 0:
+                            fail_not_app[i_cell] = True
+                            continue
+                        r_val = float(np.dot(x_centered, y_centered) / (x_norm * y_norm))
+                        r_stage3_baseline[i_cell] = r_val
+                        if not np.isfinite(r_val):
+                            fail_not_app[i_cell] = True
+                        elif np.abs(r_val) > config.temp_dep_r_threshold_baseline:
+                            fail_stage3_baseline[i_cell] = True
+                    add_rejection_reason(fail_not_app, 'fail_temp_dep_stage3_baseline_not_applicable')
+                    add_rejection_reason(fail_stage3_baseline, 'fail_temp_dep_stage3_baseline')
+                    cell_boo_selected &= ~(fail_not_app | fail_stage3_baseline)
+            partition_print(
+                f'    {label} - cells remaining after baseline temporal dependency check (stage 3 baseline): '
+                f'{np.sum(cell_boo_selected)}'
+            )
+        else:
+            var_ratio_stage1 = None
+            sliding_ratio_stage2 = None
+
+        # criterion: significant PEV duration in the test period
+        if config.t_test_step > 0:
             t_bin_start = np.arange(config.t_test_start, config.t_test_end + 1, config.t_test_step)
-            for i_cell in range(num_cells_selected):
-                for t_min in t_bin_start:
-                    t_max = t_min + config.t_test_window
-                    t_boo = (t >= t_min) & (t < t_max)
-                    spikes_bin = cell_filtered_spikes[:, t_boo, i_cell].mean(axis=1)
-                    fr_list.append(spikes_bin * 1000) # spikes/ms -> spikes/second
-                    pev_list.append(get_pev(spikes_bin, cue_labels_selected, labels_set))
-                    pref_list.append(get_preferred_cue(spikes_bin, cue_labels_selected, labels_set))
-            fr_mat = np.asarray(fr_list).reshape((num_cells_selected, -1, num_trials_selected)) # (cell, bin, trial)
-            pev_mat = np.array(pev_list).reshape((num_cells_selected, -1)).clip(config.pev_clip_at, 100) # (cell, bin)
-            pref_mat = np.array(pref_list).reshape((num_cells_selected, -1)) # (cell, bin)
+        else:
+            t_bin_start = np.asarray([], dtype=np.int64)
+        num_test_bins = len(t_bin_start)
+        pev_mat = np.full((num_cells_total, num_test_bins), np.nan, dtype=np.float64)
+        pref_mat = np.full((num_cells_total, num_test_bins), np.nan, dtype=np.float64)
+        bin_boo_pev = np.zeros((num_cells_total, num_test_bins), dtype=np.bool_)
+        mean_pev_full = np.full(num_cells_total, np.nan, dtype=np.float64)
+        mean_pref_full = np.full(num_cells_total, np.nan, dtype=np.float64)
 
-            # select cells based on significant PEV duration
-            keep_pev = np.asarray([
-                get_periods(pev_mat[i_cell], config.sig_pev_duration / config.t_test_step, config.sig_pev_threshold).shape[0] > 0 
-                for i_cell in range(num_cells_selected)]) # pev consistently higher than sig_pev_threshold for at least sig_pev_duration
-            fail_pev_idx = active_idx[~keep_pev]
-            fail_pev_mask = np.zeros_like(rejection_reason, dtype=np.bool_)
-            fail_pev_mask[fail_pev_idx] = True
-            fail_pev_mask &= (rejection_reason == 'pass')
-            rejection_reason[fail_pev_mask] = 'fail_sig_pev'
-            fr_mat = fr_mat[keep_pev]
-            pev_mat = pev_mat[keep_pev]
-            pref_mat = pref_mat[keep_pev]
-            cell_boo_selected[active_idx] = keep_pev # update selected cells after significant pev check
-            partition_print(f'    {label} - cells remaining after significant PEV check: {np.sum(cell_boo_selected)}')
+        if num_test_bins == 0:
+            fail_not_app = np.ones(num_cells_total, dtype=np.bool_)
+            add_rejection_reason(fail_not_app, 'fail_sig_pev_not_applicable')
+            cell_boo_selected &= ~fail_not_app
+        else:
+            t_bin_masks = [(t >= t_min) & (t < (t_min + config.t_test_window)) for t_min in t_bin_start]
+            valid_bins = np.asarray([np.any(mask) for mask in t_bin_masks], dtype=np.bool_)
+            if not np.any(valid_bins):
+                fail_not_app = np.ones(num_cells_total, dtype=np.bool_)
+                add_rejection_reason(fail_not_app, 'fail_sig_pev_not_applicable')
+                cell_boo_selected &= ~fail_not_app
+            else:
+                for i_cell in range(num_cells_total):
+                    for i_bin, t_boo in enumerate(t_bin_masks):
+                        if not valid_bins[i_bin]:
+                            continue
+                        spikes_bin = trial_filtered_spikes[:, t_boo, i_cell].mean(axis=1)
+                        pev_val = get_pev(spikes_bin, cue_labels_selected, labels_set)
+                        pref_val = get_preferred_cue(spikes_bin, cue_labels_selected, labels_set)
+                        if pev_val is not None:
+                            pev_mat[i_cell, i_bin] = float(pev_val)
+                        if pref_val is not None:
+                            pref_mat[i_cell, i_bin] = float(pref_val)
 
-        # group cells by preferred cue location
-        if np.any(cell_boo_selected):
-            # only periods with sig pev are used to estimate mean pev and selectivity
-            bin_boo_pev = np.asarray([
-                get_periods_and_mask(p, config.sig_pev_duration / config.t_test_step, config.sig_pev_threshold)[1]
-                for p in pev_mat])
-            mean_pev_test = np.asarray([p[b].mean() for p, b in zip(pev_mat, bin_boo_pev)])
-            mean_pref_test = np.asarray([circular_mean_cue(p[b]) for p, b in zip(pref_mat, bin_boo_pev)])
+                pev_mat = np.clip(pev_mat, config.pev_clip_at, 100)
+                sig_pev_applicable = np.any(np.isfinite(pev_mat), axis=1)
+                fail_not_app = ~sig_pev_applicable
+                fail_sig_pev = np.zeros(num_cells_total, dtype=np.bool_)
+                min_sig_duration_bins = config.sig_pev_duration / config.t_test_step
+                for i_cell in range(num_cells_total):
+                    if not sig_pev_applicable[i_cell]:
+                        continue
+                    _, sig_mask = get_periods_and_mask(
+                        pev_mat[i_cell],
+                        min_sig_duration_bins,
+                        config.sig_pev_threshold,
+                    )
+                    bin_boo_pev[i_cell] = sig_mask
+                    if not np.any(sig_mask):
+                        fail_sig_pev[i_cell] = True
+                        continue
+                    mean_pev_full[i_cell] = np.mean(pev_mat[i_cell, sig_mask])
+                    pref_vals = pref_mat[i_cell, sig_mask]
+                    if np.all(np.isfinite(pref_vals)):
+                        mean_pref_full[i_cell] = circular_mean_cue(pref_vals.astype(np.int64))
 
-            slopes_stage3 = None
-            intercepts_stage3 = None
-            r_stage3 = None
-            if config.temp_dep_detection:
-                active_idx = np.nonzero(cell_boo_selected)[0]
-                keep_stage3, slopes_stage3, intercepts_stage3, r_stage3 = check_temporal_stability_preferred_trials(
+                add_rejection_reason(fail_not_app, 'fail_sig_pev_not_applicable')
+                add_rejection_reason(fail_sig_pev, 'fail_sig_pev')
+                cell_boo_selected &= ~(fail_not_app | fail_sig_pev)
+        partition_print(f'    {label} - cells remaining after significant PEV check: {np.sum(cell_boo_selected)}')
+
+        # criterion: preferred-cue temporal stability (stage 3)
+        if config.temp_dep_detection:
+            slopes_stage3 = np.full(num_cells_total, np.nan, dtype=np.float64)
+            intercepts_stage3 = np.full(num_cells_total, np.nan, dtype=np.float64)
+            r_stage3 = np.full(num_cells_total, np.nan, dtype=np.float64)
+
+            stage3_applicable = np.any(bin_boo_pev, axis=1) & np.isfinite(mean_pref_full)
+            fail_stage3_not_app = ~stage3_applicable
+            fail_stage3 = np.zeros(num_cells_total, dtype=np.bool_)
+            if np.any(stage3_applicable):
+                active_idx_stage3 = np.nonzero(stage3_applicable)[0]
+                keep_stage3, slopes_tmp, intercepts_tmp, r_tmp = check_temporal_stability_preferred_trials(
                     spikes,
                     cue_labels,
-                    mean_pref_test,
-                    active_idx,
+                    mean_pref_full[active_idx_stage3].astype(np.int64),
+                    active_idx_stage3,
                     t,
                     trial_start,
                     trial_end,
                     config,
                     trial_holdout=trial_holdout,
                 )
-                fail_stage3_idx = active_idx[~keep_stage3]
-                fail_stage3_mask = np.zeros_like(rejection_reason, dtype=np.bool_)
-                fail_stage3_mask[fail_stage3_idx] = True
-                fail_stage3_mask &= (rejection_reason == 'pass')
-                rejection_reason[fail_stage3_mask] = 'fail_temp_dep_stage3'
-                if not np.all(keep_stage3):
-                    fr_mat = fr_mat[keep_stage3]
-                    pev_mat = pev_mat[keep_stage3]
-                    pref_mat = pref_mat[keep_stage3]
-                    bin_boo_pev = bin_boo_pev[keep_stage3]
-                    mean_pev_test = mean_pev_test[keep_stage3]
-                    mean_pref_test = mean_pref_test[keep_stage3]
-                    slopes_stage3 = slopes_stage3[keep_stage3]
-                    intercepts_stage3 = intercepts_stage3[keep_stage3]
-                    r_stage3 = r_stage3[keep_stage3]
-                    cell_boo_selected[active_idx] = keep_stage3
-                partition_print(f'    {label} - cells remaining after temporal stability check (stage 3): {np.sum(cell_boo_selected)}')
+                slopes_stage3[active_idx_stage3] = slopes_tmp
+                intercepts_stage3[active_idx_stage3] = intercepts_tmp
+                r_stage3[active_idx_stage3] = r_tmp
+                finite_stage3 = np.isfinite(r_tmp)
+                fail_stage3_not_app[active_idx_stage3] |= ~finite_stage3
+                fail_stage3_idx = active_idx_stage3[finite_stage3 & (~keep_stage3)]
+                fail_stage3[fail_stage3_idx] = True
 
-            group_boo = np.asarray([mean_pref_test == l for l in labels_set])
-            partition_print(f'    {label} - group_boo.shape (label, cell): {group_boo.shape}')
-            # count number of cells selective to each cue location
-            num_cells_per_group = np.sum(group_boo, axis=1)
-            # total PEV per group
-            total_pev_per_group = np.asarray([mean_pev_test[group_boo[i]].sum() for i in range(len(labels_set))])
+            add_rejection_reason(fail_stage3_not_app, 'fail_temp_dep_stage3_not_applicable')
+            add_rejection_reason(fail_stage3, 'fail_temp_dep_stage3')
+            cell_boo_selected &= ~(fail_stage3_not_app | fail_stage3)
+            partition_print(
+                f'    {label} - cells remaining after temporal stability check (stage 3): {np.sum(cell_boo_selected)}'
+            )
 
-            partition_print(f'    {label} - number of cells per group (preferred cue location):')
-            for i, l in enumerate(labels_set):
-                partition_print(f'      Label {l}: {num_cells_per_group[i]} cells, Total PEV: {total_pev_per_group[i]:.2f}')
+        # keep only cells that pass all active criteria
+        if not np.any(cell_boo_selected):
+            return finalize_partition(None)
 
-            if np.any(num_cells_per_group >= config.min_cell_per_group):
-                partition_print(f'    {label} - found a good session window from {session} with at least {config.min_cell_per_group} cells in one group.')
-                partition_print(f'    {label} - session window is {trial_start} to {trial_end} (size: {config.trial_selection_window_size})')
+        cell_idx_selected = np.nonzero(cell_boo_selected)[0]
+        mean_pev_test = mean_pev_full[cell_idx_selected]
+        mean_pref_test = mean_pref_full[cell_idx_selected].astype(np.int64)
+        bin_boo_pev_selected = bin_boo_pev[cell_idx_selected]
 
-            cell_idx_selected = np.nonzero(cell_boo_selected)[0]
-            trial_idx_selected = np.nonzero(trial_boo_selected)[0]
-            cell_properties = {
-                'cell_idx': cell_idx_selected,
-                'mean_fr_test': mean_firing_rate_hz[cell_idx_selected],
-                'mean_pev_test': mean_pev_test,
-                'mean_pref_test': mean_pref_test,
-                'num_sig_pev_bins': bin_boo_pev.sum(axis=1),
-            }
-            if var_ratio_stage1 is not None:
-                cell_properties.update({
-                    'temp_dep_var_ratio_stage1': var_ratio_stage1[cell_idx_selected],
-                    'temp_dep_sliding_ratio_stage2': sliding_ratio_stage2[cell_idx_selected],
-                })
-            if slopes_stage3 is not None:
-                cell_properties.update({
-                    'temp_dep_slope': slopes_stage3,
-                    'temp_dep_intercept': intercepts_stage3,
-                    'temp_dep_r': r_stage3,
-                })
-            out = {
-                'session': session,
-                'trial_start': trial_start,
-                'trial_end': trial_end,
-                'trial_holdout': trial_holdout,
-                'num_trials_selected': num_trials_selected,
-                'num_cells_selected': np.sum(cell_boo_selected),
-                'cell_idx_selected': cell_idx_selected,
-                'trial_idx_selected': trial_idx_selected,
-                'labels_set_idx': labels_set,
-                'labels_set_deg': cue_to_deg(labels_set),
-                'num_cells_per_group': num_cells_per_group,
-                'total_pev_per_group': total_pev_per_group,
-                'max_num_cells_per_group': np.max(num_cells_per_group),
-                'max_total_pev_per_group': np.max(total_pev_per_group),
-                'cell_properties': cell_properties,
-            }
-            return finalize_partition(out)
-        return finalize_partition(None)
+        group_boo = np.asarray([mean_pref_test == l for l in labels_set])
+        partition_print(f'    {label} - group_boo.shape (label, cell): {group_boo.shape}')
+        # count number of cells selective to each cue location
+        num_cells_per_group = np.sum(group_boo, axis=1)
+        # total PEV per group
+        total_pev_per_group = np.asarray([mean_pev_test[group_boo[i]].sum() for i in range(len(labels_set))])
+
+        partition_print(f'    {label} - number of cells per group (preferred cue location):')
+        for i, l in enumerate(labels_set):
+            partition_print(f'      Label {l}: {num_cells_per_group[i]} cells, Total PEV: {total_pev_per_group[i]:.2f}')
+
+        if np.any(num_cells_per_group >= config.min_cell_per_group):
+            partition_print(f'    {label} - found a good session window from {session} with at least {config.min_cell_per_group} cells in one group.')
+            partition_print(f'    {label} - session window is {trial_start} to {trial_end} (size: {config.trial_selection_window_size})')
+
+        trial_idx_selected = np.nonzero(trial_boo_selected)[0]
+        cell_properties = {
+            'cell_idx': cell_idx_selected,
+            'mean_fr_test': mean_firing_rate_hz[cell_idx_selected],
+            'mean_pev_test': mean_pev_test,
+            'mean_pref_test': mean_pref_test,
+            'num_sig_pev_bins': bin_boo_pev_selected.sum(axis=1),
+        }
+        if var_ratio_stage1 is not None:
+            cell_properties.update({
+                'temp_dep_var_ratio_stage1': var_ratio_stage1[cell_idx_selected],
+                'temp_dep_sliding_ratio_stage2': sliding_ratio_stage2[cell_idx_selected],
+            })
+        if slopes_stage3 is not None:
+            cell_properties.update({
+                'temp_dep_slope': slopes_stage3[cell_idx_selected],
+                'temp_dep_intercept': intercepts_stage3[cell_idx_selected],
+                'temp_dep_r': r_stage3[cell_idx_selected],
+            })
+
+        out = {
+            'session': session,
+            'trial_start': trial_start,
+            'trial_end': trial_end,
+            'trial_holdout': trial_holdout,
+            'num_trials_selected': num_trials_selected,
+            'num_cells_selected': np.sum(cell_boo_selected),
+            'cell_idx_selected': cell_idx_selected,
+            'trial_idx_selected': trial_idx_selected,
+            'labels_set_idx': labels_set,
+            'labels_set_deg': cue_to_deg(labels_set),
+            'num_cells_per_group': num_cells_per_group,
+            'total_pev_per_group': total_pev_per_group,
+            'max_num_cells_per_group': np.max(num_cells_per_group),
+            'max_total_pev_per_group': np.max(total_pev_per_group),
+            'cell_properties': cell_properties,
+        }
+        return finalize_partition(out)
 
     if n_jobs_partition > 1:
         partition_results = Parallel(n_jobs=n_jobs_partition, verbose=5)(
