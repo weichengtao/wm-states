@@ -231,8 +231,10 @@ class Config:
     temp_check_delay_start: int = 500 # Delay window start for temporal dependence checks
     temp_check_delay_end: int = 1000 # Delay window end for temporal dependence checks
 
-    trial_selection_window_size: int = 320 # Size of sliding trial window when subsampling
-    trial_selection_step_size: int = 5 # Step size between consecutive trial windows
+    min_trial_per_session: int = 320 # Minimum total trials (correct + incorrect) required to process a session
+    enable_trial_selection: bool = False # If False, use one full-session trial window and ignore trial_selection_window_size/step_size
+    trial_selection_window_size: int = 320 # Size of sliding trial window when enable_trial_selection=True
+    trial_selection_step_size: int = 5 # Step size between consecutive trial windows when enable_trial_selection=True
 
     save_extended_diagnostics: bool = False # Save additional diagnostic measures and figures
     diagnostics_figure_config: Path | None = None # Optional JSON config listing which per-cell diagnostic figures to save
@@ -479,11 +481,27 @@ def process_session(
     # boo for correct trials
     trial_boo_correct = np.asarray(data['isCorr']).flatten().astype(np.bool_)
     num_trials = len(trial_boo_correct)
-    if num_trials < config.trial_selection_window_size:
-        print(f'  Skipping session {session} due to insufficient trials ({num_trials} < {config.trial_selection_window_size})')
+    if num_trials < config.min_trial_per_session:
+        print(
+            f'  Skipping session {session} due to insufficient total trials '
+            f'({num_trials} < {config.min_trial_per_session})'
+        )
+        return session, outs, log_lines, diagnostics_rows, matched_figure_keys
+    if config.enable_trial_selection and num_trials < config.trial_selection_window_size:
+        print(
+            f'  Skipping session {session} due to insufficient trials for sliding windows '
+            f'({num_trials} < {config.trial_selection_window_size})'
+        )
         return session, outs, log_lines, diagnostics_rows, matched_figure_keys
     num_trials_correct = np.sum(trial_boo_correct)
     print(f'  Total trials: {num_trials}, Correct trials: {num_trials_correct}')
+    if config.enable_trial_selection:
+        print(
+            f'  Trial selection mode: sliding windows '
+            f'(window_size={config.trial_selection_window_size}, step_size={config.trial_selection_step_size})'
+        )
+    else:
+        print('  Trial selection mode: full session window (all trials)')
 
     # load cue labels
     cue_labels = np.asarray(data['cueAngIdx']).flatten().astype(np.int64)
@@ -518,8 +536,19 @@ def process_session(
             print('  Warning: diagnostics delay window (500 to 1400 ms) has zero bins; delay line plots will be NaN.')
 
     tasks: list[tuple[int, int, int | None]] = []
-    for trial_start in range(0, num_trials - config.trial_selection_window_size + 1, config.trial_selection_step_size):
-        trial_end = trial_start + config.trial_selection_window_size
+    if config.enable_trial_selection:
+        trial_windows = [
+            (trial_start, trial_start + config.trial_selection_window_size)
+            for trial_start in range(
+                0,
+                num_trials - config.trial_selection_window_size + 1,
+                config.trial_selection_step_size,
+            )
+        ]
+    else:
+        trial_windows = [(0, num_trials)]
+
+    for trial_start, trial_end in trial_windows:
         # baseline partition
         tasks.append((trial_start, trial_end, None))
         if use_loo:
@@ -535,6 +564,7 @@ def process_session(
 
     def run_partition(trial_start: int, trial_end: int, trial_holdout: int | None):
         label = 'baseline' if trial_holdout is None else f'LOO trial {trial_holdout}'
+        window_size = trial_end - trial_start
         partition_logs = [] if log_lines is not None else None
 
         def partition_print(*args, **kwargs):
@@ -546,7 +576,7 @@ def process_session(
             if config.console_messages:
                 builtin_print(*args, sep=sep, end=end, **kwargs)
 
-        partition_print(f'  Trial window: {trial_start} to {trial_end} (size: {config.trial_selection_window_size}) [{label}]')
+        partition_print(f'  Trial window: {trial_start} to {trial_end} (size: {window_size}) [{label}]')
 
         rejection_reasons: list[list[str]] = [[] for _ in range(num_cells_total)]
 
@@ -996,7 +1026,7 @@ def process_session(
 
         if np.any(num_cells_per_group >= config.min_cell_per_group):
             partition_print(f'    {label} - found a good session window from {session} with at least {config.min_cell_per_group} cells in one group.')
-            partition_print(f'    {label} - session window is {trial_start} to {trial_end} (size: {config.trial_selection_window_size})')
+            partition_print(f'    {label} - session window is {trial_start} to {trial_end} (size: {trial_end - trial_start})')
 
         trial_idx_selected = np.nonzero(trial_boo_selected)[0]
         cell_properties = {

@@ -28,7 +28,8 @@ Download the dataset from `https://datadryad.org/dataset/doi:10.5061/dryad.kkwh7
 ```bash
 ## Leave-one-out (decoding)
 # You may want to keep only 210921.mat in --data-dir for testing.
-python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001 --trial-selection-step-size 10 --n-jobs-partition 8
+python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001 --enable-trial-selection --trial-selection-window-size 320 --trial-selection-step-size 10 --n-jobs-partition 8
+# python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001_full_session --n-jobs-partition 8
 
 # You may want to compute 5 shuffles for testing.
 python scripts/decoding_confidence.py --data-dir data/nature --cache-dir cache/run_001 --n-decode-shuffle 500 --n-jobs 8
@@ -37,10 +38,16 @@ python scripts/on_off_states.py --cache-dir cache/run_001 --off-duration-xmax 40
 
 ## Leave-one-out (cell selection & decoding)
 # You may want to keep only 210921.mat in --data-dir for testing.
-python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001_loo --trial-selection-step-size 10 --n-jobs-partition 8 --loo-cell-selection
+python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001_loo --enable-trial-selection --trial-selection-window-size 320 --trial-selection-step-size 10 --n-jobs-partition 8 --loo-cell-selection
+# python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001_loo_full_session --n-jobs-partition 8 --loo-cell-selection
 
 # You may want to compute 5 shuffles for testing.
 python scripts/decoding_confidence.py --data-dir data/nature --cache-dir cache/run_001_loo --n-decode-shuffle 500 --n-jobs 8 --loo-cell-selection
 
 python scripts/on_off_states.py --cache-dir cache/run_001_loo --off-duration-xmax 400
 ```
+
+Notes for cell_trial_selection.py:
+- `--enable-trial-selection` runs across-trial sliding windows and uses `--trial-selection-window-size` / `--trial-selection-step-size`.
+- Without `--enable-trial-selection` (or with `--no-enable-trial-selection`), one full-session trial window (`[0, num_trials)`) is used.
+- Session-level minimum trial count is always enforced via `--min-trial-per-session` (default: `320`, counted on total trials including incorrect).
