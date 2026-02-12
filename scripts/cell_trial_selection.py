@@ -256,6 +256,7 @@ def load_loo_cue_labels(path: Path) -> dict[str, set[int]]:
 
 def load_diagnostics_figure_targets(
     path: Path | None,
+    session_trial_counts: dict[str, int] | None = None,
 ) -> tuple[dict[tuple[str, int, int, int | None], dict[str, Any]], list[str]]:
     """
     Load figure targets from JSON.
@@ -265,9 +266,18 @@ def load_diagnostics_figure_targets(
       "figures": [
         {"session": "210921", "trial_start": 0, "trial_end": 320, "cells": [4, 10]},
         {"session": "210921", "trial_start": 0, "trial_end": 320, "trial_holdout": 15, "cells": [4]},
-        {"session": "210921", "trial_start": 0, "trial_end": 320, "cell_start": 20, "cell_end": 40}
+        {"session": "210921", "trial_start": 0, "trial_end": 320, "cell_start": 20, "cell_end": 40},
+        {"session": "210921", "trial_start": 0, "cells": [4]},
+        {"session": "210921", "trial_end": 320, "cells": [4]},
+        {"session": "210921", "cells": [4]}
       ]
     }
+
+    `trial_start` / `trial_end` can be omitted:
+      - missing start -> 0
+      - missing end -> session trial count
+      - both missing -> [0, session trial count)
+    Auto-expansion requires `session_trial_counts[session]` to be available.
     """
     targets: dict[tuple[str, int, int, int | None], dict[str, Any]] = {}
     warnings: list[str] = []
@@ -287,13 +297,24 @@ def load_diagnostics_figure_targets(
             warnings.append(f'Ignoring figure entry #{idx}: entry must be an object.')
             continue
         session = item.get('session')
-        trial_start = item.get('trial_start')
-        trial_end = item.get('trial_end')
         cells = item.get('cells')
         cell_start = item.get('cell_start')
         cell_end = item.get('cell_end')
-        if session is None or trial_start is None or trial_end is None:
-            warnings.append(f'Ignoring figure entry #{idx}: requires session, trial_start, and trial_end.')
+        if session is None:
+            warnings.append(f'Ignoring figure entry #{idx}: requires session.')
+            continue
+        session_str = str(session)
+        trial_start_raw = item.get('trial_start')
+        trial_end_raw = item.get('trial_end')
+        requires_expansion = trial_start_raw is None or trial_end_raw is None
+        session_trials = None
+        if session_trial_counts is not None:
+            session_trials = session_trial_counts.get(session_str)
+        if requires_expansion and session_trials is None:
+            warnings.append(
+                f'Ignoring figure entry #{idx}: cannot auto-expand trial bounds for session '
+                f'"{session_str}" because its trial count is unavailable.'
+            )
             continue
         if cells is not None and not isinstance(cells, list):
             warnings.append(f'Ignoring figure entry #{idx}: cells must be a list when provided.')
@@ -304,8 +325,15 @@ def load_diagnostics_figure_targets(
             )
             continue
         try:
+            trial_start = 0 if trial_start_raw is None else int(trial_start_raw)
+            trial_end = session_trials if trial_end_raw is None else int(trial_end_raw)
+            if trial_end is None:
+                warnings.append(
+                    f'Ignoring figure entry #{idx}: failed to resolve trial_end for session "{session_str}".'
+                )
+                continue
             key = (
-                str(session),
+                session_str,
                 int(trial_start),
                 int(trial_end),
                 int(item['trial_holdout']) if 'trial_holdout' in item and item['trial_holdout'] is not None else None,
@@ -315,6 +343,23 @@ def load_diagnostics_figure_targets(
             range_end = None if cell_end is None else int(cell_end)
         except (TypeError, ValueError):
             warnings.append(f'Ignoring figure entry #{idx}: failed to parse integer fields.')
+            continue
+
+        if key[1] < 0 or key[2] < 0:
+            warnings.append(
+                f'Ignoring figure entry #{idx}: trial_start ({key[1]}) and trial_end ({key[2]}) must be non-negative.'
+            )
+            continue
+        if key[1] >= key[2]:
+            warnings.append(
+                f'Ignoring figure entry #{idx}: requires trial_start ({key[1]}) < trial_end ({key[2]}).'
+            )
+            continue
+        if session_trials is not None and (key[1] > session_trials or key[2] > session_trials):
+            warnings.append(
+                f'Ignoring figure entry #{idx}: trial window [{key[1]}, {key[2]}) is out of bounds for '
+                f'session "{session_str}" with {session_trials} total trials.'
+            )
             continue
 
         if (
@@ -332,6 +377,28 @@ def load_diagnostics_figure_targets(
         if range_start is not None or range_end is not None:
             entry['ranges'].append((range_start, range_end))
     return targets, warnings
+
+def get_session_trial_counts(data_files: list[Path]) -> tuple[dict[str, int], list[str]]:
+    """Return per-session total trial counts from `isCorr` in each .mat file."""
+    counts: dict[str, int] = {}
+    warnings: list[str] = []
+    for data_file in data_files:
+        session = data_file.stem
+        try:
+            data = loadmat(data_file, variable_names=['isCorr'])
+        except Exception as e:
+            warnings.append(
+                f'Failed to read trial count for session {session} from {data_file}: '
+                f'{type(e).__name__}: {e}'
+            )
+            continue
+        if 'isCorr' not in data:
+            warnings.append(
+                f'Failed to read trial count for session {session} from {data_file}: missing "isCorr".'
+            )
+            continue
+        counts[session] = int(np.asarray(data['isCorr']).size)
+    return counts, warnings
 
 def compute_extended_partition_metrics(
     spikes_window: np.ndarray,
@@ -1115,7 +1182,18 @@ def main(config: Config):
     figure_targets: dict[tuple[str, int, int, int | None], dict[str, Any]] = {}
     if config.save_extended_diagnostics:
         diagnostics_dir.mkdir(parents=True, exist_ok=True)
-        figure_targets, figure_config_warnings = load_diagnostics_figure_targets(config.diagnostics_figure_config)
+        session_trial_counts: dict[str, int] = {}
+        if (
+            config.diagnostics_figure_config is not None
+            and config.diagnostics_figure_config.exists()
+        ):
+            session_trial_counts, trial_count_warnings = get_session_trial_counts(data_files)
+            for warning in trial_count_warnings:
+                print(f'Warning: {warning}')
+        figure_targets, figure_config_warnings = load_diagnostics_figure_targets(
+            config.diagnostics_figure_config,
+            session_trial_counts=session_trial_counts,
+        )
         for warning in figure_config_warnings:
             print(f'Warning: {warning}')
         if len(figure_targets) > 0:
