@@ -355,14 +355,18 @@ def main(config: Config):
             else:
                 applicable_parts = no_holdout_parts
 
-            cell_idx_set = set()
+            cell_idx_set: set[int] | None = None
             for p in applicable_parts:
                 cell_props = p['cell_properties']
                 pref_cues = np.asarray(cell_props['mean_pref_test'])
                 cells = np.asarray(cell_props['cell_idx'])
-                cell_idx_set.update(cells[pref_cues == pref_cue].tolist())
+                part_cell_idx = set(cells[pref_cues == pref_cue].tolist())
+                if cell_idx_set is None:
+                    cell_idx_set = part_cell_idx
+                else:
+                    cell_idx_set &= part_cell_idx
 
-            if not cell_idx_set:
+            if cell_idx_set is None or not cell_idx_set:
                 return ('warn_no_cells', trial_abs, None, None, None)
 
             cell_idx = np.asarray(sorted(cell_idx_set), dtype=np.int64)
