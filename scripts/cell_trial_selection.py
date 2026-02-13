@@ -479,7 +479,7 @@ def save_diagnostic_cell_figure(
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
-    holdout_label = 'holdout_none' if trial_holdout is None else f'holdout_{trial_holdout}'
+    partition_tag = 'no_holdout' if trial_holdout is None else f'holdout_{trial_holdout}'
     x = np.arange(baseline_counts.shape[0], dtype=np.int64)
     def fmt(v: float) -> str:
         return 'NaN' if np.isnan(v) else f'{v:.3f}'
@@ -495,7 +495,7 @@ def save_diagnostic_cell_figure(
     ax_baseline.plot(x, baseline_counts, linewidth=1.5)
     ax_baseline.set_ylabel('Baseline spike count')
     ax_baseline.set_title(
-        f'Session {session} | [{trial_start}, {trial_end}) | {holdout_label} | cell {cell_idx}\n'
+        f'Session {session} | [{trial_start}, {trial_end}) | {partition_tag} | cell {cell_idx}\n'
         f'reject_reason={reject_reason}\n'
         f'presence_ratio={flagged_value(presence_ratio, presence_ratio < 0.9)}, '
         f'r_s_baseline={flagged_value(r_s_baseline, np.abs(r_s_baseline) > 0.3)}, '
@@ -616,7 +616,7 @@ def process_session(
         trial_windows = [(0, num_trials)]
 
     for trial_start, trial_end in trial_windows:
-        # baseline partition
+        # no-holdout partition
         tasks.append((trial_start, trial_end, None))
         if use_loo:
             trial_boo_window = np.zeros(num_trials, dtype=np.bool_)
@@ -630,7 +630,7 @@ def process_session(
                 tasks.append((trial_start, trial_end, int(trial_holdout)))
 
     def run_partition(trial_start: int, trial_end: int, trial_holdout: int | None):
-        label = 'baseline' if trial_holdout is None else f'LOO trial {trial_holdout}'
+        partition_label = 'no-holdout' if trial_holdout is None else f'LOO trial {trial_holdout}'
         window_size = trial_end - trial_start
         partition_logs = [] if log_lines is not None else None
 
@@ -643,7 +643,7 @@ def process_session(
             if config.console_messages:
                 builtin_print(*args, sep=sep, end=end, **kwargs)
 
-        partition_print(f'  Trial window: {trial_start} to {trial_end} (size: {window_size}) [{label}]')
+        partition_print(f'  Trial window: {trial_start} to {trial_end} (size: {window_size}) [{partition_label}]')
 
         rejection_reasons: list[list[str]] = [[] for _ in range(num_cells_total)]
 
@@ -687,7 +687,7 @@ def process_session(
                 if target_spec is not None:
                     matched_key = figure_key
                     figures_dir.mkdir(parents=True, exist_ok=True)
-                    holdout_tag = 'holdout_none' if trial_holdout is None else f'holdout_{trial_holdout}'
+                    partition_tag = 'no_holdout' if trial_holdout is None else f'holdout_{trial_holdout}'
 
                     requested_cell_set = set(int(c) for c in target_spec.get('cells', set()))
                     for range_start, range_end in target_spec.get('ranges', []):
@@ -729,7 +729,7 @@ def process_session(
                             )
                             continue
                         figure_file = figures_dir / (
-                            f'session_{session}__trial_{trial_start}_{trial_end}__{holdout_tag}__cell_{cell_idx}.png'
+                            f'session_{session}__trial_{trial_start}_{trial_end}__{partition_tag}__cell_{cell_idx}.png'
                         )
                         try:
                             save_diagnostic_cell_figure(
@@ -782,23 +782,23 @@ def process_session(
             trial_boo_selected[trial_holdout] = False
         num_trials_selected = np.sum(trial_boo_selected)
         if num_trials_selected == 0:
-            partition_print(f'    Skipping {label}: no correct trials after holdout')
+            partition_print(f'    Skipping {partition_label}: no correct trials after holdout')
             add_rejection_reason(np.ones(num_cells_total, dtype=np.bool_), 'fail_no_correct_trials')
             return finalize_partition(None)
 
         cue_labels_selected = cue_labels[trial_boo_selected]
         if cue_labels_selected.size == 0:
-            partition_print(f'    Skipping {label}: no cue labels after selection')
+            partition_print(f'    Skipping {partition_label}: no cue labels after selection')
             add_rejection_reason(np.ones(num_cells_total, dtype=np.bool_), 'fail_no_correct_trials')
             return finalize_partition(None)
         labels_set_sel, labels_counts_sel = np.unique(cue_labels_selected, return_counts=True)
-        partition_print(f'    {label} - correct trials: {num_trials_selected}')
-        partition_print(f'    {label} - cue labels distribution w/ percent (selected trials):')
+        partition_print(f'    {partition_label} - correct trials: {num_trials_selected}')
+        partition_print(f'    {partition_label} - cue labels distribution w/ percent (selected trials):')
         for lbl, cnt in zip(labels_set_sel, labels_counts_sel):
             partition_print(f'      Label {lbl}: {cnt} trials ({cnt / num_trials_selected * 100:.2f}%)')
-        
+
         trial_filtered_spikes = spikes[trial_boo_selected]
-        partition_print(f'    {label} - spike data shape (selected trials): {trial_filtered_spikes.shape}')
+        partition_print(f'    {partition_label} - spike data shape (selected trials): {trial_filtered_spikes.shape}')
 
         # Evaluate all criteria on all cells; final selection keeps cells with zero failures.
         cell_boo_selected = np.ones(num_cells_total, dtype=np.bool_)
@@ -827,7 +827,7 @@ def process_session(
                 add_rejection_reason(fail_not_app, 'fail_min_fr_test_not_applicable')
                 add_rejection_reason(fail_min_fr, 'fail_min_fr_test')
                 cell_boo_selected &= ~(fail_not_app | fail_min_fr)
-        partition_print(f'    {label} - cells remaining after min firing-rate check: {np.sum(cell_boo_selected)}')
+        partition_print(f'    {partition_label} - cells remaining after min firing-rate check: {np.sum(cell_boo_selected)}')
 
         # criterion 2: minimum presence ratio in [-400, 1400) ms (selected-correct trials)
         presence_ratio_selection = np.full(num_cells_total, np.nan, dtype=np.float64)
@@ -844,7 +844,7 @@ def process_session(
             add_rejection_reason(fail_not_app, 'fail_min_presence_ratio_not_applicable')
             add_rejection_reason(fail_min_presence, 'fail_min_presence_ratio')
             cell_boo_selected &= ~(fail_not_app | fail_min_presence)
-        partition_print(f'    {label} - cells remaining after presence-ratio check: {np.sum(cell_boo_selected)}')
+        partition_print(f'    {partition_label} - cells remaining after presence-ratio check: {np.sum(cell_boo_selected)}')
 
         var_ratio_stage1 = None
         sliding_ratio_stage2 = None
@@ -893,7 +893,7 @@ def process_session(
                 add_rejection_reason(fail_not_app, 'fail_temp_dep_stage1_not_applicable')
                 add_rejection_reason(fail_stage1, 'fail_temp_dep_stage1')
                 cell_boo_selected &= ~(fail_not_app | fail_stage1)
-            partition_print(f'    {label} - cells remaining after temporal dependency check (stage 1): {np.sum(cell_boo_selected)}')
+            partition_print(f'    {partition_label} - cells remaining after temporal dependency check (stage 1): {np.sum(cell_boo_selected)}')
 
             stage2_global_ok = (
                 num_trials_selected >= config.min_trial_for_temp_check
@@ -923,7 +923,7 @@ def process_session(
                 add_rejection_reason(fail_not_app, 'fail_temp_dep_stage2_not_applicable')
                 add_rejection_reason(fail_stage2, 'fail_temp_dep_stage2')
                 cell_boo_selected &= ~(fail_not_app | fail_stage2)
-            partition_print(f'    {label} - cells remaining after temporal dependency check (stage 2): {np.sum(cell_boo_selected)}')
+            partition_print(f'    {partition_label} - cells remaining after temporal dependency check (stage 2): {np.sum(cell_boo_selected)}')
 
             # criterion: baseline activity trend over selected-correct trials (Pearson r)
             r_stage3_baseline = np.full(num_cells_total, np.nan, dtype=np.float64)
@@ -964,7 +964,7 @@ def process_session(
                     add_rejection_reason(fail_stage3_baseline, 'fail_temp_dep_stage3_baseline')
                     cell_boo_selected &= ~(fail_not_app | fail_stage3_baseline)
             partition_print(
-                f'    {label} - cells remaining after baseline temporal dependency check (stage 3 baseline): '
+                f'    {partition_label} - cells remaining after baseline temporal dependency check (stage 3 baseline): '
                 f'{np.sum(cell_boo_selected)}'
             )
         else:
@@ -1032,7 +1032,7 @@ def process_session(
                 add_rejection_reason(fail_not_app, 'fail_sig_pev_not_applicable')
                 add_rejection_reason(fail_sig_pev, 'fail_sig_pev')
                 cell_boo_selected &= ~(fail_not_app | fail_sig_pev)
-        partition_print(f'    {label} - cells remaining after significant PEV check: {np.sum(cell_boo_selected)}')
+        partition_print(f'    {partition_label} - cells remaining after significant PEV check: {np.sum(cell_boo_selected)}')
 
         # criterion: preferred-cue temporal stability (stage 3)
         if config.temp_dep_detection:
@@ -1068,7 +1068,7 @@ def process_session(
             add_rejection_reason(fail_stage3, 'fail_temp_dep_stage3')
             cell_boo_selected &= ~(fail_stage3_not_app | fail_stage3)
             partition_print(
-                f'    {label} - cells remaining after temporal stability check (stage 3): {np.sum(cell_boo_selected)}'
+                f'    {partition_label} - cells remaining after temporal stability check (stage 3): {np.sum(cell_boo_selected)}'
             )
 
         # keep only cells that pass all active criteria
@@ -1081,19 +1081,19 @@ def process_session(
         bin_boo_pev_selected = bin_boo_pev[cell_idx_selected]
 
         group_boo = np.asarray([mean_pref_test == l for l in labels_set])
-        partition_print(f'    {label} - group_boo.shape (label, cell): {group_boo.shape}')
+        partition_print(f'    {partition_label} - group_boo.shape (label, cell): {group_boo.shape}')
         # count number of cells selective to each cue location
         num_cells_per_group = np.sum(group_boo, axis=1)
         # total PEV per group
         total_pev_per_group = np.asarray([mean_pev_test[group_boo[i]].sum() for i in range(len(labels_set))])
 
-        partition_print(f'    {label} - number of cells per group (preferred cue location):')
+        partition_print(f'    {partition_label} - number of cells per group (preferred cue location):')
         for i, l in enumerate(labels_set):
             partition_print(f'      Label {l}: {num_cells_per_group[i]} cells, Total PEV: {total_pev_per_group[i]:.2f}')
 
         if np.any(num_cells_per_group >= config.min_cell_per_group):
-            partition_print(f'    {label} - found a good session window from {session} with at least {config.min_cell_per_group} cells in one group.')
-            partition_print(f'    {label} - session window is {trial_start} to {trial_end} (size: {trial_end - trial_start})')
+            partition_print(f'    {partition_label} - found a good session window from {session} with at least {config.min_cell_per_group} cells in one group.')
+            partition_print(f'    {partition_label} - session window is {trial_start} to {trial_end} (size: {trial_end - trial_start})')
 
         trial_idx_selected = np.nonzero(trial_boo_selected)[0]
         cell_properties = {
@@ -1225,7 +1225,7 @@ def main(config: Config):
             unmatched_figure_keys,
             key=lambda x: (x[0], x[1], x[2], -1 if x[3] is None else x[3]),
         ):
-            holdout_text = 'baseline' if key[3] is None else f'holdout {key[3]}'
+            holdout_text = 'no-holdout' if key[3] is None else f'holdout {key[3]}'
             print(
                 f'Warning: diagnostics figure target not found; skipping session={key[0]}, '
                 f'window=[{key[1]}, {key[2]}), {holdout_text}.'

@@ -250,18 +250,18 @@ def main(config: Config):
         partitions_by_session.setdefault(out['session'], []).append(out)
 
     # Identify good sessions with enough trials in good partitions.
-    # Prefer baseline partitions (w/o LOO) for trial coverage and preferred cue estimation.
+    # Prefer no-holdout partitions (w/o LOO) for trial coverage and preferred cue estimation.
     good_sessions = {}
     for session, parts in partitions_by_session.items():
-        baseline_parts = [p for p in parts if p.get('trial_holdout') is None]
-        parts_for_trials = baseline_parts if baseline_parts else parts
+        no_holdout_parts = [p for p in parts if p.get('trial_holdout') is None]
+        parts_for_trials = no_holdout_parts if no_holdout_parts else parts
         # Count unique trials covered by good partitions
         covered_trial_count = total_unique_trials(parts_for_trials)
         if covered_trial_count < config.min_trials_good_session:
             continue
         partition_pref = []
         # Session-level preferred cue estimation
-        pref_parts = baseline_parts if baseline_parts else parts
+        pref_parts = no_holdout_parts if no_holdout_parts else parts
         for p in pref_parts:
             pref_cues = np.asarray(p['cell_properties']['mean_pref_test'])
             pref_cue = preferred_cue_from_cells(pref_cues)
@@ -272,7 +272,7 @@ def main(config: Config):
             good_sessions[session] = {
                 'preferred_cue': session_pref,
                 'partitions': parts,
-                'baseline_partitions': baseline_parts,
+                'no_holdout_partitions': no_holdout_parts,
             }
 
     if not good_sessions:
@@ -299,9 +299,9 @@ def main(config: Config):
         opposite_cue = get_opposite_cue(pref_cue)
 
         partitions = session_info['partitions']
-        baseline_parts = session_info.get('baseline_partitions', [])
-        if not baseline_parts:
-            baseline_parts = [p for p in partitions if p.get('trial_holdout') is None]
+        no_holdout_parts = session_info.get('no_holdout_partitions', [])
+        if not no_holdout_parts:
+            no_holdout_parts = [p for p in partitions if p.get('trial_holdout') is None]
         # group partitions by their holdout trial (if any) for LOO cell selection
         holdout_map: dict[int, list] = {}
         if config.loo_cell_selection:
@@ -311,14 +311,14 @@ def main(config: Config):
                     continue
                 holdout_map.setdefault(int(th), []).append(p)
 
-        # quick sanity check: cell pool for preferred cue (from baseline partitions)
-        baseline_cell_set = set()
-        for p in baseline_parts:
+        # quick sanity check: cell pool for preferred cue (from no-holdout partitions)
+        no_holdout_cell_set = set()
+        for p in no_holdout_parts:
             cell_props = p['cell_properties']
             pref_cues = np.asarray(cell_props['mean_pref_test'])
             cells = np.asarray(cell_props['cell_idx'])
-            baseline_cell_set.update(cells[pref_cues == pref_cue].tolist())
-        if not baseline_cell_set:
+            no_holdout_cell_set.update(cells[pref_cues == pref_cue].tolist())
+        if not no_holdout_cell_set:
             print('  Skipping: no preferred-cue cells found')
             continue
 
@@ -335,7 +335,7 @@ def main(config: Config):
             continue
         print(
             f'  Cue {pref_cue} vs {opposite_cue}, '
-            f'~{len(baseline_cell_set)} cells, {selected_trial_idx.size} trials '
+            f'~{len(no_holdout_cell_set)} cells, {selected_trial_idx.size} trials '
             f'({test_sel_indices.size} test trials)'
         )
 
@@ -344,16 +344,16 @@ def main(config: Config):
         def decode_trial(idx_test: int):
             trial_abs = int(selected_trial_idx[idx_test])
             if config.loo_cell_selection:
-                baseline_non_overlap = [
-                    p for p in baseline_parts
+                no_holdout_non_overlap = [
+                    p for p in no_holdout_parts
                     if not (trial_abs >= p['trial_start'] and trial_abs < p['trial_end'])
                 ]
                 holdout_parts = holdout_map.get(trial_abs, [])
-                if not holdout_parts and not baseline_non_overlap:
+                if not holdout_parts and not no_holdout_non_overlap:
                     return ('warn_no_partitions', trial_abs, None, None, None)
-                applicable_parts = baseline_non_overlap + holdout_parts
+                applicable_parts = no_holdout_non_overlap + holdout_parts
             else:
-                applicable_parts = baseline_parts
+                applicable_parts = no_holdout_parts
 
             cell_idx_set = set()
             for p in applicable_parts:
@@ -388,7 +388,7 @@ def main(config: Config):
         num_cells_per_trial: list[int] = []
         for status, trial_abs, conf, null_conf, n_cell in decoded:
             if status == 'warn_no_partitions':
-                print(f'  Skipping test trial {trial_abs}: no matching LOO partition and all baseline partitions overlap this trial')
+                print(f'  Skipping test trial {trial_abs}: no matching LOO partition and all no-holdout partitions overlap this trial')
                 continue
             if status == 'warn_no_cells':
                 print(f'  Skipping test trial {trial_abs}: no preferred-cue cells from applicable partitions')
