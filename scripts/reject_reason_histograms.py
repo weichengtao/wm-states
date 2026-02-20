@@ -10,11 +10,24 @@ os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matpl
 
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 import pandas as pd
 import tyro
 
 matplotlib.use("Agg")
+
+REASON_LABELS = {
+    "pass": "Pass",
+    "fail_sig_pev": "PEV",
+    "fail_min_presence_ratio": "Presence\nratio",
+    "fail_min_fr_test": "Firing\nrate",
+    "fail_temp_dep_stage1": "Var ratio\n(delay / baseline)",
+    "fail_temp_dep_stage2": "Var ratio\n(sliding / full)",
+    "fail_temp_dep_stage3": "|r| of\ndelay",
+    "fail_temp_dep_stage3_baseline": "|r| of\nbaseline",
+}
+NOT_APPLICABLE_SUFFIX = "_not_applicable"
 
 
 def split_rejection_reasons(value: object) -> list[str]:
@@ -30,6 +43,30 @@ def split_rejection_reasons(value: object) -> list[str]:
         return ["pass"]
     parts = [p.strip() for p in text.split("|") if p.strip()]
     return parts if parts else ["pass"]
+
+
+def format_reason_label(reason: str) -> str:
+    if reason.endswith(NOT_APPLICABLE_SUFFIX):
+        base = reason[: -len(NOT_APPLICABLE_SUFFIX)]
+        base_label = REASON_LABELS.get(base, base)
+        return f"{base_label} N/A"
+    return REASON_LABELS.get(reason, reason)
+
+
+def compute_percent_grid(max_count: float, n_cells: int, target_ticks: int = 6) -> tuple[float, float]:
+    if n_cells <= 0:
+        return 1.0, 1.0
+    max_percent = max(0.0, (float(max_count) / float(n_cells)) * 100.0)
+    if max_percent <= 0.0:
+        return 1.0, 1.0
+    steps = (1.0, 2.0, 5.0, 10.0, 20.0, 25.0, 50.0)
+    step = 100.0
+    for cand in steps:
+        if max_percent / cand <= target_ticks:
+            step = cand
+            break
+    max_percent_rounded = float(np.ceil(max_percent / step) * step)
+    return max_percent_rounded, step
 
 
 def format_holdout_value(trial_holdout: object) -> str:
@@ -118,6 +155,7 @@ def main(config: Config) -> None:
 
         items = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
         reasons = [r for r, _ in items]
+        reason_labels = [format_reason_label(r) for r in reasons]
         counts = np.asarray([c for _, c in items], dtype=np.int64)
         unique_counts = np.asarray([unique_counter.get(r, 0) for r in reasons], dtype=np.int64)
 
@@ -141,48 +179,62 @@ def main(config: Config) -> None:
 
         holdout_label = format_holdout_value(trial_holdout)
         title = (
-            f"session={session} | window=[{trial_start},{trial_end}) | holdout={holdout_label}"
+            f"session = {session} | trial window = [{trial_start},{trial_end}) | trial holdout = {holdout_label}"
         )
 
-        # Make the figure wide enough so labels remain readable for typical reason counts.
-        fig_w = max(10.0, 0.55 * max(1, len(reasons)))
-        x = np.arange(len(reasons), dtype=np.int64)
+        # Scale figure height with number of reasons to keep y-axis labels readable.
+        fig_h = max(4.5, 0.42 * max(1, len(reasons)))
+        fig_w = 10.0
+        y = np.arange(len(reasons), dtype=np.int64)
 
         fig, (ax_total, ax_unique) = plt.subplots(
-            2,
             1,
-            figsize=(fig_w, 7.5),
-            sharex=True,
+            2,
+            figsize=(fig_w, fig_h),
+            sharey=True,
             layout="constrained",
         )
+        fig.suptitle(title)
 
-        ax_total.bar(x, counts, color="#4C78A8")
-        ax_total.set_title(title)
-        ax_total.set_ylabel("Cell count")
-        ax_total.set_ylim(bottom=0)
-        ax_total.tick_params(axis="x", labelbottom=False)
+        ax_total.barh(y, counts, color="#4C78A8")
+        ax_total.set_xlabel("Cell count")
+        ax_total.set_ylabel("Rejection reason")
+        ax_total.set_yticks(y)
+        ax_total.set_yticklabels(reason_labels)
+        total_max_count = float(counts.max()) if counts.size else 0.0
+        total_max_percent, total_percent_step = compute_percent_grid(total_max_count, n_cells)
+        total_xlim_max = max(1.0, (total_max_percent / 100.0) * float(n_cells))
+        ax_total.set_xlim(0, total_xlim_max)
+        ax_total.xaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
+        ax_total.invert_yaxis()
 
-        ax_unique.bar(x, unique_counts, color="#F58518")
-        ax_unique.set_ylabel("Unique cell count")
-        ax_unique.set_xlabel("Reject reason")
-        ax_unique.set_xticks(x)
-        ax_unique.set_xticklabels(reasons, rotation=45, ha="right")
-        ax_unique.set_ylim(bottom=0)
+        ax_unique.barh(y, unique_counts, color="#F58518")
+        ax_unique.set_xlabel("Unique cell count")
+        unique_max_count = float(unique_counts.max()) if unique_counts.size else 0.0
+        unique_max_percent, unique_percent_step = compute_percent_grid(unique_max_count, n_cells)
+        unique_xlim_max = max(1.0, (unique_max_percent / 100.0) * float(n_cells))
+        ax_unique.set_xlim(0, unique_xlim_max)
+        ax_unique.xaxis.set_major_locator(MaxNLocator(nbins=6, integer=True))
+        ax_unique.tick_params(axis="y", labelleft=False)
 
-        # Right axis is percent of cells in the partition (denominator is always total cells).
-        ax_total2 = ax_total.twinx()
-        ax_total2.set_ylim(ax_total.get_ylim())
-        ticks = ax_total.get_yticks()
-        ax_total2.set_yticks(ticks)
-        ax_total2.set_yticklabels([f"{(t / n_cells) * 100.0:.1f}" for t in ticks])
-        ax_total2.set_ylabel("Percent of cells (%)")
+        # Top x-axes show percent of cells in the partition.
+        ax_total2 = ax_total.twiny()
+        ax_total2.set_xlim(0, total_max_percent)
+        total_percent_ticks = np.arange(0.0, total_max_percent + 0.5 * total_percent_step, total_percent_step)
+        ax_total2.set_xticks(total_percent_ticks)
+        ax_total2.set_xticklabels([f"{int(t)}" for t in total_percent_ticks])
+        ax_total2.set_xlabel("Percent of cells (%)")
 
-        ax_unique2 = ax_unique.twinx()
-        ax_unique2.set_ylim(ax_unique.get_ylim())
-        ticks = ax_unique.get_yticks()
-        ax_unique2.set_yticks(ticks)
-        ax_unique2.set_yticklabels([f"{(t / n_cells) * 100.0:.1f}" for t in ticks])
-        ax_unique2.set_ylabel("Percent of cells (%)")
+        ax_unique2 = ax_unique.twiny()
+        ax_unique2.set_xlim(0, unique_max_percent)
+        unique_percent_ticks = np.arange(
+            0.0,
+            unique_max_percent + 0.5 * unique_percent_step,
+            unique_percent_step,
+        )
+        ax_unique2.set_xticks(unique_percent_ticks)
+        ax_unique2.set_xticklabels([f"{int(t)}" for t in unique_percent_ticks])
+        ax_unique2.set_xlabel("Percent of cells (%)")
 
         file_name = (
             f"session_{session}__trial_{trial_start}_{trial_end}__holdout_{holdout_label}.png"
