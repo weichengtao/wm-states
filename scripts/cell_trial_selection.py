@@ -238,6 +238,7 @@ class Config:
 
     save_extended_diagnostics: bool = False # Save additional diagnostic measures and figures
     diagnostics_figure_config: Path | None = None # Optional JSON config listing which per-cell diagnostic figures to save
+    skip_not_applicable_reasons_in_diagnostics_figure: bool = True # Hide *_not_applicable reasons in diagnostics figure text unless they are the only reasons
 
 def load_loo_cue_labels(path: Path) -> dict[str, set[int]]:
     """Return a mapping from session string -> set of candidate cue labels."""
@@ -458,6 +459,55 @@ def compute_extended_partition_metrics(
 
     return presence_ratio, r_s_baseline, cv_residual_baseline, baseline_counts, delay_counts
 
+
+FIGURE_REASON_LABELS = {
+    'pass': 'Pass',
+    'fail_sig_pev': 'PEV',
+    'fail_min_presence_ratio': 'Presence ratio',
+    'fail_min_fr_test': 'Firing rate',
+    'fail_temp_dep_stage1': 'Var ratio (delay / baseline)',
+    'fail_temp_dep_stage2': 'Var ratio (sliding / full)',
+    'fail_temp_dep_stage3': '|r| of delay',
+    'fail_temp_dep_stage3_baseline': '|r| of baseline',
+}
+FIGURE_NOT_APPLICABLE_SUFFIX = '_not_applicable'
+
+
+def split_rejection_reasons_for_figure(value: object) -> list[str]:
+    if not isinstance(value, str):
+        return ['pass']
+    text = value.strip()
+    if text == '' or text.lower() == 'nan':
+        return ['pass']
+    parts = [p.strip() for p in text.split('|') if p.strip()]
+    return parts if parts else ['pass']
+
+
+def format_reject_reason_for_figure(
+    raw_reason: object,
+    skip_not_applicable_reasons: bool = True,
+) -> str:
+    """Format reject reasons for diagnostics figure display."""
+    parts = split_rejection_reasons_for_figure(raw_reason)
+    if skip_not_applicable_reasons:
+        parts_without_not_applicable = [
+            reason for reason in parts if not reason.endswith(FIGURE_NOT_APPLICABLE_SUFFIX)
+        ]
+        # If every reason is *_not_applicable, keep them to avoid an empty/ambiguous label.
+        if len(parts_without_not_applicable) > 0:
+            parts = parts_without_not_applicable
+
+    formatted: list[str] = []
+    for reason in parts:
+        if reason.endswith(FIGURE_NOT_APPLICABLE_SUFFIX):
+            base_reason = reason[: -len(FIGURE_NOT_APPLICABLE_SUFFIX)]
+            base_label = FIGURE_REASON_LABELS.get(base_reason, base_reason)
+            formatted.append(f'{base_label} N/A')
+        else:
+            formatted.append(FIGURE_REASON_LABELS.get(reason, reason))
+    return ' | '.join(formatted)
+
+
 def save_diagnostic_cell_figure(
     figure_file: Path,
     session: str,
@@ -471,6 +521,7 @@ def save_diagnostic_cell_figure(
     cv_residual_baseline: float,
     baseline_counts: np.ndarray,
     delay_counts: np.ndarray,
+    skip_not_applicable_reasons: bool = True,
 ):
     """
     Save one per-cell diagnostics figure with vertically stacked baseline/delay spike-count traces.
@@ -479,7 +530,7 @@ def save_diagnostic_cell_figure(
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
-    partition_tag = 'no_holdout' if trial_holdout is None else f'holdout_{trial_holdout}'
+    partition_tag = 'Trial holdout: none' if trial_holdout is None else f'Trial holdout: {trial_holdout}'
     x = np.arange(baseline_counts.shape[0], dtype=np.int64)
     def fmt(v: float) -> str:
         return 'NaN' if np.isnan(v) else f'{v:.3f}'
@@ -490,14 +541,19 @@ def save_diagnostic_cell_figure(
         prefix = '*' if is_flagged else ''
         return f'{prefix}{v:.3f}'
 
+    reject_reason_label = format_reject_reason_for_figure(
+        reject_reason,
+        skip_not_applicable_reasons=skip_not_applicable_reasons,
+    )
+
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
     ax_baseline, ax_delay = axes
     ax_baseline.plot(x, baseline_counts, linewidth=1.5)
     ax_baseline.set_ylabel('Baseline spike count')
     ax_baseline.set_title(
-        f'Session {session} | [{trial_start}, {trial_end}) | {partition_tag} | cell {cell_idx}\n'
-        f'reject_reason={reject_reason}\n'
-        f'presence_ratio={flagged_value(presence_ratio, presence_ratio < 0.9)}, '
+        f'Session {session} | Trial [{trial_start}, {trial_end}) | {partition_tag} | Cell {cell_idx}\n'
+        f'Rejection reasons: {reject_reason_label}\n'
+        f'Matt\'s: presence_ratio={flagged_value(presence_ratio, presence_ratio < 0.9)}, '
         f'r_s_baseline={flagged_value(r_s_baseline, np.abs(r_s_baseline) > 0.3)}, '
         f'cv_residual_baseline={flagged_value(cv_residual_baseline, cv_residual_baseline > 2.0)}'
     )
@@ -745,6 +801,7 @@ def process_session(
                                 cv_residual_baseline=float(cv_residual_baseline[cell_idx]),
                                 baseline_counts=baseline_counts_diag[:, cell_idx],
                                 delay_counts=delay_counts_diag[:, cell_idx],
+                                skip_not_applicable_reasons=config.skip_not_applicable_reasons_in_diagnostics_figure,
                             )
                         except Exception as e:
                             partition_print(
