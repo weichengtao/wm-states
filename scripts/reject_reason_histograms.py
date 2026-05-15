@@ -15,7 +15,13 @@ import numpy as np
 import pandas as pd
 import tyro
 
+try:
+    from scripts.figure_exports import configure_figure_style, save_figure_all_formats
+except ModuleNotFoundError:
+    from figure_exports import configure_figure_style, save_figure_all_formats
+
 matplotlib.use("Agg")
+configure_figure_style(matplotlib)
 
 REASON_LABELS = {
     "pass": "Pass",
@@ -87,7 +93,7 @@ class Config:
     output_dir: Path | None = None
     summary_csv: Path | None = None
     skip_not_applicable: bool = True
-    dpi: int = 200
+    dpi: int = 300
 
 
 def main(config: Config) -> None:
@@ -239,7 +245,7 @@ def main(config: Config) -> None:
         file_name = (
             f"session_{session}__trial_{trial_start}_{trial_end}__holdout_{holdout_label}.png"
         )
-        fig.savefig(output_dir / file_name, dpi=config.dpi)
+        save_figure_all_formats(fig, output_dir / file_name, dpi=config.dpi)
         plt.close(fig)
 
     if summary_rows:

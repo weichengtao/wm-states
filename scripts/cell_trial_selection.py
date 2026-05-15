@@ -13,6 +13,11 @@ from numba import njit
 from scipy.io import loadmat
 from scipy.stats import circmean, linregress, spearmanr
 
+try:
+    from scripts.figure_exports import configure_figure_style, save_figure_all_formats, save_figure_png_only
+except ModuleNotFoundError:
+    from figure_exports import configure_figure_style, save_figure_all_formats, save_figure_png_only
+
 
 @njit(cache=True)
 def get_pev(samples, tags, conditions) -> float | None:
@@ -528,6 +533,7 @@ def save_diagnostic_cell_figure(
     """
     import matplotlib
     matplotlib.use('Agg')
+    configure_figure_style(matplotlib)
     import matplotlib.pyplot as plt
 
     partition_tag = 'Trial holdout: none' if trial_holdout is None else f'Trial holdout: {trial_holdout}'
@@ -562,8 +568,126 @@ def save_diagnostic_cell_figure(
     ax_delay.set_ylabel('Delay spike count')
     ax_delay.set_xlabel('Relative trial index')
     fig.tight_layout()
-    fig.savefig(figure_file, dpi=160)
+    save_figure_png_only(fig, figure_file, dpi=300)
     plt.close(fig)
+
+
+def save_diagnostic_session_cue_figure(
+    figure_file: Path,
+    session: str,
+    cue_label: int,
+    trial_start: int,
+    trial_end: int,
+    trial_holdout: int | None,
+    cell_idx: np.ndarray,
+    cue_trial_idx: np.ndarray,
+    baseline_counts: np.ndarray,
+    delay_counts: np.ndarray,
+    *,
+    align_y_upper: bool = False,
+):
+    """
+    Save one session-level cue diagnostics figure with one row per selected cell.
+
+    Baseline and delay panels use separate y-axis upper limits by default; set
+    align_y_upper=True to use the same upper limit for both panels.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    configure_figure_style(matplotlib)
+    import matplotlib.pyplot as plt
+
+    cell_idx = np.asarray(cell_idx, dtype=np.int64)
+    cue_trial_idx = np.asarray(cue_trial_idx, dtype=np.int64)
+    num_cells = int(cell_idx.size)
+    if num_cells == 0:
+        return
+
+    x = np.arange(baseline_counts.shape[0], dtype=np.int64)
+    fig_width = 12.0
+    base_height = 2.0
+    row_height = 0.85
+    fig_height = max(3.0, base_height + num_cells * row_height)
+    fig, axes = plt.subplots(
+        num_cells,
+        2,
+        figsize=(fig_width, fig_height),
+        sharex=True,
+        squeeze=False,
+    )
+
+    partition_parts = []
+    if trial_start != 0 or trial_end != baseline_counts.shape[0]:
+        partition_parts.append(f'Trial [{trial_start}, {trial_end})')
+    if trial_holdout is not None:
+        partition_parts.append(f'Holdout {trial_holdout}')
+    partition_text = '' if len(partition_parts) == 0 else ' | ' + ' | '.join(partition_parts)
+    fig.suptitle(
+        f'Session {session} | {cue_to_deg(cue_label)}° | {num_cells} cells{partition_text}',
+        fontsize=12,
+    )
+
+    def get_y_upper(values: np.ndarray) -> float:
+        finite_values = values[np.isfinite(values)]
+        if finite_values.size == 0:
+            return 1.0
+        max_count = float(np.max(finite_values))
+        return 1.0 if max_count <= 0 else max_count * 1.05
+
+    for row_idx, current_cell_idx in enumerate(cell_idx):
+        ax_baseline, ax_delay = axes[row_idx]
+        baseline_curve = baseline_counts[:, current_cell_idx]
+        delay_curve = delay_counts[:, current_cell_idx]
+
+        if align_y_upper:
+            y_upper = get_y_upper(np.concatenate([baseline_curve, delay_curve]))
+            baseline_y_upper = y_upper
+            delay_y_upper = y_upper
+        else:
+            baseline_y_upper = get_y_upper(baseline_curve)
+            delay_y_upper = get_y_upper(delay_curve)
+
+        ax_baseline.plot(x, baseline_curve, color='tab:orange', linewidth=0.6)
+        ax_delay.plot(x, delay_curve, color='tab:orange', linewidth=0.6)
+
+        if cue_trial_idx.size > 0:
+            baseline_cue_counts = baseline_curve[cue_trial_idx]
+            valid_baseline = np.isfinite(baseline_cue_counts)
+            ax_baseline.vlines(
+                cue_trial_idx[valid_baseline],
+                0,
+                baseline_cue_counts[valid_baseline],
+                color='tab:blue',
+                linewidth=0.6,
+            )
+
+            delay_cue_counts = delay_curve[cue_trial_idx]
+            valid_delay = np.isfinite(delay_cue_counts)
+            ax_delay.vlines(
+                cue_trial_idx[valid_delay],
+                0,
+                delay_cue_counts[valid_delay],
+                color='tab:blue',
+                linewidth=0.6,
+            )
+
+        ax_baseline.set_ylim(0, baseline_y_upper)
+        ax_delay.set_ylim(0, delay_y_upper)
+        ax_baseline.set_ylabel(f'Cell {current_cell_idx}', fontsize=7)
+        ax_baseline.tick_params(labelsize=7)
+        ax_delay.tick_params(labelsize=7)
+
+        if row_idx == 0:
+            ax_baseline.set_title('Baseline spike count', fontsize=10)
+            ax_delay.set_title('Delay spike count', fontsize=10)
+        if row_idx == num_cells - 1:
+            ax_baseline.set_xlabel('Trial')
+            ax_delay.set_xlabel('Trial')
+
+    fig.tight_layout(rect=(0, 0, 1, 0.985))
+    save_figure_all_formats(fig, figure_file, dpi=300)
+    plt.close(fig)
+
 
 def process_session(
     data_file: Path,
@@ -571,7 +695,8 @@ def process_session(
     loo_cue_map: dict[str, set[int]] | None = None,
     n_jobs_partition: int = 1,
     figure_targets: dict[tuple[str, int, int, int | None], dict[str, Any]] | None = None,
-    figures_dir: Path | None = None,
+    cell_figures_dir: Path | None = None,
+    session_figures_dir: Path | None = None,
 ):
     session = data_file.stem
     session_loo_cues: set[int] = set()
@@ -650,6 +775,16 @@ def process_session(
     diag_presence_mask = (t >= -400) & (t < 1400)
     diag_baseline_mask = (t >= -400) & (t < 0)
     diag_delay_mask = (t >= 500) & (t < 1400)
+    if config.save_extended_diagnostics:
+        _, _, _, baseline_counts_session, delay_counts_session = compute_extended_partition_metrics(
+            spikes,
+            baseline_mask=diag_baseline_mask,
+            delay_mask=diag_delay_mask,
+            presence_mask=diag_presence_mask,
+        )
+    else:
+        baseline_counts_session = np.full((num_trials, num_cells_total), np.nan, dtype=np.float64)
+        delay_counts_session = np.full((num_trials, num_cells_total), np.nan, dtype=np.float64)
     if config.save_extended_diagnostics:
         if not np.any(diag_presence_mask):
             print('  Warning: diagnostics presence window (-400 to 1400 ms) has zero bins; presence_ratio will be NaN.')
@@ -736,13 +871,13 @@ def process_session(
             if (
                 config.save_extended_diagnostics
                 and figure_targets is not None
-                and figures_dir is not None
+                and cell_figures_dir is not None
             ):
                 figure_key = (session, trial_start, trial_end, trial_holdout)
                 target_spec = figure_targets.get(figure_key)
                 if target_spec is not None:
                     matched_key = figure_key
-                    figures_dir.mkdir(parents=True, exist_ok=True)
+                    cell_figures_dir.mkdir(parents=True, exist_ok=True)
                     partition_tag = 'no_holdout' if trial_holdout is None else f'holdout_{trial_holdout}'
 
                     requested_cell_set = set(int(c) for c in target_spec.get('cells', set()))
@@ -784,7 +919,7 @@ def process_session(
                                 f'window=[{trial_start}, {trial_end}), trial_holdout={trial_holdout}.'
                             )
                             continue
-                        figure_file = figures_dir / (
+                        figure_file = cell_figures_dir / (
                             f'session_{session}__trial_{trial_start}_{trial_end}__{partition_tag}__cell_{cell_idx}.png'
                         )
                         try:
@@ -1189,6 +1324,46 @@ def process_session(
             'max_total_pev_per_group': np.max(total_pev_per_group),
             'cell_properties': cell_properties,
         }
+
+        if (
+            config.save_extended_diagnostics
+            and session_figures_dir is not None
+            and trial_holdout is None
+        ):
+            is_full_session_partition = trial_start == 0 and trial_end == num_trials
+            for i_cue, cue_label in enumerate(labels_set):
+                if num_cells_per_group[i_cue] < config.min_cell_per_group:
+                    continue
+
+                cue_cell_idx = cell_idx_selected[group_boo[i_cue]]
+                cue_trial_idx = np.nonzero(cue_labels == cue_label)[0]
+                if is_full_session_partition:
+                    figure_file = session_figures_dir / (
+                        f'session_{session}_cue_{int(cue_label)}_spike_counts.png'
+                    )
+                else:
+                    figure_file = session_figures_dir / (
+                        f'session_{session}_trial_{trial_start}_{trial_end}_cue_{int(cue_label)}_spike_counts.png'
+                    )
+                try:
+                    save_diagnostic_session_cue_figure(
+                        figure_file=figure_file,
+                        session=session,
+                        cue_label=int(cue_label),
+                        trial_start=trial_start,
+                        trial_end=trial_end,
+                        trial_holdout=trial_holdout,
+                        cell_idx=cue_cell_idx,
+                        cue_trial_idx=cue_trial_idx,
+                        baseline_counts=baseline_counts_session,
+                        delay_counts=delay_counts_session,
+                    )
+                except Exception as e:
+                    partition_print(
+                        f'    Warning: failed to save session diagnostics figure for session={session}, '
+                        f'cue={int(cue_label)}, window=[{trial_start}, {trial_end}): '
+                        f'{type(e).__name__}: {e}'
+                    )
         return finalize_partition(out)
 
     if n_jobs_partition > 1:
@@ -1222,6 +1397,8 @@ def main(config: Config):
     cache_dir.mkdir(parents=True, exist_ok=True)
     diagnostics_dir = cache_dir / 'diagnostics'
     figures_dir = diagnostics_dir / 'figures'
+    cell_figures_dir = figures_dir / 'cells'
+    session_figures_dir = figures_dir / 'sessions'
 
     # enforce single-level parallelism; prefer partition-level if both are requested
     jobs_session = config.n_jobs_session
@@ -1254,14 +1431,22 @@ def main(config: Config):
         for warning in figure_config_warnings:
             print(f'Warning: {warning}')
         if len(figure_targets) > 0:
-            figures_dir.mkdir(parents=True, exist_ok=True)
+            cell_figures_dir.mkdir(parents=True, exist_ok=True)
             print(
                 f'Loaded diagnostics figure config with {len(figure_targets)} partition target(s) '
                 f'from {config.diagnostics_figure_config}'
             )
 
     session_results = Parallel(n_jobs=jobs_session, verbose=10)(
-        delayed(process_session)(data_file, config, loo_cue_map, jobs_partition, figure_targets, figures_dir)
+        delayed(process_session)(
+            data_file,
+            config,
+            loo_cue_map,
+            jobs_partition,
+            figure_targets,
+            cell_figures_dir if config.save_extended_diagnostics else None,
+            session_figures_dir if config.save_extended_diagnostics else None,
+        )
         for data_file in data_files
     )
     outs = []

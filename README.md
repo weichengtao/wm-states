@@ -51,3 +51,26 @@ Notes for cell_trial_selection.py:
 - `--enable-trial-selection` runs across-trial sliding windows and uses `--trial-selection-window-size` / `--trial-selection-step-size`.
 - Without `--enable-trial-selection` (or with `--no-enable-trial-selection`), one full-session trial window (`[0, num_trials)`) is used.
 - Session-level minimum trial count is always enforced via `--min-trial-per-session` (default: `320`, counted on total trials including incorrect).
+
+## New pipeline
+```bash
+# Cell triaging pipeline
+# 1. Presence ratio
+# 2. Correlation
+# 3. PEV
+uv run python scripts/cell_trial_selection.py \
+--n-jobs-session 10 \
+--n-jobs-partition 1 \
+--data-dir data/nature \
+--cache-dir cache/run_010_full_session \
+--min-cell-per-group 15 \
+--min-fr-test -1 \
+--min-presence-ratio 0.9 \
+--var-ratio-threshold-delay-over-baseline -1 \
+--var-ratio-threshold-sliding-over-all -1 \
+--temp-dep-r-threshold 2 \
+--temp-dep-r-threshold-baseline 0.3 \
+--sig-pev-threshold 2.5 \
+--save-extended-diagnostics \
+--diagnostics-figure-config configs/diagnostic_figure_config.json
+```

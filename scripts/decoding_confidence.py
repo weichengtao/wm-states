@@ -13,7 +13,13 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
+try:
+    from scripts.figure_exports import configure_figure_style, save_figure_all_formats
+except ModuleNotFoundError:
+    from figure_exports import configure_figure_style, save_figure_all_formats
+
 matplotlib.use('Agg')
+configure_figure_style(matplotlib)
 
 def cue_to_deg(cue):
     """Convert cue indices (1-8) to degrees on a -135..180 scale."""
@@ -153,7 +159,7 @@ def plot_decoding_heatmap(
     ax.set_title(
         f'{session} ({cue_angle}$\\degree$), {num_cells} cells, {trial_idx_pref.size} trials'
     )
-    fig.savefig(fig_dir / f'{session}_{pref_cue}.png', dpi=300)
+    save_figure_all_formats(fig, fig_dir / f'{session}_{pref_cue}.png', dpi=300)
     plt.close(fig)
 
 def total_unique_trials(partitions):
@@ -169,7 +175,7 @@ def total_unique_trials(partitions):
 @dataclass
 class Config:
     """CLI configuration for decoding confidence analysis."""
-    n_jobs: int = 1 # numer of parallel jobs for single-trial decoding
+    n_jobs: int = 1 # number of parallel jobs for single-trial decoding
     seed: int = 42 # random seed for cue label balancing and shuffling
     data_dir: Path = Path('data/nature') # directory with {session}.mat files
     cache_dir: Path = Path('cache/run_001') # directory for cached results and figures
