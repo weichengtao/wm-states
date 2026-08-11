@@ -162,6 +162,30 @@ def plot_decoding_heatmap(
     save_figure_all_formats(fig, fig_dir / f'{session}_{pref_cue}.png', dpi=300)
     plt.close(fig)
 
+def plot_decoding_confidence_lineplot(
+    fig_dir,
+    session,
+    pref_cue,
+    cue_angle,
+    trial_idx_pref,
+    bin_starts,
+    decode_confidence,
+    num_cells,
+):
+    """Save a line plot of decoding confidence for each trial over time."""
+    fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+    for trial_confidence in decode_confidence:
+        ax.plot(bin_starts, trial_confidence, color='darkgray', alpha=0.1)
+    ax.set_xlim(-200, 1400)
+    ax.set_ylim(0, 1)
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel('Decoding Confidence')
+    ax.set_title(
+        f'{session} ({cue_angle}$\\degree$), {num_cells} cells, {trial_idx_pref.size} trials'
+    )
+    save_figure_all_formats(fig, fig_dir / f'{session}_{pref_cue}_lineplot.png', dpi=300)
+    plt.close(fig)
+
 def total_unique_trials(partitions):
     """Count unique trials covered by a list of partitions."""
     if not partitions:
@@ -199,9 +223,9 @@ def main(config: Config):
     it keeps correct trials from the preferred cue and its opposite, bins spike
     rates over sliding time windows, and decodes each preferred-cue trial in
     parallel to produce a time-by-trial confidence map. Optional label shuffles
-    generate a null distribution. Results are cached and per-session heatmaps
-    are saved; when plot-only mode is enabled, the cached results are used to
-    regenerate figures without recomputing decoding.
+    generate a null distribution. Results are cached and per-session heatmaps and
+    confidence line plots are saved; when plot-only mode is enabled, the cached
+    results are used to regenerate both figures without recomputing decoding.
     """
     cache_dir = config.cache_dir
     plot_actual_trial_id = config.plot_actual_trial_id
@@ -232,6 +256,16 @@ def main(config: Config):
                 bin_starts,
                 decode_confidence,
                 plot_actual_trial_id,
+                int(res.get('num_cells', 0)),
+            )
+            plot_decoding_confidence_lineplot(
+                fig_dir,
+                res.get('session', 'unknown_session'),
+                res.get('cue', 0),
+                res.get('cue_deg', 0),
+                trial_idx_pref,
+                bin_starts,
+                decode_confidence,
                 int(res.get('num_cells', 0)),
             )
         return
@@ -441,6 +475,16 @@ def main(config: Config):
             bin_starts,
             decode_confidence,
             plot_actual_trial_id,
+            int(max(num_cells_per_trial)),
+        )
+        plot_decoding_confidence_lineplot(
+            fig_dir,
+            session,
+            pref_cue,
+            cue_angle,
+            np.asarray(trial_idx_pref, dtype=np.int64),
+            bin_starts,
+            decode_confidence,
             int(max(num_cells_per_trial)),
         )
 
