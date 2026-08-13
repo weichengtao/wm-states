@@ -1,5 +1,6 @@
 import pickle
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 import matplotlib
@@ -9,6 +10,7 @@ import seaborn as sns
 import tyro
 from joblib import Parallel, delayed
 from scipy.io import loadmat
+from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -20,6 +22,32 @@ except ModuleNotFoundError:
 
 matplotlib.use('Agg')
 configure_figure_style(matplotlib)
+
+
+class CellsUsedForDecoder(str, Enum):
+    """Cell pool to use as decoder features."""
+
+    PREFERRED = 'preferred'
+    PREFERRED_AND_OPPOSITE = 'preferred_and_opposite'
+    SELECTIVE = 'selective'
+    STATIONARY = 'stationary'
+    PASSED_PRESENCE_RATIO = 'passed_presence_ratio'
+    ALL = 'all'
+
+
+class SVMKernel(str, Enum):
+    """Kernel used by the decoder's SVM classifier."""
+
+    RBF = 'rbf'
+    LINEAR = 'linear'
+
+
+class DecoderModel(str, Enum):
+    """Classifier used by the decoder."""
+
+    SVM = 'svm'
+    LOGISTIC_REGRESSION = 'logistic_regression'
+
 
 def cue_to_deg(cue):
     """Convert cue indices (1-8) to degrees on a -135..180 scale."""
@@ -47,12 +75,59 @@ def preferred_cue_from_partitions(partition_cues):
     best = np.argmax(counts)
     return int(cues[best])
 
+
+def decoder_cells_for_partition(
+    partition,
+    mode: CellsUsedForDecoder,
+    preferred_cue: int,
+    opposite_cue: int,
+    num_cells_total: int,
+) -> set[int]:
+    """Return the cell indices available to the decoder in one partition."""
+    if mode is CellsUsedForDecoder.ALL:
+        return set(range(num_cells_total))
+
+    if mode is CellsUsedForDecoder.STATIONARY:
+        if 'cell_idx_stationary' not in partition:
+            raise ValueError(
+                'The selection cache does not contain cell_idx_stationary. '
+                'Rerun scripts/cell_trial_selection.py before using '
+                'cells_used_for_decoder=stationary.'
+            )
+        return set(np.asarray(partition['cell_idx_stationary'], dtype=np.int64).tolist())
+
+    if mode is CellsUsedForDecoder.PASSED_PRESENCE_RATIO:
+        if 'cell_idx_passed_presence_ratio' not in partition:
+            raise ValueError(
+                'The selection cache does not contain cell_idx_passed_presence_ratio. '
+                'Rerun scripts/cell_trial_selection.py before using '
+                'cells_used_for_decoder=passed_presence_ratio.'
+            )
+        return set(
+            np.asarray(partition['cell_idx_passed_presence_ratio'], dtype=np.int64).tolist()
+        )
+
+    cell_properties = partition['cell_properties']
+    cells = np.asarray(cell_properties['cell_idx'], dtype=np.int64)
+    if mode is CellsUsedForDecoder.SELECTIVE:
+        return set(cells.tolist())
+
+    preferred_cues = np.asarray(cell_properties['mean_pref_test'])
+    if mode is CellsUsedForDecoder.PREFERRED:
+        keep = preferred_cues == preferred_cue
+    elif mode is CellsUsedForDecoder.PREFERRED_AND_OPPOSITE:
+        keep = (preferred_cues == preferred_cue) | (preferred_cues == opposite_cue)
+    else:
+        raise ValueError(f'Unsupported decoder cell mode: {mode}')
+    return set(cells[keep].tolist())
+
 def compute_binned_rates(spikes, t, bin_starts, window_ms):
     """Compute firing rates per trial, time bin, and cell."""
-    dt = t[1] - t[0]
+    dt = float(t[1] - t[0])
     num_trials, _, num_cells = spikes.shape
     num_bins = len(bin_starts)
     rates = np.empty((num_trials, num_bins, num_cells), dtype=np.float32)
+    max_float32 = np.finfo(np.float32).max
     for i, start in enumerate(bin_starts):
         # Build a mask for this time window and convert spike counts to Hz.
         mask = (t >= start) & (t < start + window_ms)
@@ -60,8 +135,20 @@ def compute_binned_rates(spikes, t, bin_starts, window_ms):
             rates[:, i, :] = 0.0
             continue
         duration_s = mask.sum() * dt / 1000.0
-        counts = spikes[:, mask, :].sum(axis=1)
-        rates[:, i, :] = counts / duration_s
+        if not np.isfinite(duration_s) or duration_s <= 0:
+            rates[:, i, :] = 0.0
+            continue
+        counts = np.asarray(spikes[:, mask, :], dtype=np.float64).sum(axis=1)
+        with np.errstate(divide='ignore', invalid='ignore', over='ignore'):
+            rate_bin = np.divide(
+                counts,
+                duration_s,
+                out=np.zeros_like(counts, dtype=np.float64),
+                where=duration_s != 0,
+            )
+        rate_bin = np.nan_to_num(rate_bin, nan=0.0, posinf=0.0, neginf=0.0)
+        rate_bin = np.clip(rate_bin, -max_float32, max_float32)
+        rates[:, i, :] = rate_bin.astype(np.float32, copy=False)
     return rates
 
 def decode_one_trial(
@@ -69,6 +156,10 @@ def decode_one_trial(
     binned_rates,
     labels,
     seed,
+    balance_decoder_training_trials: bool,
+    classifier_c: float,
+    decoder_model: DecoderModel,
+    svm_kernel: SVMKernel,
     n_shuffle,
 ):
     """Decode a single test trial across all bins with optional shuffles."""
@@ -84,33 +175,66 @@ def decode_one_trial(
     opp_idx = train_idx[y_train_full == 0]
     if pref_idx.size == 0 or opp_idx.size == 0:
         conf = np.full(num_bins, np.nan, dtype=np.float32)
+        predicted_labels = np.full(num_bins, -1, dtype=np.int8)
         null_conf = None if n_shuffle <= 0 else np.full((num_bins, n_shuffle), np.nan, dtype=np.float32)
-        return conf, null_conf
+        return conf, predicted_labels, null_conf
 
-    # Balance classes so the decoder isn't biased by class counts.
-    n_train = min(pref_idx.size, opp_idx.size)
-    pref_sel = rng.choice(pref_idx, size=n_train, replace=False)
-    opp_sel = rng.choice(opp_idx, size=n_train, replace=False)
-    train_balanced = np.concatenate([pref_sel, opp_sel])
+    if balance_decoder_training_trials:
+        # Balance classes so the decoder isn't biased by class counts.
+        n_train = min(pref_idx.size, opp_idx.size)
+        pref_sel = rng.choice(pref_idx, size=n_train, replace=False)
+        opp_sel = rng.choice(opp_idx, size=n_train, replace=False)
+        train_balanced = np.concatenate([pref_sel, opp_sel])
+    else:
+        # Use every available leave-one-out training trial.
+        train_balanced = train_idx
     y_bal = labels[train_balanced]
 
     conf = np.empty(num_bins, dtype=np.float32)
+    predicted_labels = np.empty(num_bins, dtype=np.int8)
     null_conf = None
     if n_shuffle > 0:
         null_conf = np.empty((num_bins, n_shuffle), dtype=np.float32)
 
     for b in range(num_bins):
         # Train a per-bin decoder to isolate the time-resolved confidence.
-        X_train = binned_rates[train_balanced, b, :]
-        X_test = binned_rates[test_idx, b, :][None, :]
+        X_train = np.nan_to_num(
+            binned_rates[train_balanced, b, :].astype(np.float64, copy=False),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        X_test = np.nan_to_num(
+            binned_rates[test_idx, b, :][None, :].astype(np.float64, copy=False),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        if decoder_model is DecoderModel.SVM:
+            classifier = SVC(
+                kernel=svm_kernel.value,
+                C=classifier_c,
+                probability=True,
+                random_state=seed,
+            )
+        elif decoder_model is DecoderModel.LOGISTIC_REGRESSION:
+            classifier = LogisticRegression(
+                solver='liblinear',
+                C=classifier_c,
+                max_iter=1000,
+                random_state=seed,
+            )
+        else:
+            raise ValueError(f'Unsupported decoder model: {decoder_model}')
         model = Pipeline([
             ("scaler", StandardScaler()),
-            ("svc", SVC(kernel="rbf", probability=True, random_state=seed)),
+            ("classifier", classifier),
         ])
         model.fit(X_train, y_bal)
         proba = model.predict_proba(X_test)[0]
         class_index = 1 if model.classes_[1] == 1 else 0
         conf[b] = proba[class_index]
+        predicted_labels[b] = model.predict(X_test)[0]
 
         if n_shuffle > 0:
             # Shuffle labels to estimate a null confidence distribution.
@@ -121,7 +245,7 @@ def decode_one_trial(
                 class_index = 1 if model.classes_[1] == 1 else 0
                 null_conf[b, s] = proba[class_index]
 
-    return conf, null_conf
+    return conf, predicted_labels, null_conf
 
 def plot_decoding_heatmap(
     fig_dir,
@@ -170,16 +294,58 @@ def plot_decoding_confidence_lineplot(
     trial_idx_pref,
     bin_starts,
     decode_confidence,
+    decode_predicted_labels,
+    test_labels,
     num_cells,
 ):
-    """Save a line plot of decoding confidence for each trial over time."""
+    """Save a line plot of decoding confidence and accuracy over time."""
     fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
     for trial_confidence in decode_confidence:
         ax.plot(bin_starts, trial_confidence, color='darkgray', alpha=0.1)
+
+    decode_predicted_labels = np.asarray(decode_predicted_labels)
+    test_labels = np.asarray(test_labels)
+    if decode_predicted_labels.shape != decode_confidence.shape:
+        raise ValueError(
+            'decode_predicted_labels must have the same shape as decode_confidence.'
+        )
+    if test_labels.shape != (decode_confidence.shape[0],):
+        raise ValueError('test_labels must contain one label per test trial.')
+
+    valid_predictions = np.isin(decode_predicted_labels, (0, 1))
+    correct_predictions = (
+        decode_predicted_labels == test_labels[:, None]
+    ) & valid_predictions
+    valid_count = valid_predictions.sum(axis=0)
+    decoding_accuracy = np.divide(
+        correct_predictions.sum(axis=0),
+        valid_count,
+        out=np.full(decode_confidence.shape[1], np.nan, dtype=np.float64),
+        where=valid_count > 0,
+    )
+    mean_confidence = np.nanmean(decode_confidence, axis=0)
+    ax.plot(
+        bin_starts,
+        decoding_accuracy,
+        color='tab:blue',
+        linestyle='-',
+        alpha=0.5,
+        label='Mean decoding accuracy',
+    )
+    ax.plot(
+        bin_starts,
+        mean_confidence,
+        color='tab:orange',
+        linestyle='-',
+        alpha=0.5,
+        label='Mean decoding confidence',
+    )
+    ax.axhline(0.5, color='black', linestyle='--', linewidth=1)
     ax.set_xlim(-200, 1400)
     ax.set_ylim(0, 1)
     ax.set_xlabel('Time (ms)')
-    ax.set_ylabel('Decoding Confidence')
+    ax.set_ylabel('Decoding Confidence / Accuracy')
+    ax.legend(loc='lower left', frameon=False)
     ax.set_title(
         f'{session} ({cue_angle}$\\degree$), {num_cells} cells, {trial_idx_pref.size} trials'
     )
@@ -203,7 +369,12 @@ class Config:
     seed: int = 42 # random seed for cue label balancing and shuffling
     data_dir: Path = Path('data/nature') # directory with {session}.mat files
     cache_dir: Path = Path('cache/run_001') # directory for cached results and figures
-    loo_cell_selection: bool = False # use leave-one-out cell selection entries when available
+    loo_cell_selection: bool = False # unsupported; raises if enabled
+    cells_used_for_decoder: CellsUsedForDecoder = CellsUsedForDecoder.PREFERRED # decoder feature-cell pool
+    decoder_model: DecoderModel = DecoderModel.SVM # classifier used by the decoder
+    svm_kernel: SVMKernel = SVMKernel.RBF # SVM kernel used by the decoder
+    balance_decoder_training_trials: bool = True # balance preferred/opposite training trials
+    classifier_c: float = 0.1 # regularization parameter shared by SVM and logistic regression
     min_cell_per_group: int = 12 # a good partition has at least one group with this many cells
     min_trials_good_session: int = 320 # a good session has at least this many trials in good partitions
     t_decode_start: int = -200
@@ -219,14 +390,32 @@ def main(config: Config):
     """Run decoding confidence analysis or generate plots from cached results.
 
     This analysis filters cached partition analyses to find sessions with enough
-    preferred-cue cells and sufficient stable trials. For each eligible session,
-    it keeps correct trials from the preferred cue and its opposite, bins spike
-    rates over sliding time windows, and decodes each preferred-cue trial in
-    parallel to produce a time-by-trial confidence map. Optional label shuffles
-    generate a null distribution. Results are cached and per-session heatmaps and
-    confidence line plots are saved; when plot-only mode is enabled, the cached
-    results are used to regenerate both figures without recomputing decoding.
+    cells in at least one preferred-cue group and sufficient stable trials. The
+    decoder feature-cell pool is controlled by cells_used_for_decoder, and the
+    classifier is controlled by decoder_model. SVM uses svm_kernel and
+    probability=True; logistic regression uses its intrinsic predict_proba.
+    Both classifiers use classifier_c as their regularization parameter.
+    For each eligible session, it keeps correct trials from the preferred cue
+    and its opposite, bins spike rates over sliding time windows, and decodes
+    each preferred-cue trial in parallel to produce a time-by-trial confidence map.
+    Optional label shuffles generate a null distribution. Training trials are
+    balanced by default, controlled by balance_decoder_training_trials. Results
+    are cached and per-session heatmaps and confidence line plots are saved; when
+    plot-only mode is enabled, the cached results are used to regenerate both
+    figures without recomputing decoding.
     """
+    decoder_mode = CellsUsedForDecoder(config.cells_used_for_decoder)
+    decoder_model = DecoderModel(config.decoder_model)
+    svm_kernel = SVMKernel(config.svm_kernel)
+    classifier_c = float(config.classifier_c)
+    if not np.isfinite(classifier_c) or classifier_c <= 0:
+        raise ValueError('classifier_c must be finite and greater than zero.')
+    if config.loo_cell_selection:
+        raise ValueError(
+            'loo_cell_selection is not supported by decoding_confidence.py; '
+            'set loo_cell_selection=False.'
+        )
+
     cache_dir = config.cache_dir
     plot_actual_trial_id = config.plot_actual_trial_id
 
@@ -245,8 +434,18 @@ def main(config: Config):
             trial_idx_pref = np.asarray(res.get('trial_idx', []), dtype=np.int64)
             bin_starts = np.asarray(res.get('time_bins', []))
             decode_confidence = np.asarray(res.get('decoding_confidence', []))
+            decode_predicted_labels = np.asarray(
+                res.get('decoding_predicted_labels', [])
+            )
+            decode_test_labels = np.asarray(res.get('decoding_test_labels', []))
             if decode_confidence.size == 0:
                 continue
+            if decode_predicted_labels.size == 0 or decode_test_labels.size == 0:
+                raise ValueError(
+                    f'Cached result for {res.get("session", "unknown_session")} is missing '
+                    'decoding_predicted_labels or decoding_test_labels; rerun decoding '
+                    'without --plot-only to regenerate the cache.'
+                )
             plot_decoding_heatmap(
                 fig_dir,
                 res.get('session', 'unknown_session'),
@@ -266,6 +465,8 @@ def main(config: Config):
                 trial_idx_pref,
                 bin_starts,
                 decode_confidence,
+                decode_predicted_labels,
+                decode_test_labels,
                 int(res.get('num_cells', 0)),
             )
         return
@@ -338,28 +539,33 @@ def main(config: Config):
         pref_cue = session_info['preferred_cue']
         opposite_cue = get_opposite_cue(pref_cue)
 
-        partitions = session_info['partitions']
         no_holdout_parts = session_info.get('no_holdout_partitions', [])
         if not no_holdout_parts:
-            no_holdout_parts = [p for p in partitions if p.get('trial_holdout') is None]
-        # group partitions by their holdout trial (if any) for LOO cell selection
-        holdout_map: dict[int, list] = {}
-        if config.loo_cell_selection:
-            for p in partitions:
-                th = p.get('trial_holdout')
-                if th is None:
-                    continue
-                holdout_map.setdefault(int(th), []).append(p)
+            no_holdout_parts = [
+                p for p in session_info['partitions'] if p.get('trial_holdout') is None
+            ]
 
-        # quick sanity check: cell pool for preferred cue (from no-holdout partitions)
-        no_holdout_cell_set = set()
-        for p in no_holdout_parts:
-            cell_props = p['cell_properties']
-            pref_cues = np.asarray(cell_props['mean_pref_test'])
-            cells = np.asarray(cell_props['cell_idx'])
-            no_holdout_cell_set.update(cells[pref_cues == pref_cue].tolist())
-        if not no_holdout_cell_set:
-            print('  Skipping: no preferred-cue cells found')
+        if decoder_mode is CellsUsedForDecoder.ALL:
+            decoder_cell_set = set(range(spikes.shape[2]))
+        else:
+            decoder_cell_set: set[int] | None = None
+            for partition in no_holdout_parts:
+                partition_cell_set = decoder_cells_for_partition(
+                    partition,
+                    decoder_mode,
+                    pref_cue,
+                    opposite_cue,
+                    spikes.shape[2],
+                )
+                if decoder_cell_set is None:
+                    decoder_cell_set = partition_cell_set
+                else:
+                    decoder_cell_set &= partition_cell_set
+            if decoder_cell_set is None:
+                decoder_cell_set = set()
+
+        if not decoder_cell_set:
+            print(f'  Skipping: no cells available for decoder mode {decoder_mode.value}')
             continue
 
         # Restrict to correct trials for preferred vs. opposite cue decoding.
@@ -375,7 +581,12 @@ def main(config: Config):
             continue
         print(
             f'  Cue {pref_cue} vs {opposite_cue}, '
-            f'~{len(no_holdout_cell_set)} cells, {selected_trial_idx.size} trials '
+            f'~{len(decoder_cell_set)} cells ({decoder_mode.value}), '
+            f'decoder={decoder_model.value}, '
+            f'kernel={svm_kernel.value if decoder_model is DecoderModel.SVM else "ignored"}, '
+            f'balance_trials={config.balance_decoder_training_trials}, '
+            f'C={classifier_c}, '
+            f'{selected_trial_idx.size} trials '
             f'({test_sel_indices.size} test trials)'
         )
 
@@ -383,44 +594,30 @@ def main(config: Config):
 
         def decode_trial(idx_test: int):
             trial_abs = int(selected_trial_idx[idx_test])
-            if config.loo_cell_selection:
-                no_holdout_non_overlap = [
-                    p for p in no_holdout_parts
-                    if not (trial_abs >= p['trial_start'] and trial_abs < p['trial_end'])
-                ]
-                holdout_parts = holdout_map.get(trial_abs, [])
-                if not holdout_parts and not no_holdout_non_overlap:
-                    return ('warn_no_partitions', trial_abs, None, None, None)
-                applicable_parts = no_holdout_non_overlap + holdout_parts
-            else:
-                applicable_parts = no_holdout_parts
-
-            cell_idx_set: set[int] | None = None
-            for p in applicable_parts:
-                cell_props = p['cell_properties']
-                pref_cues = np.asarray(cell_props['mean_pref_test'])
-                cells = np.asarray(cell_props['cell_idx'])
-                part_cell_idx = set(cells[pref_cues == pref_cue].tolist())
-                if cell_idx_set is None:
-                    cell_idx_set = part_cell_idx
-                else:
-                    cell_idx_set &= part_cell_idx
-
-            if cell_idx_set is None or not cell_idx_set:
-                return ('warn_no_cells', trial_abs, None, None, None)
-
-            cell_idx = np.asarray(sorted(cell_idx_set), dtype=np.int64)
+            cell_idx = np.asarray(sorted(decoder_cell_set), dtype=np.int64)
             spikes_sel = spikes[selected_trial_idx][:, :, cell_idx]
             binned_rates = compute_binned_rates(spikes_sel, t, bin_starts, config.t_decode_window)
 
-            conf, null_conf = decode_one_trial(
+            conf, predicted_labels, null_conf = decode_one_trial(
                 idx_test,
                 binned_rates,
                 labels_sel,
                 config.seed,
+                config.balance_decoder_training_trials,
+                classifier_c,
+                decoder_model,
+                svm_kernel,
                 config.n_decode_shuffle,
             )
-            return ('ok', trial_abs, conf, null_conf, int(cell_idx.size))
+            return (
+                'ok',
+                trial_abs,
+                labels_sel[idx_test],
+                conf,
+                predicted_labels,
+                null_conf,
+                int(cell_idx.size),
+            )
 
         decoded = Parallel(n_jobs=config.n_jobs, verbose=10)(
             delayed(decode_trial)(idx) for idx in test_sel_indices
@@ -429,8 +626,18 @@ def main(config: Config):
         conf_list = []
         null_list = []
         trial_idx_pref = []
+        predicted_labels_list = []
+        test_labels_pref = []
         num_cells_per_trial: list[int] = []
-        for status, trial_abs, conf, null_conf, n_cell in decoded:
+        for (
+            status,
+            trial_abs,
+            test_label,
+            conf,
+            predicted_labels,
+            null_conf,
+            n_cell,
+        ) in decoded:
             if status == 'warn_no_partitions':
                 print(f'  Skipping test trial {trial_abs}: no matching LOO partition and all no-holdout partitions overlap this trial')
                 continue
@@ -438,6 +645,8 @@ def main(config: Config):
                 print(f'  Skipping test trial {trial_abs}: no preferred-cue cells from applicable partitions')
                 continue
             conf_list.append(conf)
+            predicted_labels_list.append(predicted_labels)
+            test_labels_pref.append(test_label)
             if null_conf is not None:
                 null_list.append(null_conf)
             trial_idx_pref.append(trial_abs)
@@ -448,6 +657,8 @@ def main(config: Config):
             continue
 
         decode_confidence = np.stack(conf_list, axis=0)
+        decode_predicted_labels = np.stack(predicted_labels_list, axis=0)
+        decode_test_labels = np.asarray(test_labels_pref, dtype=np.int8)
         decode_confidence_null = None
         if config.n_decode_shuffle > 0:
             decode_confidence_null = np.stack(null_list, axis=0) if null_list else np.empty((0, len(bin_starts), config.n_decode_shuffle))
@@ -460,6 +671,8 @@ def main(config: Config):
             'trial_idx': np.asarray(trial_idx_pref, dtype=np.int64),
             'time_bins': bin_starts,
             'decoding_confidence': decode_confidence,
+            'decoding_predicted_labels': decode_predicted_labels,
+            'decoding_test_labels': decode_test_labels,
             'decoding_confidence_null': decode_confidence_null,
             'num_cells': int(max(num_cells_per_trial)),
             'num_cells_per_trial': num_cells_per_trial,
@@ -485,6 +698,8 @@ def main(config: Config):
             np.asarray(trial_idx_pref, dtype=np.int64),
             bin_starts,
             decode_confidence,
+            decode_predicted_labels,
+            decode_test_labels,
             int(max(num_cells_per_trial)),
         )
 

@@ -208,11 +208,6 @@ class Config:
     loo_cell_selection: bool = False # Enable leave-one-out cell selection variants
     loo_cue_labels: Path = Path('configs/loo_cue_labels.json') # JSON mapping sessions to candidate cue labels
 
-    t_plot_start: int = -200 # PSTH start bin (inclusive) used for plotting
-    t_plot_end: int = 1400 # PSTH final bin start (exclusive of window width)
-    t_plot_window: int = 50 # PSTH bin width in ms
-    t_plot_step: int = 10 # PSTH bin stride in ms
-
     t_test_start: int = 500 # Analysis window start for selectivity tests (delay)
     t_test_end: int = 1400 # Analysis window end for selectivity tests
     t_test_window: int = 50 # Test bin width in ms
@@ -1036,6 +1031,10 @@ def process_session(
             add_rejection_reason(fail_not_app, 'fail_min_presence_ratio_not_applicable')
             add_rejection_reason(fail_min_presence, 'fail_min_presence_ratio')
             cell_boo_selected &= ~(fail_not_app | fail_min_presence)
+        passed_presence_ratio = (
+            np.isfinite(presence_ratio_selection)
+            & (presence_ratio_selection >= config.min_presence_ratio)
+        )
         partition_print(f'    {partition_label} - cells remaining after presence-ratio check: {np.sum(cell_boo_selected)}')
 
         var_ratio_stage1 = None
@@ -1163,6 +1162,10 @@ def process_session(
             var_ratio_stage1 = None
             sliding_ratio_stage2 = None
 
+        # Keep cells that pass every applicable criterion before the PEV check.
+        # The decoder's "stationary" mode can also use these cells when they fail PEV.
+        cell_boo_before_pev = cell_boo_selected.copy()
+
         # criterion: significant PEV duration in the test period
         if config.t_test_step > 0:
             t_bin_start = np.arange(config.t_test_start, config.t_test_end + 1, config.t_test_step)
@@ -1224,6 +1227,7 @@ def process_session(
                 add_rejection_reason(fail_not_app, 'fail_sig_pev_not_applicable')
                 add_rejection_reason(fail_sig_pev, 'fail_sig_pev')
                 cell_boo_selected &= ~(fail_not_app | fail_sig_pev)
+        cell_boo_after_pev = cell_boo_selected.copy()
         partition_print(f'    {partition_label} - cells remaining after significant PEV check: {np.sum(cell_boo_selected)}')
 
         # criterion: preferred-cue temporal stability (stage 3)
@@ -1268,6 +1272,8 @@ def process_session(
             return finalize_partition(None)
 
         cell_idx_selected = np.nonzero(cell_boo_selected)[0]
+        cell_boo_stationary = cell_boo_selected | (cell_boo_before_pev & ~cell_boo_after_pev)
+        cell_idx_stationary = np.nonzero(cell_boo_stationary)[0]
         mean_pev_test = mean_pev_full[cell_idx_selected]
         mean_pref_test = mean_pref_full[cell_idx_selected].astype(np.int64)
         bin_boo_pev_selected = bin_boo_pev[cell_idx_selected]
@@ -1322,6 +1328,8 @@ def process_session(
             'total_pev_per_group': total_pev_per_group,
             'max_num_cells_per_group': np.max(num_cells_per_group),
             'max_total_pev_per_group': np.max(total_pev_per_group),
+            'cell_idx_stationary': cell_idx_stationary,
+            'cell_idx_passed_presence_ratio': np.nonzero(passed_presence_ratio)[0],
             'cell_properties': cell_properties,
         }
 

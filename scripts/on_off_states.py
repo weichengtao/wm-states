@@ -41,7 +41,7 @@ def cue_to_deg(cue):
     cue = (cue - 1) % 8 + 1
     return (cue - 1) * 45 - 135
 
-def get_off_candidate_mask(z_map, z_threshold: float = 1.96, method: str = 'two_tailed'):
+def get_off_candidate_mask(z_map, z_threshold: float = 1.645, method: str = 'one_tailed'):
     '''
     Get off-state candidate mask from z_map using specified method.
     method:
@@ -59,9 +59,14 @@ def get_off_candidate_mask(z_map, z_threshold: float = 1.96, method: str = 'two_
 @dataclass
 class Config:
     cache_dir: Path = Path('cache/run_001') # directory for cached results and figures
-    z_threshold_on: float = 1.96
-    z_threshold_off: float = 1.96
-    cp_method_off: Literal['two_tailed', 'one_tailed'] = 'two_tailed'
+    z_threshold_on: float = 1.645
+    z_threshold_off: float = 0.842
+    cp_method_off: Literal['two_tailed', 'one_tailed'] = 'one_tailed'
+    cluster_size_threshold_off: int = 5
+    cc_method_on: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'
+    cc_method_off: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'
+    cc_alpha_on: float = 0.05
+    cc_alpha_off: float = 0.05
     on_duration_xmax: float = 1000.0
     off_duration_xmax: float = 1000.0
 
@@ -70,6 +75,11 @@ def main(config: Config):
     z_threshold_on = config.z_threshold_on
     z_threshold_off = config.z_threshold_off
     cp_method_off = config.cp_method_off
+    cluster_size_threshold_off = config.cluster_size_threshold_off
+    cc_method_on = config.cc_method_on
+    cc_method_off = config.cc_method_off
+    cc_alpha_on = config.cc_alpha_on
+    cc_alpha_off = config.cc_alpha_off
     on_duration_xmax = max(100.0, config.on_duration_xmax)
     off_duration_xmax = max(100.0, config.off_duration_xmax)
 
@@ -106,13 +116,15 @@ def main(config: Config):
             off_state_ids = np.array([], dtype=int)
             off_state_labeled = None
             null_cluster_masses = None
+            candidate_ids = np.array([], dtype=int)
+            off_cluster_masses = None
 
             if decoding_confidence_null is not None and decoding_confidence_null.shape[2] > 0:
                 # get on-state mask using cluster mass approach
                 # 1. convert decoding_confidence to z-score using null distribution mean and std
-                # 2. find clusters where z-scores > 1.96 (97.5th percentile of standard normal distribution) and compute their cluster masses (sum of z-scores of a cluster)
+                # 2. find clusters where z-scores exceed z_threshold_on and compute their cluster masses (sum of z-scores of a cluster)
                 # 3. repeat 1 - 2 for each shuffle in null distribution of decoding to get null distribution of max cluster masses
-                # 4. keep on-state clusters if their cluster masses are significantly different from null distribution (e.g., p < 0.05)
+                # 4. apply the requested cluster-based correction
                 # 5. create on-state mask
 
                 # 1: convert to z-score
@@ -122,6 +134,13 @@ def main(config: Config):
                 safe_std[safe_std == 0] = np.nan
                 z_map = (decoding_confidence - null_mean) / safe_std
                 z_map = np.nan_to_num(z_map)
+
+                # Standardized shuffled maps are needed by either non-skipped
+                # cluster-based correction.  Compute them once for reuse below.
+                z_null = None
+                if cc_method_on != 'skipped' or cc_method_off != 'skipped':
+                    z_null = (decoding_confidence_null - null_mean[:, :, None]) / safe_std[:, :, None]
+                    z_null = np.nan_to_num(z_null)
 
                 # 2. get on-state candidate clusters and compute their cluster masses
                 on_candidate_mask = z_map > z_threshold_on
@@ -136,23 +155,28 @@ def main(config: Config):
                 # set background mass to 0 (on_cluster_masses[0] corresponds to background)
                 on_cluster_masses[0] = 0.0
 
-                # 3. get null distribution of max cluster masses (one per shuffle)
-                z_null = (decoding_confidence_null - null_mean[:, :, None]) / safe_std[:, :, None]
-                z_null = np.nan_to_num(z_null)
-                null_max_masses = np.zeros(decoding_confidence_null.shape[2], dtype=float)
-                for shuffle_idx in range(decoding_confidence_null.shape[2]):
-                    z_null_slice = z_null[:, :, shuffle_idx]
-                    supra_null = z_null_slice > 1.96
-                    labeled_null, num_null_clusters = label(supra_null, structure=CONNECTIVITY_STRUCTURE)
-                    if num_null_clusters:
-                        null_masses = np.bincount(labeled_null.ravel(), weights=z_null_slice.ravel())
-                        if null_masses.size > 1:
-                            null_max_masses[shuffle_idx] = null_masses[1:].max()
+                if cc_method_on == 'skipped':
+                    # Skip cluster-based correction but retain all thresholded clusters.
+                    on_state_ids = np.flatnonzero(on_cluster_masses > 0)
+                else:
+                    # 3. get null distribution of max cluster masses (one per shuffle)
+                    null_max_masses = np.zeros(decoding_confidence_null.shape[2], dtype=float)
+                    for shuffle_idx in range(decoding_confidence_null.shape[2]):
+                        z_null_slice = z_null[:, :, shuffle_idx]
+                        supra_null = z_null_slice > z_threshold_on
+                        labeled_null, num_null_clusters = label(supra_null, structure=CONNECTIVITY_STRUCTURE)
+                        if num_null_clusters:
+                            null_masses = np.bincount(labeled_null.ravel(), weights=z_null_slice.ravel())
+                            if null_masses.size > 1:
+                                null_max_masses[shuffle_idx] = null_masses[1:].max()
 
-                # 4. determine cluster mass cutoff at 95th percentile of null distribution
-                # and keep on-state clusters above this cutoff
-                cluster_cutoff = np.percentile(null_max_masses, 95) if null_max_masses.size else np.inf
-                on_state_ids = np.where(on_cluster_masses > cluster_cutoff)[0]
+                    # 4. determine the cluster-mass cutoff based on the requested tail
+                    if cc_method_on == 'one_tailed':
+                        cutoff_percentile = 100 * (1 - cc_alpha_on)
+                    else:  # two_tailed
+                        cutoff_percentile = 100 * (1 - cc_alpha_on / 2)
+                    cluster_cutoff = np.percentile(null_max_masses, cutoff_percentile) if null_max_masses.size else np.inf
+                    on_state_ids = np.where(on_cluster_masses > cluster_cutoff)[0]
 
                 # 5. create on-state mask
                 if on_state_ids.size:
@@ -160,11 +184,11 @@ def main(config: Config):
 
                 # get off-state mask using cluster mass approach
                 # 1. convert decoding_confidence to z-score using null distribution mean and std
-                # 2. find clusters where z-scores falling in between -1.96 and 1.96 (2.5th and 97.5th percentiles of standard normal distribution)
-                # 3. keep clusters with size >= 5 as off-state candidates
+                # 2. find off-state candidate clusters using the requested candidate-point method
+                # 3. keep clusters with size >= cluster_size_threshold_off as off-state candidates
                 # 4. compute cluster masses for all off-state candidate clusters
                 # 5. repeat 1 - 3 for each shuffle in null distribution of decoding to get null distribution of cluster masses
-                # 6. keep off-state candidates if their cluster masses are not significantly different from null distribution (e.g., p >= 0.05)
+                # 6. apply the requested cluster-based correction
                 # 7. create off-state mask
 
                 # 1: z_map already computed above
@@ -177,46 +201,52 @@ def main(config: Config):
                     if off_cluster_sizes.size == 0:
                         off_cluster_sizes = np.zeros(1, dtype=int)
                     off_cluster_sizes[0] = 0
-                    candidate_ids = np.where(off_cluster_sizes >= 5)[0]
+                    candidate_ids = np.where(off_cluster_sizes >= cluster_size_threshold_off)[0]
                     if candidate_ids.size:
                         # 4. compute cluster masses for all labeled off-state clusters (not just candidate clusters)
                         off_cluster_masses = np.bincount(off_state_labeled.ravel(), weights=z_map.ravel())
                         if off_cluster_masses.size == 0:
                             off_cluster_masses = np.zeros(1, dtype=float)
-                        # 5. get null distribution of off-state cluster masses (n valid clusters per shuffle)
-                        null_cluster_masses = []
-                        for shuffle_idx in range(decoding_confidence_null.shape[2]):
-                            z_null_slice = z_null[:, :, shuffle_idx]
-                            off_null_mask = get_off_candidate_mask(z_null_slice, z_threshold_off, method=cp_method_off)
-                            labeled_null, num_null_clusters = label(off_null_mask, structure=CONNECTIVITY_STRUCTURE)
-                            if num_null_clusters:
-                                null_sizes = np.bincount(labeled_null.ravel())
-                                if null_sizes.size == 0:
-                                    null_sizes = np.zeros(1, dtype=int)
-                                null_sizes[0] = 0
-                                valid_null_ids = np.where(null_sizes >= 5)[0]
-                                if valid_null_ids.size:
-                                    # compute cluster masses for valid null clusters
-                                    masses = np.bincount(labeled_null.ravel(), weights=z_null_slice.ravel())
-                                    if masses.size == 0:
-                                        masses = np.zeros(1, dtype=float)
-                                    null_cluster_masses.append(masses[valid_null_ids])
-                        if null_cluster_masses:
-                            null_cluster_masses = np.concatenate(null_cluster_masses)
+                        if cc_method_off == 'skipped':
+                            # Skip cluster-based correction but retain size-qualified candidates.
+                            keep_ids = candidate_ids.tolist()
                         else:
-                            null_cluster_masses = np.zeros(1, dtype=float)
-                        null_cluster_masses = null_cluster_masses[np.isfinite(null_cluster_masses)]
-                        if null_cluster_masses.size == 0:
-                            null_cluster_masses = np.zeros(1, dtype=float)
-                        # 6. keep off-state candidates if their cluster masses are not significantly different from null distribution
-                        lower_mass_cutoff = np.percentile(null_cluster_masses, 2.5)
-                        upper_mass_cutoff = np.percentile(null_cluster_masses, 97.5)
-                        keep_ids = []
-                        for cid in candidate_ids:
-                            mass = off_cluster_masses[cid]
-                            if mass < lower_mass_cutoff or mass > upper_mass_cutoff:
-                                continue
-                            keep_ids.append(cid)
+                            # 5. get null distribution of off-state cluster masses (n valid clusters per shuffle)
+                            null_cluster_masses = []
+                            for shuffle_idx in range(decoding_confidence_null.shape[2]):
+                                z_null_slice = z_null[:, :, shuffle_idx]
+                                off_null_mask = get_off_candidate_mask(z_null_slice, z_threshold_off, method=cp_method_off)
+                                labeled_null, num_null_clusters = label(off_null_mask, structure=CONNECTIVITY_STRUCTURE)
+                                if num_null_clusters:
+                                    null_sizes = np.bincount(labeled_null.ravel())
+                                    if null_sizes.size == 0:
+                                        null_sizes = np.zeros(1, dtype=int)
+                                    null_sizes[0] = 0
+                                    valid_null_ids = np.where(null_sizes >= cluster_size_threshold_off)[0]
+                                    if valid_null_ids.size:
+                                        # compute cluster masses for valid null clusters
+                                        masses = np.bincount(labeled_null.ravel(), weights=z_null_slice.ravel())
+                                        if masses.size == 0:
+                                            masses = np.zeros(1, dtype=float)
+                                        null_cluster_masses.append(masses[valid_null_ids])
+                            if null_cluster_masses:
+                                null_cluster_masses = np.concatenate(null_cluster_masses)
+                            else:
+                                null_cluster_masses = np.zeros(1, dtype=float)
+                            null_cluster_masses = null_cluster_masses[np.isfinite(null_cluster_masses)]
+                            if null_cluster_masses.size == 0:
+                                null_cluster_masses = np.zeros(1, dtype=float)
+                            # 6. keep off-state candidates according to the requested correction tail
+                            if cc_method_off == 'one_tailed':
+                                upper_mass_cutoff = np.percentile(null_cluster_masses, 100 * (1 - cc_alpha_off))
+                                keep_ids = [cid for cid in candidate_ids if off_cluster_masses[cid] <= upper_mass_cutoff]
+                            else:  # two_tailed
+                                lower_mass_cutoff = np.percentile(null_cluster_masses, 100 * (cc_alpha_off / 2))
+                                upper_mass_cutoff = np.percentile(null_cluster_masses, 100 * (1 - cc_alpha_off / 2))
+                                keep_ids = [
+                                    cid for cid in candidate_ids
+                                    if lower_mass_cutoff <= off_cluster_masses[cid] <= upper_mass_cutoff
+                                ]
                         # 7. create off-state mask
                         if keep_ids:
                             off_state_ids = np.array(keep_ids, dtype=int)
