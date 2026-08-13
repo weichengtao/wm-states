@@ -1,5 +1,18 @@
+import logging
 from pathlib import Path
 from typing import Any
+
+
+class NoPostScriptTransparency(logging.Filter):
+    def filter(self, record):
+        return not record.getMessage().startswith(
+            "The PostScript backend does not support transparency"
+        )
+
+
+logging.getLogger("matplotlib.backends.backend_ps").addFilter(
+    NoPostScriptTransparency()
+)
 
 
 def configure_figure_style(matplotlib_module: Any):
