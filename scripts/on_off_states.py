@@ -24,6 +24,26 @@ def show_spines(ax, lw=1, color='black'):
         spine.set_linewidth(lw)
         spine.set_color(color)
 
+def add_off_cluster_cutoff_lines(ax, cutoffs):
+    cutoffs = np.asarray(cutoffs, dtype=float)
+    cutoffs = cutoffs[np.isfinite(cutoffs)]
+    for cutoff_idx, cutoff in enumerate(cutoffs):
+        cutoff_label = (
+            'Off-state CC cutoff'
+            if cutoffs.size == 1
+            else f'Off-state CC cutoff {cutoff_idx + 1}'
+        )
+        ax.axvline(
+            cutoff,
+            color='black',
+            linestyle='--',
+            linewidth=1.5,
+            label=cutoff_label,
+        )
+    if cutoffs.size:
+        ax.relim()
+        ax.autoscale_view()
+
 def cue_to_deg(cue):
     '''
     {
@@ -118,6 +138,7 @@ def main(config: Config):
             null_cluster_masses = None
             candidate_ids = np.array([], dtype=int)
             off_cluster_masses = None
+            off_cluster_mass_cutoffs = np.array([], dtype=float)
 
             if decoding_confidence_null is not None and decoding_confidence_null.shape[2] > 0:
                 # get on-state mask using cluster mass approach
@@ -239,10 +260,12 @@ def main(config: Config):
                             # 6. keep off-state candidates according to the requested correction tail
                             if cc_method_off == 'one_tailed':
                                 upper_mass_cutoff = np.percentile(null_cluster_masses, 100 * (1 - cc_alpha_off))
+                                off_cluster_mass_cutoffs = np.array([upper_mass_cutoff])
                                 keep_ids = [cid for cid in candidate_ids if off_cluster_masses[cid] <= upper_mass_cutoff]
                             else:  # two_tailed
                                 lower_mass_cutoff = np.percentile(null_cluster_masses, 100 * (cc_alpha_off / 2))
                                 upper_mass_cutoff = np.percentile(null_cluster_masses, 100 * (1 - cc_alpha_off / 2))
+                                off_cluster_mass_cutoffs = np.array([lower_mass_cutoff, upper_mass_cutoff])
                                 keep_ids = [
                                     cid for cid in candidate_ids
                                     if lower_mass_cutoff <= off_cluster_masses[cid] <= upper_mass_cutoff
@@ -410,10 +433,13 @@ def main(config: Config):
                     bins_mass = np.arange(-10, 11, 1) # from -10 to 10 with bin size 1
                     fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
                     sns.histplot(masses, bins=bins_mass, ax=ax)
+                    add_off_cluster_cutoff_lines(ax, off_cluster_mass_cutoffs)
                     show_spines(ax)
                     plt.xlabel('Cluster Mass')
                     plt.ylabel('Count')
                     plt.title(f'Off-State Null Cluster Masses\nSession: {session}, Cue: {cue_to_deg(cue)}°')
+                    if off_cluster_mass_cutoffs.size:
+                        ax.legend()
                     save_figure_all_formats(fig, fig_dir / f'off_state_null_cluster_masses_{session}_{cue}.png', dpi=300)
                     plt.close(fig)
 
@@ -447,8 +473,10 @@ def main(config: Config):
                     bins_mass = np.arange(-10, 11, 1) # from -10 to 10 with bin size 1
                     fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
                     sns.histplot(masses, bins=bins_mass, ax=ax)
+                    add_off_cluster_cutoff_lines(ax, off_cluster_mass_cutoffs)
                     if delay_masses.size:
                         ax.hist(delay_masses, bins=bins_mass, histtype='step', linewidth=2, color='C1', label='Delay')
+                    if delay_masses.size or off_cluster_mass_cutoffs.size:
                         ax.legend()
                     show_spines(ax)
                     plt.xlabel('Cluster Mass')
