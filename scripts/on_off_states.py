@@ -430,7 +430,7 @@ def main(config: Config):
             if isinstance(null_cluster_masses, np.ndarray) and null_cluster_masses.size:
                 masses = null_cluster_masses[np.isfinite(null_cluster_masses)]
                 if masses.size:
-                    bins_mass = np.arange(-10, 11, 1) # from -10 to 10 with bin size 1
+                    bins_mass = np.histogram_bin_edges(masses, bins='auto')
                     fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
                     sns.histplot(masses, bins=bins_mass, ax=ax)
                     add_off_cluster_cutoff_lines(ax, off_cluster_mass_cutoffs)
@@ -470,7 +470,7 @@ def main(config: Config):
                             overlap = (end_ms >= delay_start) & (start_ms <= delay_end)
                             if np.any(overlap):
                                 delay_masses = masses[overlap]
-                    bins_mass = np.arange(-10, 11, 1) # from -10 to 10 with bin size 1
+                    bins_mass = np.histogram_bin_edges(masses, bins='auto')
                     fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
                     sns.histplot(masses, bins=bins_mass, ax=ax)
                     add_off_cluster_cutoff_lines(ax, off_cluster_mass_cutoffs)
