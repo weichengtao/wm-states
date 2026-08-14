@@ -346,7 +346,6 @@ def main(config: Config):
             off_bins = np.arange(0, off_duration_xmax + bin_size, bin_size) # for off-state plot
             on_xlim = (0, on_duration_xmax)
             off_xlim = (0, off_duration_xmax)
-            ylim = (0, 100)
 
             if on_state_mask is not None and on_state_ids.size:
                 # find non-zero entries in on_state_mask
@@ -386,7 +385,6 @@ def main(config: Config):
                             plt.ylabel('Count')
                             plt.title(f'On-State Duration\nSession: {session}, Cue: {cue_to_deg(cue)}°')
                             plt.xlim(*on_xlim)
-                            plt.ylim(*ylim)
                             save_figure_all_formats(fig, fig_dir / f'on_state_duration_{session}_{cue}.png', dpi=300)
                             plt.close(fig)
 
@@ -422,7 +420,6 @@ def main(config: Config):
                         plt.ylabel('Count')
                         plt.title(f'Off-State Duration\nSession: {session}, Cue: {cue_to_deg(cue)}°')
                         plt.xlim(*off_xlim)
-                        plt.ylim(*ylim)
                         save_figure_all_formats(fig, fig_dir / f'off_state_duration_{session}_{cue}.png', dpi=300)
                         plt.close(fig)
 
