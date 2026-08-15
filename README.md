@@ -25,45 +25,29 @@ Download the dataset from `https://datadryad.org/dataset/doi:10.5061/dryad.kkwh7
 
 ## Run scripts
 
-```bash
-## Leave-one-out (decoding)
-# You may want to keep only 210921.mat in --data-dir for testing.
-python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001 --enable-trial-selection --trial-selection-window-size 320 --trial-selection-step-size 10 --n-jobs-partition 8
-# python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001_full_session --n-jobs-partition 8
-
-# You may want to compute 5 shuffles for testing.
-python scripts/decoding_confidence.py --data-dir data/nature --cache-dir cache/run_001 --n-decode-shuffle 500 --n-jobs 8
-
-python scripts/on_off_states.py --cache-dir cache/run_001 --off-duration-xmax 400
-
-## Leave-one-out (cell selection & decoding)
-# You may want to keep only 210921.mat in --data-dir for testing.
-python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001_loo --enable-trial-selection --trial-selection-window-size 320 --trial-selection-step-size 10 --n-jobs-partition 8 --loo-cell-selection
-# python scripts/cell_trial_selection.py --data-dir data/nature --cache-dir cache/run_001_loo_full_session --n-jobs-partition 8 --loo-cell-selection
-
-# You may want to compute 5 shuffles for testing.
-python scripts/decoding_confidence.py --data-dir data/nature --cache-dir cache/run_001_loo --n-decode-shuffle 500 --n-jobs 8 --loo-cell-selection
-
-python scripts/on_off_states.py --cache-dir cache/run_001_loo --off-duration-xmax 400
-```
-
-Notes for cell_trial_selection.py:
-- `--enable-trial-selection` runs across-trial sliding windows and uses `--trial-selection-window-size` / `--trial-selection-step-size`.
-- Without `--enable-trial-selection` (or with `--no-enable-trial-selection`), one full-session trial window (`[0, num_trials)`) is used.
-- Session-level minimum trial count is always enforced via `--min-trial-per-session` (default: `320`, counted on total trials including incorrect).
+Run the scripts with `uv run` so they use the environment defined by
+`pyproject.toml`. For a complete analysis, run cell selection, decoding,
+optional repeat inspection, and on/off-state analysis in that order. Use the
+same `--cache-dir` for all stages.
 
 ## New pipeline
+
+The commands below run the full-session pipeline. Cell selection writes the
+selection cache, decoding reuses it and writes repeat-level confidence and
+accuracy results, and the final analysis uses the decoding cache to identify
+on/off states. The inspection script is optional and saves one PNG per
+selected trial and time bin; two range endpoints are inclusive, and time-bin
+endpoints are matched to the nearest cached bin.
+
 ```bash
-# Cell triaging pipeline
-# 1. Presence ratio
-# 2. Correlation
-# 3. PEV
+# 1. Select decoder cells and cache the selection results.
 uv run python scripts/cell_trial_selection.py \
 --n-jobs-session 10 \
 --n-jobs-partition 1 \
 --data-dir data/nature \
---cache-dir cache/run_010_full_session \
---min-cell-per-group 15 \
+--cache-dir cache/run_029_full_session \
+--t-test-window 50 \
+--min-cell-per-group 1 \
 --min-fr-test -1 \
 --min-presence-ratio 0.9 \
 --var-ratio-threshold-delay-over-baseline -1 \
@@ -71,6 +55,34 @@ uv run python scripts/cell_trial_selection.py \
 --temp-dep-r-threshold 2 \
 --temp-dep-r-threshold-baseline 0.3 \
 --sig-pev-threshold 2.5 \
---save-extended-diagnostics \
+--no-save-extended-diagnostics \
 --diagnostics-figure-config configs/diagnostic_figure_config.json
+
+# 2. Fit repeated decoders and estimate shuffled null confidence.
+uv run python scripts/decoding_confidence.py \
+--data-dir data/nature \
+--cache-dir cache/run_029_full_session \
+--t-decode-window 50 \
+--min-cell-per-group 1 \
+--n-repeats-for-model-fit 500 \
+--n-decode-shuffle 500 \
+--n-jobs 10 \
+--cells-used-for-decoder STATIONARY \
+--svm-kernel LINEAR \
+--decoder-model LOGISTIC_REGRESSION \
+--classifier-c 0.01 \
+--seed 42 \
+--max-sessions-to-run 25
+
+# 3. Inspect repeat-level accuracy and confidence distributions (optional).
+uv run python scripts/inspect_decoding_results.py \
+--cache-dir cache/run_029_full_session \
+--session 210921 \
+--trial 0 1 \
+--time-bin-start 500 1400
+
+# 4. Identify and summarize on/off states.
+uv run python scripts/on_off_states.py \
+--cache-dir cache/run_029_full_session \
+--cc-method-off one_tailed
 ```
