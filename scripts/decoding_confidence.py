@@ -160,10 +160,20 @@ def decode_one_trial(
     classifier_c: float,
     decoder_model: DecoderModel,
     svm_kernel: SVMKernel,
-    n_shuffle,
+    n_repeats_for_model_fit: int,
+    n_shuffle: int,
 ):
-    """Decode a single test trial across all bins with optional shuffles."""
-    rng = np.random.default_rng(seed + int(test_idx))
+    """Decode a single test trial across all bins with optional shuffles.
+
+    The model-fit repeats use one RNG stream to draw a fresh balanced training
+    set for every repeat. Shuffles use a separate stream and one training set,
+    so changing the number of model-fit repeats does not change the null
+    estimates.
+    """
+    if n_repeats_for_model_fit < 1:
+        raise ValueError('n_repeats_for_model_fit must be at least 1.')
+
+    repeat_rng = np.random.default_rng(seed + int(test_idx))
     num_trials = binned_rates.shape[0]
     num_bins = binned_rates.shape[1]
     # Leave-one-out split for the current test trial.
@@ -174,42 +184,46 @@ def decode_one_trial(
     pref_idx = train_idx[y_train_full == 1]
     opp_idx = train_idx[y_train_full == 0]
     if pref_idx.size == 0 or opp_idx.size == 0:
-        conf = np.full(num_bins, np.nan, dtype=np.float32)
-        predicted_labels = np.full(num_bins, -1, dtype=np.int8)
-        null_conf = None if n_shuffle <= 0 else np.full((num_bins, n_shuffle), np.nan, dtype=np.float32)
-        return conf, predicted_labels, null_conf
-
-    if balance_decoder_training_trials:
-        # Balance classes so the decoder isn't biased by class counts.
-        n_train = min(pref_idx.size, opp_idx.size)
-        pref_sel = rng.choice(pref_idx, size=n_train, replace=False)
-        opp_sel = rng.choice(opp_idx, size=n_train, replace=False)
-        train_balanced = np.concatenate([pref_sel, opp_sel])
-    else:
-        # Use every available leave-one-out training trial.
-        train_balanced = train_idx
-    y_bal = labels[train_balanced]
-
-    conf = np.empty(num_bins, dtype=np.float32)
-    predicted_labels = np.empty(num_bins, dtype=np.int8)
-    null_conf = None
-    if n_shuffle > 0:
-        null_conf = np.empty((num_bins, n_shuffle), dtype=np.float32)
-
-    for b in range(num_bins):
-        # Train a per-bin decoder to isolate the time-resolved confidence.
-        X_train = np.nan_to_num(
-            binned_rates[train_balanced, b, :].astype(np.float64, copy=False),
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
+        repeat_conf = np.full(
+            (n_repeats_for_model_fit, num_bins), np.nan, dtype=np.float32
         )
-        X_test = np.nan_to_num(
-            binned_rates[test_idx, b, :][None, :].astype(np.float64, copy=False),
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
+        repeat_predicted_labels = np.full(
+            (n_repeats_for_model_fit, num_bins), -1, dtype=np.int8
         )
+        repeat_accuracy = np.full(
+            (n_repeats_for_model_fit, num_bins), np.nan, dtype=np.float32
+        )
+        null_conf = (
+            None
+            if n_shuffle <= 0
+            else np.full((num_bins, n_shuffle), np.nan, dtype=np.float32)
+        )
+        return repeat_conf, repeat_predicted_labels, repeat_accuracy, null_conf
+
+    train_balanced_repeats = []
+    for _ in range(n_repeats_for_model_fit):
+        if balance_decoder_training_trials:
+            # Balance classes independently for every model-fit repeat.
+            n_train = min(pref_idx.size, opp_idx.size)
+            pref_sel = repeat_rng.choice(pref_idx, size=n_train, replace=False)
+            opp_sel = repeat_rng.choice(opp_idx, size=n_train, replace=False)
+            train_balanced = np.concatenate([pref_sel, opp_sel])
+        else:
+            # Use every available leave-one-out training trial.
+            train_balanced = train_idx
+        train_balanced_repeats.append(train_balanced)
+
+    repeat_conf = np.empty(
+        (n_repeats_for_model_fit, num_bins), dtype=np.float32
+    )
+    repeat_predicted_labels = np.empty(
+        (n_repeats_for_model_fit, num_bins), dtype=np.int8
+    )
+    repeat_accuracy = np.empty(
+        (n_repeats_for_model_fit, num_bins), dtype=np.float32
+    )
+
+    def create_model():
         if decoder_model is DecoderModel.SVM:
             classifier = SVC(
                 kernel=svm_kernel.value,
@@ -226,26 +240,81 @@ def decode_one_trial(
             )
         else:
             raise ValueError(f'Unsupported decoder model: {decoder_model}')
-        model = Pipeline([
+        return Pipeline([
             ("scaler", StandardScaler()),
             ("classifier", classifier),
         ])
-        model.fit(X_train, y_bal)
-        proba = model.predict_proba(X_test)[0]
-        class_index = 1 if model.classes_[1] == 1 else 0
-        conf[b] = proba[class_index]
-        predicted_labels[b] = model.predict(X_test)[0]
 
-        if n_shuffle > 0:
+    for repeat_idx, train_balanced in enumerate(train_balanced_repeats):
+        y_bal = labels[train_balanced]
+        for b in range(num_bins):
+            # Train a per-bin decoder to isolate the time-resolved confidence.
+            X_train = np.nan_to_num(
+                binned_rates[train_balanced, b, :].astype(np.float64, copy=False),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+            X_test = np.nan_to_num(
+                binned_rates[test_idx, b, :][None, :].astype(np.float64, copy=False),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+            model = create_model()
+            model.fit(X_train, y_bal)
+            proba = model.predict_proba(X_test)[0]
+            class_index = 1 if model.classes_[1] == 1 else 0
+            repeat_conf[repeat_idx, b] = proba[class_index]
+            predicted_label = model.predict(X_test)[0]
+            repeat_predicted_labels[repeat_idx, b] = predicted_label
+            if predicted_label in (0, 1):
+                repeat_accuracy[repeat_idx, b] = float(
+                    predicted_label == labels[test_idx]
+                )
+
+    null_conf = None
+    if n_shuffle > 0:
+        null_conf = np.empty((num_bins, n_shuffle), dtype=np.float32)
+        # Keep the shuffle path independent from model-fit repeats. Its first
+        # balanced training set matches the pre-repeat implementation.
+        shuffle_rng = np.random.default_rng(seed + int(test_idx))
+        if balance_decoder_training_trials:
+            n_train = min(pref_idx.size, opp_idx.size)
+            pref_sel = shuffle_rng.choice(pref_idx, size=n_train, replace=False)
+            opp_sel = shuffle_rng.choice(opp_idx, size=n_train, replace=False)
+            shuffle_train_balanced = np.concatenate([pref_sel, opp_sel])
+        else:
+            shuffle_train_balanced = train_idx
+        y_bal = labels[shuffle_train_balanced]
+
+        for b in range(num_bins):
+            X_train = np.nan_to_num(
+                binned_rates[shuffle_train_balanced, b, :].astype(
+                    np.float64, copy=False
+                ),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+            X_test = np.nan_to_num(
+                binned_rates[test_idx, b, :][None, :].astype(
+                    np.float64, copy=False
+                ),
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
             # Shuffle labels to estimate a null confidence distribution.
+            model = create_model()
             for s in range(n_shuffle):
-                y_shuf = rng.permutation(y_bal)
+                y_shuf = shuffle_rng.permutation(y_bal)
                 model.fit(X_train, y_shuf)
                 proba = model.predict_proba(X_test)[0]
                 class_index = 1 if model.classes_[1] == 1 else 0
                 null_conf[b, s] = proba[class_index]
 
-    return conf, predicted_labels, null_conf
+    return repeat_conf, repeat_predicted_labels, repeat_accuracy, null_conf
 
 def plot_decoding_heatmap(
     fig_dir,
@@ -295,6 +364,7 @@ def plot_decoding_confidence_lineplot(
     bin_starts,
     decode_confidence,
     decode_predicted_labels,
+    decode_accuracy_repeats,
     test_labels,
     num_cells,
 ):
@@ -304,25 +374,31 @@ def plot_decoding_confidence_lineplot(
         ax.plot(bin_starts, trial_confidence, color='darkgray', alpha=0.1)
 
     decode_predicted_labels = np.asarray(decode_predicted_labels)
+    decode_accuracy_repeats = np.asarray(decode_accuracy_repeats)
     test_labels = np.asarray(test_labels)
-    if decode_predicted_labels.shape != decode_confidence.shape:
+    if decode_predicted_labels.ndim != 3:
         raise ValueError(
-            'decode_predicted_labels must have the same shape as decode_confidence.'
+            'decode_predicted_labels must have shape (trial, repeat, bin).'
+        )
+    if (
+        decode_predicted_labels.shape[0] != decode_confidence.shape[0]
+        or decode_predicted_labels.shape[2] != decode_confidence.shape[1]
+    ):
+        raise ValueError(
+            'decode_predicted_labels must have trial and bin dimensions matching '
+            'decode_confidence.'
+        )
+    if decode_accuracy_repeats.shape != (
+        decode_predicted_labels.shape[1],
+        decode_confidence.shape[1],
+    ):
+        raise ValueError(
+            'decode_accuracy_repeats must have shape (repeat, bin).'
         )
     if test_labels.shape != (decode_confidence.shape[0],):
         raise ValueError('test_labels must contain one label per test trial.')
 
-    valid_predictions = np.isin(decode_predicted_labels, (0, 1))
-    correct_predictions = (
-        decode_predicted_labels == test_labels[:, None]
-    ) & valid_predictions
-    valid_count = valid_predictions.sum(axis=0)
-    decoding_accuracy = np.divide(
-        correct_predictions.sum(axis=0),
-        valid_count,
-        out=np.full(decode_confidence.shape[1], np.nan, dtype=np.float64),
-        where=valid_count > 0,
-    )
+    decoding_accuracy = np.nanmean(decode_accuracy_repeats, axis=0)
     mean_confidence = np.nanmean(decode_confidence, axis=0)
     ax.plot(
         bin_starts,
@@ -381,6 +457,7 @@ class Config:
     t_decode_end: int = 1400
     t_decode_window: int = 50
     t_decode_step: int = 10
+    n_repeats_for_model_fit: int = 1 # number of model fits per trial/bin
     n_decode_shuffle: int = 0 # number of label shuffles for null distribution of decoding confidence (0 to skip)
     plot_only: bool = False # if True, only generate plots from cached decoding results
     plot_actual_trial_id: bool = False # if True, y-axis shows actual trial ids instead of 1 to N
@@ -398,6 +475,10 @@ def main(config: Config):
     For each eligible session, it keeps correct trials from the preferred cue
     and its opposite, bins spike rates over sliding time windows, and decodes
     each preferred-cue trial in parallel to produce a time-by-trial confidence map.
+    Each trial/bin model can be fit repeatedly with fresh balanced training
+    trials; the repeat count is controlled by n_repeats_for_model_fit. The
+    cached confidence map is averaged over repeats, while per-repeat confidence,
+    accuracy, and predictions are retained.
     Optional label shuffles generate a null distribution. Training trials are
     balanced by default, controlled by balance_decoder_training_trials. Results
     are cached and per-session heatmaps and confidence line plots are saved; when
@@ -410,6 +491,8 @@ def main(config: Config):
     classifier_c = float(config.classifier_c)
     if not np.isfinite(classifier_c) or classifier_c <= 0:
         raise ValueError('classifier_c must be finite and greater than zero.')
+    if config.n_repeats_for_model_fit < 1:
+        raise ValueError('n_repeats_for_model_fit must be at least 1.')
     if config.loo_cell_selection:
         raise ValueError(
             'loo_cell_selection is not supported by decoding_confidence.py; '
@@ -437,13 +520,21 @@ def main(config: Config):
             decode_predicted_labels = np.asarray(
                 res.get('decoding_predicted_labels', [])
             )
+            decode_accuracy_repeats = np.asarray(
+                res.get('decoding_accuracy_repeats', [])
+            )
             decode_test_labels = np.asarray(res.get('decoding_test_labels', []))
             if decode_confidence.size == 0:
                 continue
-            if decode_predicted_labels.size == 0 or decode_test_labels.size == 0:
+            if (
+                decode_predicted_labels.size == 0
+                or decode_accuracy_repeats.size == 0
+                or decode_test_labels.size == 0
+            ):
                 raise ValueError(
                     f'Cached result for {res.get("session", "unknown_session")} is missing '
-                    'decoding_predicted_labels or decoding_test_labels; rerun decoding '
+                    'decoding_predicted_labels, decoding_accuracy_repeats, or '
+                    'decoding_test_labels; rerun decoding '
                     'without --plot-only to regenerate the cache.'
                 )
             plot_decoding_heatmap(
@@ -466,6 +557,7 @@ def main(config: Config):
                 bin_starts,
                 decode_confidence,
                 decode_predicted_labels,
+                decode_accuracy_repeats,
                 decode_test_labels,
                 int(res.get('num_cells', 0)),
             )
@@ -585,6 +677,7 @@ def main(config: Config):
             f'decoder={decoder_model.value}, '
             f'kernel={svm_kernel.value if decoder_model is DecoderModel.SVM else "ignored"}, '
             f'balance_trials={config.balance_decoder_training_trials}, '
+            f'model_fit_repeats={config.n_repeats_for_model_fit}, '
             f'C={classifier_c}, '
             f'{selected_trial_idx.size} trials '
             f'({test_sel_indices.size} test trials)'
@@ -598,7 +691,7 @@ def main(config: Config):
             spikes_sel = spikes[selected_trial_idx][:, :, cell_idx]
             binned_rates = compute_binned_rates(spikes_sel, t, bin_starts, config.t_decode_window)
 
-            conf, predicted_labels, null_conf = decode_one_trial(
+            repeat_conf, repeat_predicted_labels, repeat_accuracy, null_conf = decode_one_trial(
                 idx_test,
                 binned_rates,
                 labels_sel,
@@ -607,14 +700,16 @@ def main(config: Config):
                 classifier_c,
                 decoder_model,
                 svm_kernel,
+                config.n_repeats_for_model_fit,
                 config.n_decode_shuffle,
             )
             return (
                 'ok',
                 trial_abs,
                 labels_sel[idx_test],
-                conf,
-                predicted_labels,
+                repeat_conf,
+                repeat_predicted_labels,
+                repeat_accuracy,
                 null_conf,
                 int(cell_idx.size),
             )
@@ -627,14 +722,16 @@ def main(config: Config):
         null_list = []
         trial_idx_pref = []
         predicted_labels_list = []
+        accuracy_list = []
         test_labels_pref = []
         num_cells_per_trial: list[int] = []
         for (
             status,
             trial_abs,
             test_label,
-            conf,
-            predicted_labels,
+            repeat_conf,
+            repeat_predicted_labels,
+            repeat_accuracy,
             null_conf,
             n_cell,
         ) in decoded:
@@ -644,8 +741,9 @@ def main(config: Config):
             if status == 'warn_no_cells':
                 print(f'  Skipping test trial {trial_abs}: no preferred-cue cells from applicable partitions')
                 continue
-            conf_list.append(conf)
-            predicted_labels_list.append(predicted_labels)
+            conf_list.append(repeat_conf)
+            predicted_labels_list.append(repeat_predicted_labels)
+            accuracy_list.append(repeat_accuracy)
             test_labels_pref.append(test_label)
             if null_conf is not None:
                 null_list.append(null_conf)
@@ -656,8 +754,14 @@ def main(config: Config):
             print('  Skipping: no decodable preferred-cue trials with available cells')
             continue
 
-        decode_confidence = np.stack(conf_list, axis=0)
+        decode_confidence_repeats = np.stack(conf_list, axis=0)
         decode_predicted_labels = np.stack(predicted_labels_list, axis=0)
+        decode_accuracy_per_trial_repeats = np.stack(accuracy_list, axis=0)
+        decode_confidence = np.nanmean(decode_confidence_repeats, axis=1)
+        decode_accuracy_repeats = np.nanmean(
+            decode_accuracy_per_trial_repeats, axis=0
+        )
+        decode_accuracy = np.nanmean(decode_accuracy_repeats, axis=0)
         decode_test_labels = np.asarray(test_labels_pref, dtype=np.int8)
         decode_confidence_null = None
         if config.n_decode_shuffle > 0:
@@ -671,7 +775,12 @@ def main(config: Config):
             'trial_idx': np.asarray(trial_idx_pref, dtype=np.int64),
             'time_bins': bin_starts,
             'decoding_confidence': decode_confidence,
+            'decoding_confidence_repeats': decode_confidence_repeats,
             'decoding_predicted_labels': decode_predicted_labels,
+            'decoding_accuracy': decode_accuracy,
+            'decoding_accuracy_repeats': decode_accuracy_repeats,
+            'decoding_accuracy_per_trial_repeats': decode_accuracy_per_trial_repeats,
+            'n_repeats_for_model_fit': int(config.n_repeats_for_model_fit),
             'decoding_test_labels': decode_test_labels,
             'decoding_confidence_null': decode_confidence_null,
             'num_cells': int(max(num_cells_per_trial)),
@@ -699,6 +808,7 @@ def main(config: Config):
             bin_starts,
             decode_confidence,
             decode_predicted_labels,
+            decode_accuracy_repeats,
             decode_test_labels,
             int(max(num_cells_per_trial)),
         )
