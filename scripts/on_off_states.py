@@ -609,6 +609,7 @@ def main(config: Config):
                 'cue': cue,
                 'trial_idx': np.asarray(out_dict.get('trial_idx', []), dtype=np.int64),
                 'off_state_duration_per_trial': off_duration_per_trial,
+                'off_state_duration_per_state': np.asarray(off_durations, dtype=float),
                 'off_state_duration_correction': 'applied',
                 'off_state_duration_delay_start': delay_start,
                 'off_state_duration_delay_end': delay_end,
