@@ -77,42 +77,59 @@ def get_off_candidate_mask(z_map, z_threshold: float = 1.645, method: str = 'one
     return off_candidate_mask
 
 
+def infer_time_bin_step(bin_starts):
+    """Return the uniform time-bin step in milliseconds."""
+    bin_starts = np.asarray(bin_starts, dtype=float)
+    if bin_starts.size < 2:
+        raise ValueError('At least two time bins are required to infer t_decode_step.')
+    steps = np.diff(bin_starts)
+    if not np.all(np.isfinite(steps)) or not np.all(steps > 0):
+        raise ValueError('time_bins must be finite and strictly increasing.')
+    if not np.allclose(steps, steps[0]):
+        raise ValueError('time_bins must have a uniform t_decode_step.')
+    return float(steps[0])
+
+
+def off_state_duration_per_trial(
+    off_state_mask,
+    bin_starts,
+    t_decode_step,
+    delay_start,
+    delay_end,
+):
+    """Count delay-period off-state bins and multiply by ``t_decode_step``."""
+    bin_starts = np.asarray(bin_starts, dtype=float)
+    delay_bins = (bin_starts >= delay_start) & (bin_starts <= delay_end)
+    return (
+        np.asarray(off_state_mask[:, delay_bins], dtype=float).sum(axis=1)
+        * t_decode_step
+    )
+
+
 def state_durations(
     state_mask,
     state_ids,
     state_labeled,
     bin_starts,
+    t_decode_step,
     delay_start,
     delay_end,
 ):
-    """Return state-cluster durations that overlap the delay period."""
+    """Return cluster durations as delay-bin counts times ``t_decode_step``."""
     if state_mask is None or not state_ids.size or state_labeled is None:
         return np.array([], dtype=float)
 
-    sig_rows, sig_cols = np.nonzero(state_mask)
-    sig_cluster_ids = state_labeled[sig_rows, sig_cols]
-    valid = sig_cluster_ids > 0
-    if not np.any(valid):
-        return np.array([], dtype=float)
-    sig_cluster_ids = sig_cluster_ids[valid]
-    sig_cols = sig_cols[valid]
-
-    max_sig_label = sig_cluster_ids.max()
-    min_col = np.full(max_sig_label + 1, state_mask.shape[1], dtype=int)
-    max_col = np.zeros(max_sig_label + 1, dtype=int)
-    np.minimum.at(min_col, sig_cluster_ids, sig_cols)
-    np.maximum.at(max_col, sig_cluster_ids, sig_cols)
-    start_idx = min_col[state_ids]
-    end_idx = max_col[state_ids]
-    start_ms = bin_starts[start_idx]
-    end_ms = bin_starts[end_idx]
-    overlap = (end_ms >= delay_start) & (start_ms <= delay_end)
-    if not np.any(overlap):
+    bin_starts = np.asarray(bin_starts, dtype=float)
+    delay_bins = (bin_starts >= delay_start) & (bin_starts <= delay_end)
+    if not np.any(delay_bins):
         return np.array([], dtype=float)
 
-    clipped_start = np.maximum(start_ms[overlap], delay_start)
-    clipped_end = np.minimum(end_ms[overlap], delay_end)
-    durations = clipped_end - clipped_start
+    max_label = int(np.max(state_labeled))
+    bin_counts = np.bincount(
+        state_labeled[:, delay_bins].ravel(),
+        minlength=max_label + 1,
+    )
+    durations = bin_counts[np.asarray(state_ids, dtype=int)] * t_decode_step
     return durations[durations > 0]
 
 @dataclass
@@ -157,6 +174,7 @@ def main(config: Config):
     # prepare figure dir for this analysis
     fig_dir = cache_dir / 'on_off_states'
     fig_dir.mkdir(parents=True, exist_ok=True)
+    state_results = []
 
     # loop through outs and get decoding confidence and null distribution
     for out_dict in outs:
@@ -171,6 +189,7 @@ def main(config: Config):
         delay_end = 1400 # last bin start
 
         if decoding_confidence is not None:
+            t_decode_step = infer_time_bin_step(bin_starts)
             # prepare placeholders
             on_state_mask = None
             on_state_ids = np.array([], dtype=int)
@@ -423,6 +442,7 @@ def main(config: Config):
                 on_state_ids,
                 on_state_labeled,
                 bin_starts,
+                t_decode_step,
                 delay_start,
                 delay_end,
             )
@@ -431,6 +451,7 @@ def main(config: Config):
                 on_state_ids_cc_skipped,
                 on_state_labeled_cc_skipped,
                 bin_starts,
+                t_decode_step,
                 delay_start,
                 delay_end,
             )
@@ -471,6 +492,7 @@ def main(config: Config):
                 off_state_ids,
                 off_state_labeled,
                 bin_starts,
+                t_decode_step,
                 delay_start,
                 delay_end,
             )
@@ -479,6 +501,7 @@ def main(config: Config):
                 off_state_ids_cc_skipped,
                 off_state_labeled_cc_skipped,
                 bin_starts,
+                t_decode_step,
                 delay_start,
                 delay_end,
             )
@@ -571,6 +594,29 @@ def main(config: Config):
                     plt.title(f'Off-State Candidate Cluster Masses\nSession: {session}, Cue: {cue_to_deg(cue)}°')
                     save_figure_all_formats(fig, fig_dir / f'off_state_candidate_cluster_masses_{session}_{cue}.png', dpi=300)
                     plt.close(fig)
+
+            off_duration_per_trial = np.zeros(decoding_confidence.shape[0], dtype=float)
+            if off_state_mask is not None:
+                off_duration_per_trial = off_state_duration_per_trial(
+                    off_state_mask,
+                    bin_starts,
+                    t_decode_step,
+                    delay_start,
+                    delay_end,
+                )
+            state_results.append({
+                'session': session,
+                'cue': cue,
+                'trial_idx': np.asarray(out_dict.get('trial_idx', []), dtype=np.int64),
+                'off_state_duration_per_trial': off_duration_per_trial,
+                'off_state_duration_correction': 'applied',
+                'off_state_duration_delay_start': delay_start,
+                'off_state_duration_delay_end': delay_end,
+                't_decode_step': t_decode_step,
+            })
+
+    with open(cache_dir / 'on_off_states.pkl', 'wb') as f:
+        pickle.dump(state_results, f)
 
 if __name__ == '__main__':
     config = tyro.cli(Config)
