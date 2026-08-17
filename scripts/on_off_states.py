@@ -76,6 +76,45 @@ def get_off_candidate_mask(z_map, z_threshold: float = 1.645, method: str = 'one
         raise ValueError(f'Unknown method: {method}')
     return off_candidate_mask
 
+
+def state_durations(
+    state_mask,
+    state_ids,
+    state_labeled,
+    bin_starts,
+    delay_start,
+    delay_end,
+):
+    """Return state-cluster durations that overlap the delay period."""
+    if state_mask is None or not state_ids.size or state_labeled is None:
+        return np.array([], dtype=float)
+
+    sig_rows, sig_cols = np.nonzero(state_mask)
+    sig_cluster_ids = state_labeled[sig_rows, sig_cols]
+    valid = sig_cluster_ids > 0
+    if not np.any(valid):
+        return np.array([], dtype=float)
+    sig_cluster_ids = sig_cluster_ids[valid]
+    sig_cols = sig_cols[valid]
+
+    max_sig_label = sig_cluster_ids.max()
+    min_col = np.full(max_sig_label + 1, state_mask.shape[1], dtype=int)
+    max_col = np.zeros(max_sig_label + 1, dtype=int)
+    np.minimum.at(min_col, sig_cluster_ids, sig_cols)
+    np.maximum.at(max_col, sig_cluster_ids, sig_cols)
+    start_idx = min_col[state_ids]
+    end_idx = max_col[state_ids]
+    start_ms = bin_starts[start_idx]
+    end_ms = bin_starts[end_idx]
+    overlap = (end_ms >= delay_start) & (start_ms <= delay_end)
+    if not np.any(overlap):
+        return np.array([], dtype=float)
+
+    clipped_start = np.maximum(start_ms[overlap], delay_start)
+    clipped_end = np.minimum(end_ms[overlap], delay_end)
+    durations = clipped_end - clipped_start
+    return durations[durations > 0]
+
 @dataclass
 class Config:
     cache_dir: Path = Path('cache/run_001') # directory for cached results and figures
@@ -87,6 +126,8 @@ class Config:
     cc_method_off: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'
     cc_alpha_on: float = 0.05
     cc_alpha_off: float = 0.05
+    compare_with_cc_skipped_on: bool = False
+    compare_with_cc_skipped_off: bool = False
     on_duration_xmax: float = 1000.0
     off_duration_xmax: float = 1000.0
 
@@ -100,6 +141,8 @@ def main(config: Config):
     cc_method_off = config.cc_method_off
     cc_alpha_on = config.cc_alpha_on
     cc_alpha_off = config.cc_alpha_off
+    compare_with_cc_skipped_on = config.compare_with_cc_skipped_on
+    compare_with_cc_skipped_off = config.compare_with_cc_skipped_off
     on_duration_xmax = max(100.0, config.on_duration_xmax)
     off_duration_xmax = max(100.0, config.off_duration_xmax)
 
@@ -139,6 +182,12 @@ def main(config: Config):
             candidate_ids = np.array([], dtype=int)
             off_cluster_masses = None
             off_cluster_mass_cutoffs = np.array([], dtype=float)
+            on_state_mask_cc_skipped = None
+            on_state_ids_cc_skipped = np.array([], dtype=int)
+            on_state_labeled_cc_skipped = None
+            off_state_mask_cc_skipped = None
+            off_state_ids_cc_skipped = np.array([], dtype=int)
+            off_state_labeled_cc_skipped = None
 
             if decoding_confidence_null is not None and decoding_confidence_null.shape[2] > 0:
                 # get on-state mask using cluster mass approach
@@ -275,6 +324,27 @@ def main(config: Config):
                             off_state_ids = np.array(keep_ids, dtype=int)
                             off_state_mask = np.isin(off_state_labeled, off_state_ids)
 
+                # Reuse the same candidate clusters with correction skipped for
+                # optional duration-histogram comparisons. This changes only
+                # the relevant cluster-correction step.
+                if compare_with_cc_skipped_on and cc_method_on != 'skipped':
+                    on_state_labeled_cc_skipped = on_state_labeled
+                    on_state_ids_cc_skipped = np.flatnonzero(on_cluster_masses > 0)
+                    if on_state_ids_cc_skipped.size:
+                        on_state_mask_cc_skipped = np.isin(
+                            on_state_labeled_cc_skipped,
+                            on_state_ids_cc_skipped,
+                        )
+
+                if compare_with_cc_skipped_off and cc_method_off != 'skipped':
+                    off_state_labeled_cc_skipped = off_state_labeled
+                    off_state_ids_cc_skipped = candidate_ids.copy()
+                    if off_state_ids_cc_skipped.size:
+                        off_state_mask_cc_skipped = np.isin(
+                            off_state_labeled_cc_skipped,
+                            off_state_ids_cc_skipped,
+                        )
+
             # save decoding confidence heatmap
             fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
             sns.heatmap(decoding_confidence, vmin=0.5, vmax=1.0, ax=ax)
@@ -347,81 +417,101 @@ def main(config: Config):
             on_xlim = (0, on_duration_xmax)
             off_xlim = (0, off_duration_xmax)
 
-            if on_state_mask is not None and on_state_ids.size:
-                # find non-zero entries in on_state_mask
-                sig_rows, sig_cols = np.nonzero(on_state_mask)
-                # find cluster ids for these entries
-                sig_cluster_ids = on_state_labeled[sig_rows, sig_cols]
-                valid = sig_cluster_ids > 0
-                if np.any(valid):
-                    # filter out background entries
-                    sig_cluster_ids = sig_cluster_ids[valid]
-                    sig_cols = sig_cols[valid]
-                    # make room to store min and max col for each cluster
-                    max_sig_label = sig_cluster_ids.max()
-                    min_col = np.full(max_sig_label + 1, on_state_mask.shape[1], dtype=int)
-                    max_col = np.zeros(max_sig_label + 1, dtype=int)
-                    # group sig_cols by sig_cluster_ids (clusters) to get min and max col for each cluster
-                    np.minimum.at(min_col, sig_cluster_ids, sig_cols)
-                    np.maximum.at(max_col, sig_cluster_ids, sig_cols)
-                    # filter min and max col with on_state_ids (valid on-state clusters)
-                    start_idx = min_col[on_state_ids]
-                    end_idx = max_col[on_state_ids]
-                    start_ms = bin_starts[start_idx]
-                    end_ms = bin_starts[end_idx]
-                    # identify on-states that overlap with delay periods
-                    overlap = (end_ms >= delay_start) & (start_ms <= delay_end)
-                    if np.any(overlap):
-                        # clip on-state if it extends beyond delay period
-                        clipped_start = np.maximum(start_ms[overlap], delay_start)
-                        clipped_end = np.minimum(end_ms[overlap], delay_end)
-                        durations = clipped_end - clipped_start
-                        durations = durations[durations > 0]
-                        if durations.size:
-                            fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
-                            sns.histplot(durations, bins=on_bins, ax=ax)
-                            show_spines(ax)
-                            plt.xlabel('Duration (ms)')
-                            plt.ylabel('Count')
-                            plt.title(f'On-State Duration\nSession: {session}, Cue: {cue_to_deg(cue)}°')
-                            plt.xlim(*on_xlim)
-                            save_figure_all_formats(fig, fig_dir / f'on_state_duration_{session}_{cue}.png', dpi=300)
-                            plt.close(fig)
+            compare_on = compare_with_cc_skipped_on and cc_method_on != 'skipped'
+            on_durations = state_durations(
+                on_state_mask,
+                on_state_ids,
+                on_state_labeled,
+                bin_starts,
+                delay_start,
+                delay_end,
+            )
+            on_durations_cc_skipped = state_durations(
+                on_state_mask_cc_skipped if compare_on else None,
+                on_state_ids_cc_skipped,
+                on_state_labeled_cc_skipped,
+                bin_starts,
+                delay_start,
+                delay_end,
+            )
+            if on_durations.size or on_durations_cc_skipped.size:
+                fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+                if compare_on:
+                    if on_durations_cc_skipped.size:
+                        sns.histplot(
+                            on_durations_cc_skipped,
+                            bins=on_bins,
+                            ax=ax,
+                            color='tab:orange',
+                            label='CC skipped',
+                        )
+                    if on_durations.size:
+                        sns.histplot(
+                            on_durations,
+                            bins=on_bins,
+                            ax=ax,
+                            color='tab:blue',
+                            label='CC applied',
+                        )
+                    if on_durations.size and on_durations_cc_skipped.size:
+                        ax.legend(frameon=False)
+                else:
+                    sns.histplot(on_durations, bins=on_bins, ax=ax)
+                show_spines(ax)
+                plt.xlabel('Duration (ms)')
+                plt.ylabel('Count')
+                plt.title(f'On-State Duration\nSession: {session}, Cue: {cue_to_deg(cue)}°')
+                plt.xlim(*on_xlim)
+                save_figure_all_formats(fig, fig_dir / f'on_state_duration_{session}_{cue}.png', dpi=300)
+                plt.close(fig)
 
-            if off_state_ids.size:
-                off_rows, off_cols = np.nonzero(off_state_mask)
-                # off_state_labels is a 1D array with length equal to number of non-zero entries in off_state_mask
-                off_state_labels = off_state_labeled[off_rows, off_cols]
-                # make room to store min and max col for each cluster
-                max_off_label = off_state_labels.max()
-                min_col = np.full(max_off_label + 1, off_state_mask.shape[1], dtype=int)
-                max_col = np.zeros(max_off_label + 1, dtype=int)
-                # group off_cols by off_state_labels (clusters) to get min and max col for each cluster
-                np.minimum.at(min_col, off_state_labels, off_cols)
-                np.maximum.at(max_col, off_state_labels, off_cols)
-                # filter min and max col with off_state_ids (valid off-state clusters)
-                off_start_idx = min_col[off_state_ids]
-                off_end_idx = max_col[off_state_ids]
-                off_start_ms = bin_starts[off_start_idx]
-                off_end_ms = bin_starts[off_end_idx]
-                # identify off-states that overlap with delay periods
-                overlap = (off_end_ms >= delay_start) & (off_start_ms <= delay_end)
-                if np.any(overlap):
-                    # clip off-state if it extends beyond delay period
-                    clipped_start = np.maximum(off_start_ms[overlap], delay_start)
-                    clipped_end = np.minimum(off_end_ms[overlap], delay_end)
-                    off_durations = clipped_end - clipped_start
-                    off_durations = off_durations[off_durations > 0]
+            compare_off = compare_with_cc_skipped_off and cc_method_off != 'skipped'
+            off_durations = state_durations(
+                off_state_mask,
+                off_state_ids,
+                off_state_labeled,
+                bin_starts,
+                delay_start,
+                delay_end,
+            )
+            off_durations_cc_skipped = state_durations(
+                off_state_mask_cc_skipped if compare_off else None,
+                off_state_ids_cc_skipped,
+                off_state_labeled_cc_skipped,
+                bin_starts,
+                delay_start,
+                delay_end,
+            )
+            if off_durations.size or off_durations_cc_skipped.size:
+                fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+                if compare_off:
+                    if off_durations_cc_skipped.size:
+                        sns.histplot(
+                            off_durations_cc_skipped,
+                            bins=off_bins,
+                            ax=ax,
+                            color='tab:orange',
+                            label='CC skipped',
+                        )
                     if off_durations.size:
-                        fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
-                        sns.histplot(off_durations, bins=off_bins, ax=ax)
-                        show_spines(ax)
-                        plt.xlabel('Duration (ms)')
-                        plt.ylabel('Count')
-                        plt.title(f'Off-State Duration\nSession: {session}, Cue: {cue_to_deg(cue)}°')
-                        plt.xlim(*off_xlim)
-                        save_figure_all_formats(fig, fig_dir / f'off_state_duration_{session}_{cue}.png', dpi=300)
-                        plt.close(fig)
+                        sns.histplot(
+                            off_durations,
+                            bins=off_bins,
+                            ax=ax,
+                            color='tab:blue',
+                            label='CC applied',
+                        )
+                    if off_durations.size and off_durations_cc_skipped.size:
+                        ax.legend(frameon=False)
+                else:
+                    sns.histplot(off_durations, bins=off_bins, ax=ax)
+                show_spines(ax)
+                plt.xlabel('Duration (ms)')
+                plt.ylabel('Count')
+                plt.title(f'Off-State Duration\nSession: {session}, Cue: {cue_to_deg(cue)}°')
+                plt.xlim(*off_xlim)
+                save_figure_all_formats(fig, fig_dir / f'off_state_duration_{session}_{cue}.png', dpi=300)
+                plt.close(fig)
 
             # save histgram of off-state null cluster masses
             if isinstance(null_cluster_masses, np.ndarray) and null_cluster_masses.size:
