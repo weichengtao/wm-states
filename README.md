@@ -27,8 +27,8 @@ Download the dataset from `https://datadryad.org/dataset/doi:10.5061/dryad.kkwh7
 
 Run the scripts with `uv run` so they use the environment defined by
 `pyproject.toml`. For a complete analysis, run cell selection, decoding,
-optional repeat inspection, and on/off-state analysis in that order. Use the
-same `--cache-dir` for all stages.
+optional repeat inspection, on/off-state analysis, and baseline-activity
+regression in that order. Use the same `--cache-dir` for all stages.
 
 ## New pipeline
 
@@ -85,4 +85,9 @@ uv run python scripts/inspect_decoding_results.py \
 uv run python scripts/on_off_states.py \
 --cache-dir cache/run_029_full_session \
 --cc-method-off one_tailed
+
+# 5. Regress CC-applied off-state duration on baseline activity.
+uv run python scripts/predict_off_state_duration_using_baseline_activity.py \
+--data-dir data/nature \
+--cache-dir cache/run_029_full_session
 ```
