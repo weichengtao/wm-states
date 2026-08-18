@@ -132,9 +132,58 @@ def state_durations(
     durations = bin_counts[np.asarray(state_ids, dtype=int)] * t_decode_step
     return durations[durations > 0]
 
+
+def _selected_repeat_indices(repeat_count: int, list_of_repeats):
+    """Validate and return the requested zero-based repeat indices."""
+    if list_of_repeats is None:
+        return np.arange(repeat_count, dtype=np.int64)
+    if len(list_of_repeats) == 0:
+        raise ValueError('list_of_repeats must not be empty when subset selection is enabled.')
+    if any(
+        isinstance(repeat_idx, (bool, np.bool_))
+        or not isinstance(repeat_idx, (int, np.integer))
+        for repeat_idx in list_of_repeats
+    ):
+        raise ValueError('list_of_repeats must contain only integer indices.')
+    repeat_indices = np.asarray(list_of_repeats, dtype=np.int64)
+    if np.unique(repeat_indices).size != repeat_indices.size:
+        raise ValueError('list_of_repeats must not contain duplicate indices.')
+    if np.any(repeat_indices < 0) or np.any(repeat_indices >= repeat_count):
+        raise IndexError(
+            f'list_of_repeats indices must be between 0 and {repeat_count - 1}.'
+        )
+    return repeat_indices
+
+
+def _decoding_confidence_for_analysis(out_dict, config):
+    """Return decoding confidence, optionally averaged over selected repeats."""
+    if not config.use_decoding_estimates_from_subset_of_repeats:
+        confidence = out_dict.get('decoding_confidence', None)
+        return None if confidence is None else np.asarray(confidence)
+
+    confidence_repeats = out_dict.get('decoding_confidence_repeats')
+    if confidence_repeats is None:
+        raise ValueError(
+            'The decoding cache is missing decoding_confidence_repeats; '
+            'subset selection requires a repeat-format decoding cache.'
+        )
+    confidence_repeats = np.asarray(confidence_repeats)
+    if confidence_repeats.ndim != 3:
+        raise ValueError(
+            'decoding_confidence_repeats must have shape (trial, repeat, bin).'
+        )
+    repeat_indices = _selected_repeat_indices(
+        confidence_repeats.shape[1],
+        config.list_of_repeats,
+    )
+    return np.nanmean(confidence_repeats[:, repeat_indices, :], axis=1)
+
+
 @dataclass
 class Config:
     cache_dir: Path = Path('cache/run_001') # directory for cached results and figures
+    use_decoding_estimates_from_subset_of_repeats: bool = False
+    list_of_repeats: list[int] | None = None
     z_threshold_on: float = 1.645
     z_threshold_off: float = 0.842
     cp_method_off: Literal['two_tailed', 'one_tailed'] = 'one_tailed'
@@ -178,7 +227,7 @@ def main(config: Config):
 
     # loop through outs and get decoding confidence and null distribution
     for out_dict in outs:
-        decoding_confidence = out_dict.get('decoding_confidence', None) # (trial, bin)
+        decoding_confidence = _decoding_confidence_for_analysis(out_dict, config) # (trial, bin)
         decoding_confidence_null = out_dict.get('decoding_confidence_null', None) # (trial, bin, shuffle)
         session = out_dict.get('session', 'unknown_session')
         cue = out_dict.get('cue', 'unknown_cue')

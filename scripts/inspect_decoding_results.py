@@ -26,6 +26,9 @@ class Config:
     trial: list[int]  # one value or inclusive first/last zero-based cache rows
     time_bin_start: list[float]  # one value or inclusive first/last requested times
     cache_dir: Path = Path('cache/run_001')
+    with_null: bool = False
+    use_decoding_estimates_from_subset_of_repeats: bool = False
+    list_of_repeats: list[int] | None = None
     verbose: int = 1  # 0: no output, 1: summary, 2: summary and each figure
 
 
@@ -53,6 +56,14 @@ def _format_number(value) -> str:
     return f'{float(value):g}'
 
 
+def _format_time_filename_part(value) -> str:
+    """Format a time value without losing the sign in a filename."""
+    formatted = _format_number(value)
+    if formatted.startswith('-'):
+        return f'neg{formatted[1:]}'
+    return formatted
+
+
 def _parse_range(values, name: str):
     if len(values) not in (1, 2):
         raise ValueError(f'{name} must contain one value or two inclusive endpoints.')
@@ -61,6 +72,28 @@ def _parse_range(values, name: str):
     if last < first:
         raise ValueError(f'{name} range must be increasing: got {values}.')
     return first, last
+
+
+def _selected_repeat_indices(repeat_count: int, list_of_repeats):
+    """Validate and return the requested zero-based repeat indices."""
+    if list_of_repeats is None:
+        return np.arange(repeat_count, dtype=np.int64)
+    if len(list_of_repeats) == 0:
+        raise ValueError('list_of_repeats must not be empty when subset selection is enabled.')
+    if any(
+        isinstance(repeat_idx, (bool, np.bool_))
+        or not isinstance(repeat_idx, (int, np.integer))
+        for repeat_idx in list_of_repeats
+    ):
+        raise ValueError('list_of_repeats must contain only integer indices.')
+    repeat_indices = np.asarray(list_of_repeats, dtype=np.int64)
+    if np.unique(repeat_indices).size != repeat_indices.size:
+        raise ValueError('list_of_repeats must not contain duplicate indices.')
+    if np.any(repeat_indices < 0) or np.any(repeat_indices >= repeat_count):
+        raise IndexError(
+            f'list_of_repeats indices must be between 0 and {repeat_count - 1}.'
+        )
+    return repeat_indices
 
 
 def _load_selected_values(config: Config):
@@ -111,6 +144,13 @@ def _load_selected_values(config: Config):
         raise ValueError(
             'The bin dimension of decoding_confidence_repeats does not match time_bins.'
         )
+    if config.use_decoding_estimates_from_subset_of_repeats:
+        repeat_indices = _selected_repeat_indices(
+            confidence_repeats.shape[1],
+            config.list_of_repeats,
+        )
+        confidence_repeats = confidence_repeats[:, repeat_indices, :]
+        accuracy_repeats = accuracy_repeats[:, repeat_indices, :]
     trial_first, trial_last = _parse_range(config.trial, 'trial')
     if trial_first < 0 or trial_last >= trial_idx.size:
         raise IndexError(
@@ -141,6 +181,68 @@ def _load_selected_values(config: Config):
     )
 
 
+def _load_null_values(result, trial_count: int, bin_count: int):
+    """Return cached null confidence and per-trial null accuracy values.
+
+    ``decoding_confidence.py`` caches the null confidence for the preferred
+    class, but older cache formats do not include null accuracy or the test
+    labels.  The inspector only examines preferred-cue test trials, so null
+    accuracy can be derived by thresholding the preferred-class confidence at
+    0.5.  If a cache already contains ``decoding_accuracy_null``, use it
+    instead.
+    """
+    confidence_null = result.get('decoding_confidence_null')
+    if confidence_null is None:
+        raise ValueError(
+            f'Cached result for session {result.get("session", "unknown")} '
+            'does not contain decoding_confidence_null; rerun '
+            'decoding_confidence.py with n_decode_shuffle > 0.'
+        )
+    confidence_null = np.asarray(confidence_null, dtype=float)
+    expected_shape = (trial_count, bin_count)
+    if confidence_null.ndim != 3 or confidence_null.shape[:2] != expected_shape:
+        raise ValueError(
+            'decoding_confidence_null must have shape '
+            f'(trial, bin, shuffle) with first dimensions {expected_shape}; '
+            f'got {confidence_null.shape}.'
+        )
+    if confidence_null.shape[2] == 0:
+        raise ValueError('decoding_confidence_null does not contain any shuffles.')
+
+    accuracy_null = result.get('decoding_accuracy_null')
+    if accuracy_null is not None:
+        accuracy_null = np.asarray(accuracy_null, dtype=float)
+        if accuracy_null.shape != confidence_null.shape:
+            raise ValueError(
+                'decoding_accuracy_null must have the same shape as '
+                'decoding_confidence_null; '
+                f'got {accuracy_null.shape} and {confidence_null.shape}.'
+            )
+    else:
+        test_labels = result.get('decoding_test_labels')
+        if test_labels is None:
+            # The null confidence is the probability of the preferred class;
+            # inspect_decoding_results only selects preferred-cue test trials.
+            test_labels = np.ones(trial_count, dtype=bool)
+        else:
+            test_labels = np.asarray(test_labels)
+            if test_labels.shape != (trial_count,):
+                raise ValueError(
+                    'decoding_test_labels must have one label per cached trial; '
+                    f'got {test_labels.shape} for {trial_count} trials.'
+                )
+            test_labels = test_labels.astype(bool)
+        null_predicted_preferred = confidence_null >= 0.5
+        accuracy_null = np.where(
+            np.isfinite(confidence_null),
+            null_predicted_preferred == test_labels[:, None, None],
+            np.nan,
+        )
+        accuracy_null = accuracy_null.astype(float)
+
+    return confidence_null, accuracy_null
+
+
 def save_inspection_figure(
     output_dir: Path,
     session: str,
@@ -148,13 +250,19 @@ def save_inspection_figure(
     time_bin_start: float,
     accuracy_values: np.ndarray,
     confidence_values: np.ndarray,
+    null_accuracy_values: np.ndarray | None = None,
+    null_confidence_values: np.ndarray | None = None,
+    *,
+    bin_index: int | None = None,
 ) -> Path:
     """Save side-by-side repeat histograms as a PNG and return its path."""
     session_part = _safe_filename_part(session)
-    time_part = _safe_filename_part(_format_number(time_bin_start))
+    time_part = _format_time_filename_part(time_bin_start)
+    bin_part = 'unknown' if bin_index is None else f'{int(bin_index):04d}'
     output_path = output_dir / (
         f'decoding_hist_session-{session_part}'
         f'_trial-row-{trial}'
+        f'_bin-{bin_part}'
         f'_time-bin-start-{time_part}.png'
     )
 
@@ -172,6 +280,15 @@ def save_inspection_figure(
         edgecolor='white',
         rwidth=0.8,
     )
+    if null_accuracy_values is not None:
+        axes[0].hist(
+            null_accuracy_values,
+            bins=np.array([-0.5, 0.5, 1.5]),
+            color='tab:green',
+            histtype='step',
+            linewidth=1.5,
+            label='Null',
+        )
     axes[0].set_xticks([0, 1])
     axes[0].set_xlim(-0.75, 1.75)
     axes[0].set_xlabel('Decoding accuracy')
@@ -184,11 +301,23 @@ def save_inspection_figure(
         color='tab:orange',
         edgecolor='white',
     )
+    if null_confidence_values is not None:
+        axes[1].hist(
+            null_confidence_values,
+            bins=np.linspace(0.0, 1.0, 21),
+            color='tab:green',
+            histtype='step',
+            linewidth=1.5,
+            label='Null',
+        )
     axes[1].set_xlim(0.0, 1.0)
     axes[1].set_xlabel('Decoding confidence')
     axes[1].set_ylabel('Count')
     axes[1].set_title(f'Confidence ({confidence_values.size} repeats)')
     axes[1].axvline(0.5, color='black', linestyle='--', linewidth=1)
+    if null_accuracy_values is not None or null_confidence_values is not None:
+        axes[0].legend(loc='upper right', frameon=False)
+        axes[1].legend(loc='upper right', frameon=False)
 
     fig.suptitle(
         f'Session {session}, trial row {trial}, '
@@ -211,6 +340,13 @@ def main(config: Config):
         confidence_repeats,
         accuracy_repeats,
     ) = _load_selected_values(config)
+    null_confidence = null_accuracy = None
+    if config.with_null:
+        null_confidence, null_accuracy = _load_null_values(
+            result,
+            trial_idx.size,
+            time_bins.size,
+        )
     output_dir = config.cache_dir / 'inspect_decoding_results'
     session = str(result.get('session', config.session))
     saved_paths = []
@@ -218,8 +354,25 @@ def main(config: Config):
         for bin_index in selected_bin_indices:
             confidence_values = confidence_repeats[trial_row, :, bin_index]
             accuracy_values = accuracy_repeats[trial_row, :, bin_index]
+            null_confidence_values = (
+                None
+                if null_confidence is None
+                else null_confidence[trial_row, bin_index, :]
+            )
+            null_accuracy_values = (
+                None
+                if null_accuracy is None
+                else null_accuracy[trial_row, bin_index, :]
+            )
             confidence_values = confidence_values[np.isfinite(confidence_values)]
             accuracy_values = accuracy_values[np.isfinite(accuracy_values)]
+            if null_confidence_values is not None:
+                null_confidence_values = null_confidence_values[
+                    np.isfinite(null_confidence_values)
+                ]
+                null_accuracy_values = null_accuracy_values[
+                    np.isfinite(null_accuracy_values)
+                ]
             time_bin_start = time_bins[bin_index]
             if confidence_values.size == 0:
                 raise ValueError(
@@ -231,6 +384,16 @@ def main(config: Config):
                     f'Trial row {trial_row}, time bin {time_bin_start:g} ms '
                     'contains no finite accuracy repeats.'
                 )
+            if config.with_null and null_confidence_values.size == 0:
+                raise ValueError(
+                    f'Trial row {trial_row}, time bin {time_bin_start:g} ms '
+                    'contains no finite null confidence values.'
+                )
+            if config.with_null and null_accuracy_values.size == 0:
+                raise ValueError(
+                    f'Trial row {trial_row}, time bin {time_bin_start:g} ms '
+                    'contains no finite null accuracy values.'
+                )
             saved_paths.append(
                 save_inspection_figure(
                     output_dir,
@@ -239,6 +402,9 @@ def main(config: Config):
                     time_bin_start,
                     accuracy_values,
                     confidence_values,
+                    null_accuracy_values=null_accuracy_values,
+                    null_confidence_values=null_confidence_values,
+                    bin_index=int(bin_index),
                 )
             )
     if config.verbose >= 1:
