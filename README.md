@@ -37,8 +37,9 @@ The commands below run the full-session pipeline. Cell selection writes the
 selection cache, decoding reuses it and writes repeat-level confidence and
 accuracy results, and the final analysis uses the decoding cache to identify
 on/off states. The inspection script is optional and saves one PNG per
-selected trial and time bin; two range endpoints are inclusive, and time-bin
-endpoints are matched to the nearest cached bin.
+selected trial and time bin; `--with-null` overlays null confidence and
+accuracy, two range endpoints are inclusive, and time-bin endpoints are
+matched to the nearest cached bin.
 
 ```bash
 # 1. Select decoder cells and cache the selection results.
@@ -80,12 +81,18 @@ uv run python scripts/inspect_decoding_results.py \
 --cache-dir cache/run_029_full_session \
 --session 210921 \
 --trial 0 1 \
---time-bin-start 500 1400
+--time-bin-start -200 1400 \
+--with-null
 
 # 4. Identify and summarize on/off states.
 uv run python scripts/on_off_states.py \
 --cache-dir cache/run_029_full_session \
---cc-method-off one_tailed
+--cc-method-on one_tailed \
+--cc-method-off one_tailed \
+--compare-with-cc-skipped-on \
+--compare-with-cc-skipped-off \
+--use-decoding-estimates-from-subset-of-repeats \
+--list-of-repeats 0
 
 # 5. Regress CC-applied off-state duration on baseline activity.
 uv run python scripts/predict_off_state_duration_using_baseline_activity.py \
