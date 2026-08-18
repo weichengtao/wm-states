@@ -151,6 +151,32 @@ def compute_binned_rates(spikes, t, bin_starts, window_ms):
         rates[:, i, :] = rate_bin.astype(np.float32, copy=False)
     return rates
 
+
+def shuffle_trial_idx_within_labels(spikes, labels, rng):
+    """Shuffle trial indices independently for each cell within each label.
+
+    The same cell-specific trial permutation is applied to every time sample,
+    so each cell keeps its trial waveform while its trial assignment is
+    shuffled. Labels and the trial axis itself are unchanged.
+    """
+    spikes = np.asarray(spikes)
+    labels = np.asarray(labels)
+    if spikes.ndim != 3:
+        raise ValueError('spikes must have shape (trial, time, cell).')
+    if labels.shape != (spikes.shape[0],):
+        raise ValueError('labels must contain one label per trial.')
+
+    shuffled_spikes = np.array(spikes, copy=True)
+    for label in np.unique(labels):
+        label_trial_idx = np.flatnonzero(labels == label)
+        for cell_idx in range(spikes.shape[2]):
+            source_idx = label_trial_idx[rng.permutation(label_trial_idx.size)]
+            shuffled_spikes[label_trial_idx, :, cell_idx] = spikes[
+                source_idx, :, cell_idx
+            ]
+    return shuffled_spikes
+
+
 def decode_one_trial(
     test_idx,
     binned_rates,
@@ -442,6 +468,7 @@ def total_unique_trials(partitions):
 class Config:
     """CLI configuration for decoding confidence analysis."""
     n_jobs: int = 1 # number of parallel jobs for single-trial decoding
+    par_verbose: int = 10 # joblib Parallel verbosity level
     seed: int = 42 # random seed for cue label balancing and shuffling
     data_dir: Path = Path('data/nature') # directory with {session}.mat files
     cache_dir: Path = Path('cache/run_001') # directory for cached results and figures
@@ -457,6 +484,7 @@ class Config:
     t_decode_end: int = 1400
     t_decode_window: int = 50
     t_decode_step: int = 10
+    n_cue_preserved_trial_idx_shuffle: int = 0 # number of cue-label-preserved, cell-independent trial-index shuffles
     n_repeats_for_model_fit: int = 1 # number of model fits per trial/bin
     n_decode_shuffle: int = 0 # number of label shuffles for null distribution of decoding confidence (0 to skip)
     plot_only: bool = False # if True, only generate plots from cached decoding results
@@ -478,12 +506,15 @@ def main(config: Config):
     Each trial/bin model can be fit repeatedly with fresh balanced training
     trials; the repeat count is controlled by n_repeats_for_model_fit. The
     cached confidence map is averaged over repeats, while per-repeat confidence,
-    accuracy, and predictions are retained.
-    Optional label shuffles generate a null distribution. Training trials are
-    balanced by default, controlled by balance_decoder_training_trials. Results
-    are cached and per-session heatmaps and confidence line plots are saved; when
-    plot-only mode is enabled, the cached results are used to regenerate both
-    figures without recomputing decoding.
+    accuracy, and predictions are retained. Optional label shuffles generate a
+    null distribution. When n_cue_preserved_trial_idx_shuffle is positive,
+    trial indices are shuffled independently for each cell within each cue
+    label before decoding; this mode forces one model-fit repeat and one label
+    shuffle per cue-preserved shuffle. Training trials are balanced by default,
+    controlled by balance_decoder_training_trials. Results are cached and
+    per-session heatmaps and confidence line plots are saved; when plot-only mode
+    is enabled, the cached results are used to regenerate both figures without
+    recomputing decoding.
     """
     decoder_mode = CellsUsedForDecoder(config.cells_used_for_decoder)
     decoder_model = DecoderModel(config.decoder_model)
@@ -493,6 +524,24 @@ def main(config: Config):
         raise ValueError('classifier_c must be finite and greater than zero.')
     if config.n_repeats_for_model_fit < 1:
         raise ValueError('n_repeats_for_model_fit must be at least 1.')
+    if config.n_decode_shuffle < 0:
+        raise ValueError('n_decode_shuffle must be non-negative.')
+    if config.n_cue_preserved_trial_idx_shuffle < 0:
+        raise ValueError(
+            'n_cue_preserved_trial_idx_shuffle must be non-negative.'
+        )
+    if config.n_cue_preserved_trial_idx_shuffle > 0:
+        if config.n_repeats_for_model_fit != 1 or config.n_decode_shuffle != 0:
+            print(
+                'Warning: n_cue_preserved_trial_idx_shuffle > 0 forces '
+                'n_repeats_for_model_fit=1 and n_decode_shuffle=1; '
+                'the supplied repeat/shuffle values will be ignored.'
+            )
+        n_repeats_for_model_fit = 1
+        n_decode_shuffle = 1
+    else:
+        n_repeats_for_model_fit = int(config.n_repeats_for_model_fit)
+        n_decode_shuffle = int(config.n_decode_shuffle)
     if config.loo_cell_selection:
         raise ValueError(
             'loo_cell_selection is not supported by decoding_confidence.py; '
@@ -677,19 +726,34 @@ def main(config: Config):
             f'decoder={decoder_model.value}, '
             f'kernel={svm_kernel.value if decoder_model is DecoderModel.SVM else "ignored"}, '
             f'balance_trials={config.balance_decoder_training_trials}, '
-            f'model_fit_repeats={config.n_repeats_for_model_fit}, '
+            f'model_fit_repeats={n_repeats_for_model_fit}, '
+            f'decode_shuffles={n_decode_shuffle}, '
+            f'cue_preserved_trial_idx_shuffles='
+            f'{config.n_cue_preserved_trial_idx_shuffle}, '
             f'C={classifier_c}, '
             f'{selected_trial_idx.size} trials '
             f'({test_sel_indices.size} test trials)'
         )
 
         bin_starts = np.arange(config.t_decode_start, config.t_decode_end + 1, config.t_decode_step)
+        cell_idx = np.asarray(sorted(decoder_cell_set), dtype=np.int64)
+        spikes_sel = spikes[selected_trial_idx][:, :, cell_idx]
 
-        def decode_trial(idx_test: int):
+        cue_shuffle_seed_sequences = None
+        if config.n_cue_preserved_trial_idx_shuffle > 0:
+            cue_shuffle_seed_sequences = np.random.SeedSequence(config.seed).spawn(
+                config.n_cue_preserved_trial_idx_shuffle
+            )
+
+        def decode_trial(idx_test: int, binned_rates=None):
             trial_abs = int(selected_trial_idx[idx_test])
-            cell_idx = np.asarray(sorted(decoder_cell_set), dtype=np.int64)
-            spikes_sel = spikes[selected_trial_idx][:, :, cell_idx]
-            binned_rates = compute_binned_rates(spikes_sel, t, bin_starts, config.t_decode_window)
+            if binned_rates is None:
+                binned_rates = compute_binned_rates(
+                    spikes_sel,
+                    t,
+                    bin_starts,
+                    config.t_decode_window,
+                )
 
             repeat_conf, repeat_predicted_labels, repeat_accuracy, null_conf = decode_one_trial(
                 idx_test,
@@ -700,8 +764,8 @@ def main(config: Config):
                 classifier_c,
                 decoder_model,
                 svm_kernel,
-                config.n_repeats_for_model_fit,
-                config.n_decode_shuffle,
+                n_repeats_for_model_fit,
+                n_decode_shuffle,
             )
             return (
                 'ok',
@@ -714,58 +778,131 @@ def main(config: Config):
                 int(cell_idx.size),
             )
 
-        decoded = Parallel(n_jobs=config.n_jobs, verbose=10)(
-            delayed(decode_trial)(idx) for idx in test_sel_indices
-        )
+        if cue_shuffle_seed_sequences is not None:
+            decoded_by_cue_shuffle = []
+            for cue_shuffle_seed_sequence in cue_shuffle_seed_sequences:
+                cue_shuffle_rng = np.random.default_rng(cue_shuffle_seed_sequence)
+                shuffled_spikes_sel = shuffle_trial_idx_within_labels(
+                    spikes_sel,
+                    labels_sel,
+                    cue_shuffle_rng,
+                )
+                binned_rates = compute_binned_rates(
+                    shuffled_spikes_sel,
+                    t,
+                    bin_starts,
+                    config.t_decode_window,
+                )
+                decoded_by_cue_shuffle.append(
+                    Parallel(n_jobs=config.n_jobs, verbose=config.par_verbose)(
+                        delayed(decode_trial)(idx, binned_rates)
+                        for idx in test_sel_indices
+                    )
+                )
+        else:
+            decoded_by_cue_shuffle = [
+                Parallel(n_jobs=config.n_jobs, verbose=config.par_verbose)(
+                    delayed(decode_trial)(idx) for idx in test_sel_indices
+                )
+            ]
 
-        conf_list = []
-        null_list = []
-        trial_idx_pref = []
-        predicted_labels_list = []
-        accuracy_list = []
-        test_labels_pref = []
-        num_cells_per_trial: list[int] = []
-        for (
-            status,
-            trial_abs,
-            test_label,
-            repeat_conf,
-            repeat_predicted_labels,
-            repeat_accuracy,
-            null_conf,
-            n_cell,
-        ) in decoded:
-            if status == 'warn_no_partitions':
-                print(f'  Skipping test trial {trial_abs}: no matching LOO partition and all no-holdout partitions overlap this trial')
-                continue
-            if status == 'warn_no_cells':
-                print(f'  Skipping test trial {trial_abs}: no preferred-cue cells from applicable partitions')
-                continue
-            conf_list.append(repeat_conf)
-            predicted_labels_list.append(repeat_predicted_labels)
-            accuracy_list.append(repeat_accuracy)
-            test_labels_pref.append(test_label)
-            if null_conf is not None:
-                null_list.append(null_conf)
-            trial_idx_pref.append(trial_abs)
-            num_cells_per_trial.append(n_cell)
+        def collect_decoded_batch(decoded):
+            conf_list = []
+            null_list = []
+            trial_idx_pref = []
+            predicted_labels_list = []
+            accuracy_list = []
+            test_labels_pref = []
+            num_cells_per_trial: list[int] = []
+            for (
+                status,
+                trial_abs,
+                test_label,
+                repeat_conf,
+                repeat_predicted_labels,
+                repeat_accuracy,
+                null_conf,
+                n_cell,
+            ) in decoded:
+                if status == 'warn_no_partitions':
+                    print(f'  Skipping test trial {trial_abs}: no matching LOO partition and all no-holdout partitions overlap this trial')
+                    continue
+                if status == 'warn_no_cells':
+                    print(f'  Skipping test trial {trial_abs}: no preferred-cue cells from applicable partitions')
+                    continue
+                conf_list.append(repeat_conf)
+                predicted_labels_list.append(repeat_predicted_labels)
+                accuracy_list.append(repeat_accuracy)
+                test_labels_pref.append(test_label)
+                if null_conf is not None:
+                    null_list.append(null_conf)
+                trial_idx_pref.append(trial_abs)
+                num_cells_per_trial.append(n_cell)
 
-        if not conf_list:
+            if not conf_list:
+                return None
+            return {
+                'confidence': np.stack(conf_list, axis=0),
+                'predicted_labels': np.stack(predicted_labels_list, axis=0),
+                'accuracy_per_trial': np.stack(accuracy_list, axis=0),
+                'null': np.stack(null_list, axis=0) if null_list else None,
+                'trial_idx': np.asarray(trial_idx_pref, dtype=np.int64),
+                'test_labels': np.asarray(test_labels_pref, dtype=np.int8),
+                'num_cells_per_trial': num_cells_per_trial,
+            }
+
+        decoded_batches = [
+            collect_decoded_batch(decoded) for decoded in decoded_by_cue_shuffle
+        ]
+        if any(batch is None for batch in decoded_batches):
             print('  Skipping: no decodable preferred-cue trials with available cells')
             continue
 
-        decode_confidence_repeats = np.stack(conf_list, axis=0)
-        decode_predicted_labels = np.stack(predicted_labels_list, axis=0)
-        decode_accuracy_per_trial_repeats = np.stack(accuracy_list, axis=0)
+        first_batch = decoded_batches[0]
+        trial_idx_pref = first_batch['trial_idx']
+        decode_test_labels = first_batch['test_labels']
+        num_cells_per_trial = first_batch['num_cells_per_trial']
+        for batch in decoded_batches[1:]:
+            if not np.array_equal(batch['trial_idx'], trial_idx_pref):
+                raise RuntimeError(
+                    'Cue-preserved shuffles produced different test-trial rows.'
+                )
+            if not np.array_equal(batch['test_labels'], decode_test_labels):
+                raise RuntimeError(
+                    'Cue-preserved shuffles produced different test labels.'
+                )
+
+        # Treat each cue-preserved shuffle as one repeat so existing consumers
+        # can continue to use the repeat-shaped arrays unchanged.
+        decode_confidence_repeats = np.concatenate(
+            [batch['confidence'] for batch in decoded_batches],
+            axis=1,
+        )
+        decode_predicted_labels = np.concatenate(
+            [batch['predicted_labels'] for batch in decoded_batches],
+            axis=1,
+        )
+        decode_accuracy_per_trial_repeats = np.concatenate(
+            [batch['accuracy_per_trial'] for batch in decoded_batches],
+            axis=1,
+        )
         decode_confidence = np.nanmean(decode_confidence_repeats, axis=1)
         decode_accuracy_repeats = np.nanmean(
             decode_accuracy_per_trial_repeats, axis=0
         )
         decode_accuracy = np.nanmean(decode_accuracy_repeats, axis=0)
-        decode_test_labels = np.asarray(test_labels_pref, dtype=np.int8)
         decode_confidence_null = None
-        if config.n_decode_shuffle > 0:
-            decode_confidence_null = np.stack(null_list, axis=0) if null_list else np.empty((0, len(bin_starts), config.n_decode_shuffle))
+        if n_decode_shuffle > 0:
+            null_batches = [batch['null'] for batch in decoded_batches]
+            if all(null_batch is not None for null_batch in null_batches):
+                # Each cue-preserved shuffle contributes its null samples to
+                # the existing shuffle axis.
+                decode_confidence_null = np.concatenate(null_batches, axis=2)
+            else:
+                decode_confidence_null = np.empty(
+                    (0, len(bin_starts), n_decode_shuffle),
+                    dtype=np.float32,
+                )
 
         cue_angle = int(cue_to_deg(pref_cue))
         results.append({
@@ -780,7 +917,11 @@ def main(config: Config):
             'decoding_accuracy': decode_accuracy,
             'decoding_accuracy_repeats': decode_accuracy_repeats,
             'decoding_accuracy_per_trial_repeats': decode_accuracy_per_trial_repeats,
-            'n_repeats_for_model_fit': int(config.n_repeats_for_model_fit),
+            'n_repeats_for_model_fit': int(n_repeats_for_model_fit),
+            'n_decode_shuffle': int(n_decode_shuffle),
+            'n_cue_preserved_trial_idx_shuffle': int(
+                config.n_cue_preserved_trial_idx_shuffle
+            ),
             'decoding_test_labels': decode_test_labels,
             'decoding_confidence_null': decode_confidence_null,
             'num_cells': int(max(num_cells_per_trial)),
