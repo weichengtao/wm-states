@@ -94,10 +94,12 @@ uv run python scripts/on_off_states.py \
 --use-decoding-estimates-from-subset-of-repeats \
 --list-of-repeats 0
 
-# 5. Regress CC-applied off-state duration on baseline activity.
+# 5. Regress CC-applied off-state duration on baseline, delay, and encoding activity.
 uv run python scripts/predict_off_state_duration_using_baseline_activity.py \
 --data-dir data/nature \
---cache-dir cache/run_029_full_session
+--cache-dir cache/run_029_full_session \
+--compare-with-delay \
+--compare-with-encoding
 
 # 6. Regress CC-applied off-state duration on session cell counts.
 uv run python scripts/predict_off_state_duration_using_cell_count.py \

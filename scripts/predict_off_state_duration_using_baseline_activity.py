@@ -26,6 +26,8 @@ BASELINE_START = -400
 BASELINE_END = 0
 DELAY_START = 500
 DELAY_END = 1400
+ENCODING_START = 0
+ENCODING_END = 200
 GROUP_NAMES = (
     'preferred',
     'selective_nonpreferred',
@@ -42,6 +44,7 @@ class Config:
     skip_group_level_norm_before_fit: bool = False
     z_threshold_for_active_cell: float = -0.842
     compare_with_delay: bool = False
+    compare_with_encoding: bool = False
 
 
 def _same_session(left, right) -> bool:
@@ -971,6 +974,13 @@ def main(config: Config):
             activity_label='delay',
             activity_start=DELAY_START,
             activity_end=DELAY_END,
+        )
+    if config.compare_with_encoding:
+        _run_activity_regressions(
+            config,
+            activity_label='encoding',
+            activity_start=ENCODING_START,
+            activity_end=ENCODING_END,
         )
 
 
