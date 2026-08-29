@@ -4,7 +4,8 @@ All models are fit by maximum likelihood (``reml=False``) without cross
 validation.  M0 contains a fixed intercept and a session random intercept.  M1
 adds the three session-level raw cell counts.  Separate baseline, encoding,
 pre-delay, and full-delay branches then add four sets of trial-level predictors
-cumulatively through M5.
+cumulatively through M5.  Parallel RM2--RM5 branches add the same four blocks
+in reverse order so each block can be evaluated under the opposite sequence.
 """
 
 from __future__ import annotations
@@ -107,6 +108,10 @@ def _model_specs() -> list[ModelSpec]:
         m3_name = f"M3-{period_label}"
         m4_name = f"M4-{period_label}"
         m5_name = f"M5-{period_label}"
+        rm2_name = f"RM2-{period_label}"
+        rm3_name = f"RM3-{period_label}"
+        rm4_name = f"RM4-{period_label}"
+        rm5_name = f"RM5-{period_label}"
         specs.extend(
             [
                 ModelSpec(
@@ -155,6 +160,52 @@ def _model_specs() -> list[ModelSpec]:
                         *fraction_history,
                     ),
                     parent=m4_name,
+                ),
+                ModelSpec(
+                    name=rm2_name,
+                    description=(
+                        f"M1 plus history EMA of {period_label} active fraction"
+                    ),
+                    predictors=(*COUNT_PREDICTORS, *fraction_history),
+                    parent="M1",
+                ),
+                ModelSpec(
+                    name=rm3_name,
+                    description=(
+                        f"{rm2_name} plus history EMA of {period_label} mean "
+                        "normalized activity"
+                    ),
+                    predictors=(
+                        *COUNT_PREDICTORS,
+                        *fraction_history,
+                        *mean_history,
+                    ),
+                    parent=rm2_name,
+                ),
+                ModelSpec(
+                    name=rm4_name,
+                    description=f"{rm3_name} plus {period_label} active fraction",
+                    predictors=(
+                        *COUNT_PREDICTORS,
+                        *fraction_history,
+                        *mean_history,
+                        *active_fraction,
+                    ),
+                    parent=rm3_name,
+                ),
+                ModelSpec(
+                    name=rm5_name,
+                    description=(
+                        f"{rm4_name} plus {period_label} mean normalized activity"
+                    ),
+                    predictors=(
+                        *COUNT_PREDICTORS,
+                        *fraction_history,
+                        *mean_history,
+                        *active_fraction,
+                        *mean_activity,
+                    ),
+                    parent=rm4_name,
                 ),
             ]
         )
