@@ -5,6 +5,10 @@ earlier preferred-cue trial in the same session.  Cell activity is normalized
 cell by cell, within session and period, across all cached preferred-cue trials.
 No normalization is applied to cell counts, active fractions, EMA histories, or
 off-state durations.
+
+A second, separately saved cache contains raw cell-by-trial firing rates and
+reproducible within-session trial holdouts.  Cross-validation code uses this
+cache to estimate normalization statistics from training trials only.
 """
 
 from __future__ import annotations
@@ -42,6 +46,12 @@ class Config:
     cache_dir: Path = Path("cache/run_001")
     output_subdir: str = "prepare_data_for_mixedlm"
     output_filename: str = "mixedlm_data.pkl"
+    cv_output_subdir: str = "prepare_data_for_mixedlm_cv"
+    cv_output_filename: str = "mixedlm_cv_data.pkl"
+    cv_shuffles: int = 50
+    cv_holdout_fraction: float = 0.2
+    cv_seed: int = 42
+    save_cv_cache: bool = True
     active_threshold: float = 0.0
     history_alpha: float = 0.2
 
@@ -219,7 +229,7 @@ def _prepare_session_rows(
     state_result: dict[str, Any],
     selection_results: list[dict[str, Any]],
     config: Config,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     session = str(state_result.get("session", "unknown_session"))
     trial_ids, off_state_durations = _validate_off_state_result(
         state_result, session
@@ -256,7 +266,9 @@ def _prepare_session_rows(
     }
 
     trial_features: dict[str, np.ndarray] = {}
+    raw_rates_by_period: dict[str, dict[str, np.ndarray]] = {}
     for period_name, (start_ms, end_ms) in PERIODS.items():
+        raw_rates_by_period[period_name] = {}
         for group_name in GROUP_NAMES:
             raw_rates = _period_firing_rates(
                 spikes,
@@ -266,6 +278,7 @@ def _prepare_session_rows(
                 start_ms,
                 end_ms,
             )
+            raw_rates_by_period[period_name][group_name] = raw_rates
             normalized = _normalize_cells(raw_rates)
             mean_activity, active_fraction = _group_features(
                 normalized, config.active_threshold
@@ -303,7 +316,50 @@ def _prepare_session_rows(
             }
         )
         rows.append(row)
-    return rows
+    cv_session = {
+        "session": session,
+        "preferred_cue": preferred_cue,
+        "trial_ids": trial_ids,
+        "off_state_duration_ms": off_state_durations,
+        "cell_counts": counts,
+        "raw_firing_rates_hz": raw_rates_by_period,
+    }
+    return rows, cv_session
+
+
+def _make_cv_splits(
+    sessions: list[dict[str, Any]],
+    n_shuffles: int,
+    holdout_fraction: float,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Create reproducible trial holdouts separately within every session."""
+    rng = np.random.default_rng(seed)
+    splits: list[dict[str, Any]] = []
+    for repeat in range(n_shuffles):
+        test_trials_by_session: dict[str, np.ndarray] = {}
+        for session_data in sessions:
+            session = str(session_data["session"])
+            # The first preferred-cue trial initializes history and is never a
+            # model row, so only positions 1..N-1 are eligible for holdout.
+            eligible = np.asarray(session_data["trial_ids"], dtype=np.int64)[1:]
+            if eligible.size < 2:
+                raise ValueError(
+                    f"Session {session} needs at least two model-eligible trials "
+                    "for trial-holdout cross-validation."
+                )
+            n_test = int(np.ceil(holdout_fraction * eligible.size))
+            n_test = min(max(n_test, 1), eligible.size - 1)
+            test_trials_by_session[session] = np.sort(
+                rng.choice(eligible, size=n_test, replace=False)
+            )
+        splits.append(
+            {
+                "repeat": repeat,
+                "test_trial_ids_by_session": test_trials_by_session,
+            }
+        )
+    return splits
 
 
 def prepare_data(config: Config) -> pd.DataFrame:
@@ -312,10 +368,26 @@ def prepare_data(config: Config) -> pd.DataFrame:
         raise ValueError("active_threshold must be finite.")
     if not np.isfinite(config.history_alpha) or not 0 < config.history_alpha <= 1:
         raise ValueError("history_alpha must be finite and in (0, 1].")
-    if Path(config.output_subdir).is_absolute():
-        raise ValueError("output_subdir must be relative to cache_dir.")
+    path_fields = [(config.output_subdir, "output_subdir")]
+    if config.save_cv_cache:
+        path_fields.append((config.cv_output_subdir, "cv_output_subdir"))
+    for value, name in path_fields:
+        path = Path(value)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"{name} must stay within cache_dir.")
     if Path(config.output_filename).name != config.output_filename:
         raise ValueError("output_filename must be a filename, not a path.")
+    if config.save_cv_cache and (
+        Path(config.cv_output_filename).name != config.cv_output_filename
+    ):
+        raise ValueError("cv_output_filename must be a filename, not a path.")
+    if config.save_cv_cache and config.cv_shuffles < 1:
+        raise ValueError("cv_shuffles must be positive.")
+    invalid_holdout_fraction = not np.isfinite(
+        config.cv_holdout_fraction
+    ) or not (0 < config.cv_holdout_fraction < 1)
+    if config.save_cv_cache and invalid_holdout_fraction:
+        raise ValueError("cv_holdout_fraction must be in (0, 1).")
 
     selection_results = _load_pickle(config.cache_dir / "cell_trial_selection.pkl")
     off_state_results = _load_pickle(config.cache_dir / "on_off_states.pkl")
@@ -326,12 +398,18 @@ def prepare_data(config: Config) -> pd.DataFrame:
 
     seen_sessions: set[str] = set()
     rows: list[dict[str, Any]] = []
+    cv_sessions: list[dict[str, Any]] = []
     for state_result in off_state_results:
         session = str(state_result.get("session", "unknown_session"))
         if session in seen_sessions:
             raise ValueError(f"Duplicate on/off-state entry for session {session}.")
         seen_sessions.add(session)
-        rows.extend(_prepare_session_rows(state_result, selection_results, config))
+        session_rows, cv_session = _prepare_session_rows(
+            state_result, selection_results, config
+        )
+        rows.extend(session_rows)
+        if config.save_cv_cache:
+            cv_sessions.append(cv_session)
 
     frame = pd.DataFrame(rows)
     if frame.empty:
@@ -346,10 +424,39 @@ def prepare_data(config: Config) -> pd.DataFrame:
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / config.output_filename
     frame.to_pickle(output_path)
+    cv_output_path: Path | None = None
+    if config.save_cv_cache:
+        cv_cache = {
+            "schema_version": 1,
+            "periods_ms": PERIODS,
+            "group_names": GROUP_NAMES,
+            "history_alpha": config.history_alpha,
+            "default_active_threshold": config.active_threshold,
+            "cv_shuffles": config.cv_shuffles,
+            "cv_holdout_fraction": config.cv_holdout_fraction,
+            "cv_seed": config.cv_seed,
+            "sessions": cv_sessions,
+            "splits": _make_cv_splits(
+                cv_sessions,
+                config.cv_shuffles,
+                config.cv_holdout_fraction,
+                config.cv_seed,
+            ),
+        }
+        cv_output_dir = config.cache_dir / config.cv_output_subdir
+        cv_output_dir.mkdir(parents=True, exist_ok=True)
+        cv_output_path = cv_output_dir / config.cv_output_filename
+        with cv_output_path.open("wb") as handle:
+            pickle.dump(cv_cache, handle, protocol=pickle.HIGHEST_PROTOCOL)
     print(
         f"Saved {len(frame)} trials from {frame['session'].nunique()} sessions "
         f"with {len(frame.columns)} columns to {output_path}"
     )
+    if cv_output_path is not None:
+        print(
+            f"Saved raw fold-safe features and {config.cv_shuffles} "
+            f"trial-holdout splits to {cv_output_path}"
+        )
     return frame
 
 

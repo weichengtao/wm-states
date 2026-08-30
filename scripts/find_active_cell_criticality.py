@@ -56,6 +56,13 @@ class Config:
     data_dir: Path = Path("data/nature")
     cache_dir: Path = Path("cache/run_029_full_session")
     output_subdir: str = "find_active_cell_criticality"
+    cv_input_subdir: str = "prepare_data_for_mixedlm_cv"
+    cv_input_filename: str = "mixedlm_cv_data.pkl"
+    run_cv: bool = True
+    cv_shuffles: int = 50
+    cv_holdout_fraction: float = 0.2
+    cv_seed: int = 42
+    cv_prediction_sample_per_model: int = 1000
     active_percentiles: list[int] = field(
         default_factory=lambda: list(range(10, 100, 10))
     )
@@ -92,6 +99,11 @@ def _validate_config(config: Config) -> list[int]:
         raise ValueError("max_iterations must be positive.")
     if config.figure_dpi < 1:
         raise ValueError("figure_dpi must be positive.")
+    cv_input_subdir = Path(config.cv_input_subdir)
+    if cv_input_subdir.is_absolute() or ".." in cv_input_subdir.parts:
+        raise ValueError("cv_input_subdir must stay within cache_dir.")
+    if Path(config.cv_input_filename).name != config.cv_input_filename:
+        raise ValueError("cv_input_filename must be a filename, not a path.")
     return percentiles
 
 
@@ -157,6 +169,7 @@ def _prepare_threshold_data(
             output_filename="mixedlm_data.pkl",
             active_threshold=z_threshold,
             history_alpha=config.history_alpha,
+            save_cv_cache=False,
         )
         frames[percentile] = prepare_data(prepare_config)
         thresholds[percentile] = z_threshold
@@ -391,6 +404,51 @@ def _plot_period_criticality(
     return output_path
 
 
+def _plot_cv_period_criticality(
+    summary: pd.DataFrame,
+    period: str,
+    output_dir: Path,
+    figure_dpi: int,
+) -> Path:
+    rows = summary[
+        summary["meta__base_model"].astype(str).str.endswith(f"-{period}")
+        & summary["meta__active_percentile"].notna()
+    ]
+    metrics = (
+        ("fixed_rmse_ms_mean", "Held-out fixed RMSE (ms)"),
+        ("conditional_rmse_ms_mean", "Held-out conditional RMSE (ms)"),
+        ("fixed_r2_mean", "Held-out fixed R²"),
+        ("conditional_r2_mean", "Held-out conditional R²"),
+    )
+    fig, axes = plt.subplots(2, 2, figsize=(13, 9), layout="constrained")
+    for ax, (metric, ylabel) in zip(axes.ravel(), metrics):
+        for base_model, model_rows in rows.groupby(
+            "meta__base_model", sort=False
+        ):
+            ordered = model_rows.sort_values("meta__active_percentile")
+            ax.plot(
+                ordered["meta__active_percentile"],
+                ordered[metric],
+                marker="o",
+                linewidth=1.5,
+                markersize=4,
+                label=base_model,
+            )
+        ax.axvline(50, color="black", linestyle="--", linewidth=1, alpha=0.7)
+        ax.set_xlabel("Active-cell cutoff percentile")
+        ax.set_ylabel(ylabel)
+        ax.grid(alpha=0.2)
+    axes[0, 0].legend(fontsize=8, ncol=2)
+    fig.suptitle(
+        f"Cross-validated active-cell threshold comparison: {period}\n"
+        "Each point is the mean across trial-holdout shuffles"
+    )
+    path = output_dir / f"cv_criticality_{period.replace('-', '_')}.png"
+    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
 def main(config: Config) -> None:
     percentiles = _validate_config(config)
     output_dir = config.cache_dir / config.output_subdir
@@ -540,6 +598,75 @@ def main(config: Config) -> None:
     print(f"Saved {len(comparison)} model rows to {output_dir}")
     print(f"Saved {len(summary)} per-model criticality summaries")
     print(f"Saved {len(PERIOD_LABELS)} criticality figures to {figure_dir}")
+
+    if config.run_cv:
+        try:
+            from scripts.mixedlm_trial_holdout_cv import (
+                CVModelRequest,
+                TrialHoldoutConfig,
+                run_trial_holdout_cv,
+            )
+        except ModuleNotFoundError:
+            from mixedlm_trial_holdout_cv import (
+                CVModelRequest,
+                TrialHoldoutConfig,
+                run_trial_holdout_cv,
+            )
+
+        cv_requests = [
+            CVModelRequest(
+                spec=spec,
+                active_threshold=0.0,
+                metadata={
+                    "base_model": spec.name,
+                    "active_percentile": np.nan,
+                    "active_z_threshold": np.nan,
+                },
+            )
+            for spec in independent_specs
+        ]
+        for percentile in percentiles:
+            z_threshold = z_thresholds[percentile]
+            for base_spec in dependent_specs:
+                threshold_spec = _threshold_spec(
+                    base_spec,
+                    percentile,
+                    z_threshold,
+                    dependent_model_names,
+                )
+                cv_requests.append(
+                    CVModelRequest(
+                        spec=threshold_spec,
+                        active_threshold=z_threshold,
+                        metadata={
+                            "base_model": base_spec.name,
+                            "active_percentile": percentile,
+                            "active_z_threshold": z_threshold,
+                        },
+                    )
+                )
+        _, cv_summary, _ = run_trial_holdout_cv(
+            config.cache_dir / config.cv_input_subdir / config.cv_input_filename,
+            cv_requests,
+            output_dir / "cross_validation",
+            TrialHoldoutConfig(
+                n_shuffles=config.cv_shuffles,
+                holdout_fraction=config.cv_holdout_fraction,
+                seed=config.cv_seed,
+                history_alpha=config.history_alpha,
+                max_iterations=config.max_iterations,
+                figure_dpi=config.figure_dpi,
+                prediction_sample_per_model=(
+                    config.cv_prediction_sample_per_model
+                ),
+            ),
+        )
+        cv_figure_dir = output_dir / "cross_validation" / "figures"
+        cv_figure_dir.mkdir(parents=True, exist_ok=True)
+        for period in PERIOD_LABELS:
+            _plot_cv_period_criticality(
+                cv_summary, period, cv_figure_dir, config.figure_dpi
+            )
 
 
 if __name__ == "__main__":

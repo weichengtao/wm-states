@@ -554,17 +554,36 @@ def main(config: Config):
                 delay_start,
                 delay_end,
             )
+            off_duration_per_trial = np.zeros(
+                decoding_confidence.shape[0], dtype=float
+            )
+            if off_state_mask is not None:
+                off_duration_per_trial = off_state_duration_per_trial(
+                    off_state_mask,
+                    bin_starts,
+                    t_decode_step,
+                    delay_start,
+                    delay_end,
+                )
+
+            off_duration_per_trial_cc_skipped = np.array([], dtype=float)
+            if compare_off:
+                off_duration_per_trial_cc_skipped = np.zeros(
+                    decoding_confidence.shape[0], dtype=float
+                )
+                if off_state_mask_cc_skipped is not None:
+                    off_duration_per_trial_cc_skipped = (
+                        off_state_duration_per_trial(
+                            off_state_mask_cc_skipped,
+                            bin_starts,
+                            t_decode_step,
+                            delay_start,
+                            delay_end,
+                        )
+            )
             if off_durations.size or off_durations_cc_skipped.size:
                 fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
                 if compare_off:
-                    if off_durations_cc_skipped.size:
-                        sns.histplot(
-                            off_durations_cc_skipped,
-                            bins=off_bins,
-                            ax=ax,
-                            color='tab:orange',
-                            label='CC skipped',
-                        )
                     if off_durations.size:
                         sns.histplot(
                             off_durations,
@@ -572,6 +591,17 @@ def main(config: Config):
                             ax=ax,
                             color='tab:blue',
                             label='CC applied',
+                        )
+                    if off_durations_cc_skipped.size:
+                        sns.histplot(
+                            off_durations_cc_skipped,
+                            bins=off_bins,
+                            ax=ax,
+                            element='step',
+                            fill=False,
+                            linewidth=2,
+                            color='tab:orange',
+                            label='CC skipped',
                         )
                     if off_durations.size and off_durations_cc_skipped.size:
                         ax.legend(frameon=False)
@@ -584,6 +614,45 @@ def main(config: Config):
                 plt.xlim(*off_xlim)
                 save_figure_all_formats(fig, fig_dir / f'off_state_duration_{session}_{cue}.png', dpi=300)
                 plt.close(fig)
+
+            # Unlike the state-level histogram, this includes one value for
+            # every trial, including trials with zero delay-period duration.
+            fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+            if compare_off:
+                sns.histplot(
+                    off_duration_per_trial,
+                    bins=off_bins,
+                    ax=ax,
+                    color='tab:blue',
+                    label='CC applied',
+                )
+                sns.histplot(
+                    off_duration_per_trial_cc_skipped,
+                    bins=off_bins,
+                    ax=ax,
+                    element='step',
+                    fill=False,
+                    linewidth=2,
+                    color='tab:orange',
+                    label='CC skipped',
+                )
+                ax.legend(frameon=False)
+            else:
+                sns.histplot(off_duration_per_trial, bins=off_bins, ax=ax)
+            show_spines(ax)
+            plt.xlabel('Total duration per trial (ms)')
+            plt.ylabel('Count')
+            plt.title(
+                f'Trial-Level Off-State Duration\n'
+                f'Session: {session}, Cue: {cue_to_deg(cue)}°'
+            )
+            plt.xlim(*off_xlim)
+            save_figure_all_formats(
+                fig,
+                fig_dir / f'off_state_duration_per_trial_{session}_{cue}.png',
+                dpi=300,
+            )
+            plt.close(fig)
 
             # save histgram of off-state null cluster masses
             if isinstance(null_cluster_masses, np.ndarray) and null_cluster_masses.size:
@@ -644,15 +713,6 @@ def main(config: Config):
                     save_figure_all_formats(fig, fig_dir / f'off_state_candidate_cluster_masses_{session}_{cue}.png', dpi=300)
                     plt.close(fig)
 
-            off_duration_per_trial = np.zeros(decoding_confidence.shape[0], dtype=float)
-            if off_state_mask is not None:
-                off_duration_per_trial = off_state_duration_per_trial(
-                    off_state_mask,
-                    bin_starts,
-                    t_decode_step,
-                    delay_start,
-                    delay_end,
-                )
             state_results.append({
                 'session': session,
                 'cue': cue,

@@ -2,8 +2,9 @@
 
 The three IM1--IM9 branches use preferred, selective-nonpreferred, or
 stationary-nonselective predictors.  Models are fit by maximum likelihood with
-a session random intercept and no cross-validation.  Patsy's ``:`` operator is
-used so interaction stages add only the requested two-way product terms.
+a session random intercept. Patsy's ``:`` operator is used so interaction
+stages add only the requested two-way product terms. Repeated within-session
+trial holdouts provide a separate out-of-sample comparison.
 """
 
 from __future__ import annotations
@@ -67,6 +68,14 @@ class Config:
     input_subdir: str = "prepare_data_for_mixedlm"
     input_filename: str = "mixedlm_data.pkl"
     output_subdir: str = "test_interactions_across_periods"
+    cv_input_subdir: str = "prepare_data_for_mixedlm_cv"
+    cv_input_filename: str = "mixedlm_cv_data.pkl"
+    run_cv: bool = True
+    cv_shuffles: int = 50
+    cv_holdout_fraction: float = 0.2
+    cv_seed: int = 42
+    history_alpha: float = 0.2
+    cv_prediction_sample_per_model: int = 1000
     significance_alpha: float = 0.05
     max_iterations: int = 1000
     figure_dpi: int = 200
@@ -468,6 +477,9 @@ def main(config: Config) -> None:
         raise ValueError("max_iterations must be positive.")
     if config.figure_dpi < 1:
         raise ValueError("figure_dpi must be positive.")
+    _validate_relative_path(config.cv_input_subdir, "cv_input_subdir")
+    if Path(config.cv_input_filename).name != config.cv_input_filename:
+        raise ValueError("cv_input_filename must be a filename, not a path.")
 
     specs, metadata_by_model = _model_specs()
     frame, input_path = _load_data(config, specs)
@@ -555,6 +567,51 @@ def main(config: Config) -> None:
     print(f"Saved {len(comparison)} model rows to {output_dir}")
     print(f"Saved {len(interaction_effects)} interaction-effect rows")
     print(f"Saved 5 comparison figures to {figure_dir}")
+
+    if config.run_cv:
+        try:
+            from scripts.mixedlm_trial_holdout_cv import (
+                CVModelRequest,
+                TrialHoldoutConfig,
+                run_trial_holdout_cv,
+            )
+        except ModuleNotFoundError:
+            from mixedlm_trial_holdout_cv import (
+                CVModelRequest,
+                TrialHoldoutConfig,
+                run_trial_holdout_cv,
+            )
+
+        requests = []
+        for spec in specs:
+            model_metadata = metadata_by_model[spec.name]
+            requests.append(
+                CVModelRequest(
+                    spec=spec,
+                    active_threshold=0.0,
+                    metadata={
+                        "cell_group": model_metadata.cell_group,
+                        "stage": model_metadata.stage,
+                        "added_terms": "; ".join(model_metadata.added_terms),
+                    },
+                )
+            )
+        run_trial_holdout_cv(
+            config.cache_dir / config.cv_input_subdir / config.cv_input_filename,
+            requests,
+            output_dir / "cross_validation",
+            TrialHoldoutConfig(
+                n_shuffles=config.cv_shuffles,
+                holdout_fraction=config.cv_holdout_fraction,
+                seed=config.cv_seed,
+                history_alpha=config.history_alpha,
+                max_iterations=config.max_iterations,
+                figure_dpi=config.figure_dpi,
+                prediction_sample_per_model=(
+                    config.cv_prediction_sample_per_model
+                ),
+            ),
+        )
 
 
 if __name__ == "__main__":

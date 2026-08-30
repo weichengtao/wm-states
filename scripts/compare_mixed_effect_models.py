@@ -6,6 +6,8 @@ adds the three session-level raw cell counts.  Separate baseline, encoding,
 pre-delay, and full-delay branches then add four sets of trial-level predictors
 cumulatively through M5.  Parallel RM2--RM5 branches add the same four blocks
 in reverse order so each block can be evaluated under the opposite sequence.
+Repeated within-session trial holdouts are additionally fit from a separate
+raw-feature cache so preprocessing is learned independently in every fold.
 """
 
 from __future__ import annotations
@@ -67,6 +69,14 @@ class Config:
     input_subdir: str = "prepare_data_for_mixedlm"
     input_filename: str = "mixedlm_data.pkl"
     output_subdir: str = "compare_mixed_effect_models"
+    cv_input_subdir: str = "prepare_data_for_mixedlm_cv"
+    cv_input_filename: str = "mixedlm_cv_data.pkl"
+    run_cv: bool = True
+    cv_shuffles: int = 50
+    cv_holdout_fraction: float = 0.2
+    cv_seed: int = 42
+    history_alpha: float = 0.2
+    cv_prediction_sample_per_model: int = 1000
     significance_alpha: float = 0.05
     max_iterations: int = 1000
     figure_dpi: int = 200
@@ -619,6 +629,9 @@ def main(config: Config) -> None:
         raise ValueError("max_iterations must be positive.")
     if config.figure_dpi < 1:
         raise ValueError("figure_dpi must be positive.")
+    _validate_relative_component(config.cv_input_subdir, "cv_input_subdir")
+    if Path(config.cv_input_filename).name != config.cv_input_filename:
+        raise ValueError("cv_input_filename must be a filename, not a path.")
 
     specs = _model_specs()
     frame = _load_and_validate_data(config, specs)
@@ -685,6 +698,45 @@ def main(config: Config) -> None:
     print(f"Saved model comparison table to {comparison_csv_path}")
     print(f"Saved fixed-effect table to {fixed_effects_csv_path}")
     print(f"Saved {len(specs)} marginal-effect figures to {figure_dir}")
+
+    if config.run_cv:
+        try:
+            from scripts.mixedlm_trial_holdout_cv import (
+                CVModelRequest,
+                TrialHoldoutConfig,
+                run_trial_holdout_cv,
+            )
+        except ModuleNotFoundError:
+            from mixedlm_trial_holdout_cv import (
+                CVModelRequest,
+                TrialHoldoutConfig,
+                run_trial_holdout_cv,
+            )
+
+        requests = [
+            CVModelRequest(
+                spec=spec,
+                active_threshold=0.0,
+                metadata={"model_family": "standard"},
+            )
+            for spec in specs
+        ]
+        run_trial_holdout_cv(
+            config.cache_dir / config.cv_input_subdir / config.cv_input_filename,
+            requests,
+            output_dir / "cross_validation",
+            TrialHoldoutConfig(
+                n_shuffles=config.cv_shuffles,
+                holdout_fraction=config.cv_holdout_fraction,
+                seed=config.cv_seed,
+                history_alpha=config.history_alpha,
+                max_iterations=config.max_iterations,
+                figure_dpi=config.figure_dpi,
+                prediction_sample_per_model=(
+                    config.cv_prediction_sample_per_model
+                ),
+            ),
+        )
 
 
 if __name__ == "__main__":

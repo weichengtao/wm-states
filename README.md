@@ -126,19 +126,28 @@ z = 0 (activity above the cell's across-trial mean), and the history EMA uses
 alpha = 0.2.
 
 ```bash
-# 1. Prepare the shared trial-level MixedLM input table.
+# 1. Prepare the no-CV table and the separate fold-safe CV feature cache.
 uv run python scripts/prepare_data_for_mixedlm.py \
 --data-dir data/nature \
 --cache-dir cache/run_029_full_session \
 --output-subdir prepare_data_for_mixedlm \
 --output-filename mixedlm_data.pkl \
+--cv-output-subdir prepare_data_for_mixedlm_cv \
+--cv-output-filename mixedlm_cv_data.pkl \
+--cv-shuffles 50 \
+--cv-holdout-fraction 0.2 \
+--cv-seed 42 \
 --active-threshold 0 \
 --history-alpha 0.2
 ```
 
-This writes
-`cache/run_029_full_session/prepare_data_for_mixedlm/mixedlm_data.pkl`.
-Use that table to run the standard forward and reverse-order model comparison:
+This writes the original no-CV table to
+`cache/run_029_full_session/prepare_data_for_mixedlm/mixedlm_data.pkl` and raw
+cell-by-trial firing rates plus seeded within-session holdouts to
+`cache/run_029_full_session/prepare_data_for_mixedlm_cv/mixedlm_cv_data.pkl`.
+The raw cache lets every fold estimate cell-wise means and standard deviations
+from training trials only. Use these caches to run the standard forward and
+reverse-order model comparison:
 
 ```bash
 # 2. Compare the M0--M5 and RM2--RM5 model families.
@@ -147,6 +156,13 @@ uv run python scripts/compare_mixed_effect_models.py \
 --input-subdir prepare_data_for_mixedlm \
 --input-filename mixedlm_data.pkl \
 --output-subdir compare_mixed_effect_models \
+--cv-input-subdir prepare_data_for_mixedlm_cv \
+--cv-input-filename mixedlm_cv_data.pkl \
+--cv-shuffles 50 \
+--cv-holdout-fraction 0.2 \
+--cv-seed 42 \
+--history-alpha 0.2 \
+--cv-prediction-sample-per-model 1000 \
 --significance-alpha 0.05 \
 --max-iterations 1000 \
 --figure-dpi 200
@@ -154,7 +170,11 @@ uv run python scripts/compare_mixed_effect_models.py \
 
 The model tables, detailed Statsmodels log, and marginal-effect figures are
 saved under
-`cache/run_029_full_session/compare_mixed_effect_models/`.
+`cache/run_029_full_session/compare_mixed_effect_models/`. Cross-validated
+metrics, logs, prediction samples, and held-out plots are kept separately under
+its `cross_validation/` subdirectory. Held-out fixed predictions use fixed
+effects only; held-out conditional predictions additionally use the session
+random intercept estimated from that session's training trials.
 
 The active-cell criticality scan converts the 10th through 90th percentiles to
 z thresholds, prepares threshold-specific data, and refits every model that
@@ -168,6 +188,12 @@ uv run python scripts/find_active_cell_criticality.py \
 --data-dir data/nature \
 --cache-dir cache/run_029_full_session \
 --output-subdir find_active_cell_criticality \
+--cv-input-subdir prepare_data_for_mixedlm_cv \
+--cv-input-filename mixedlm_cv_data.pkl \
+--cv-shuffles 50 \
+--cv-holdout-fraction 0.2 \
+--cv-seed 42 \
+--cv-prediction-sample-per-model 1000 \
 --active-percentiles 10 20 30 40 50 60 70 80 90 \
 --history-alpha 0.2 \
 --significance-alpha 0.05 \
@@ -177,7 +203,8 @@ uv run python scripts/find_active_cell_criticality.py \
 
 Threshold-specific prepared data, comparison tables, fit logs, and criticality
 figures are saved under
-`cache/run_029_full_session/find_active_cell_criticality/`.
+`cache/run_029_full_session/find_active_cell_criticality/`; its independently
+saved CV results are under `cross_validation/`.
 
 Finally, use the shared trial-level table to fit the IM1--IM9 model branches for
 preferred, selective non-preferred, and stationary non-selective cells. These
@@ -191,6 +218,13 @@ uv run python scripts/test_interactions_across_periods.py \
 --input-subdir prepare_data_for_mixedlm \
 --input-filename mixedlm_data.pkl \
 --output-subdir test_interactions_across_periods \
+--cv-input-subdir prepare_data_for_mixedlm_cv \
+--cv-input-filename mixedlm_cv_data.pkl \
+--cv-shuffles 50 \
+--cv-holdout-fraction 0.2 \
+--cv-seed 42 \
+--history-alpha 0.2 \
+--cv-prediction-sample-per-model 1000 \
 --significance-alpha 0.05 \
 --max-iterations 1000 \
 --figure-dpi 200
@@ -198,4 +232,18 @@ uv run python scripts/test_interactions_across_periods.py \
 
 The interaction-model comparison tables, coefficients, fit log, and figures
 are saved under
-`cache/run_029_full_session/test_interactions_across_periods/`.
+`cache/run_029_full_session/test_interactions_across_periods/`; its CV outputs
+are under `cross_validation/`.
+
+For every analysis, `cv_repeat_metrics.csv` contains one row per model and
+shuffle, while `cv_model_summary.csv` reports the mean, standard deviation,
+median, and 2.5th/97.5th percentiles of held-out RMSE, MAE, R², within-session
+centered R², Pearson correlation, and child-minus-parent metric differences.
+Negative RMSE/MAE differences and positive R² differences favor the child
+model. A negative held-out R² means the model predicts worse than the held-out
+grand mean; the within-session centered R² isolates trial-level prediction
+after removing session means. Per-shuffle rows also retain training AIC/BIC,
+fixed-effect coefficients, convergence warnings, and any fit errors.
+Plotting samples use deterministic uniform reservoir sampling across all
+held-out predictions from every shuffle, with 1,000 points per model by
+default.
