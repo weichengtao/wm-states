@@ -29,6 +29,7 @@ class Config:
     with_null: bool = False
     use_decoding_estimates_from_subset_of_repeats: bool = False
     list_of_repeats: list[int] | None = None
+    compare_with_repeat_idx: int | None = None
     verbose: int = 1  # 0: no output, 1: summary, 2: summary and each figure
 
 
@@ -96,6 +97,23 @@ def _selected_repeat_indices(repeat_count: int, list_of_repeats):
     return repeat_indices
 
 
+def _validated_compare_repeat_idx(repeat_count: int, repeat_idx):
+    """Validate an optional zero-based comparison repeat index."""
+    if repeat_idx is None:
+        return None
+    if isinstance(repeat_idx, (bool, np.bool_)) or not isinstance(
+        repeat_idx, (int, np.integer)
+    ):
+        raise ValueError('compare_with_repeat_idx must be an integer index or None.')
+    repeat_idx = int(repeat_idx)
+    if repeat_idx < 0 or repeat_idx >= repeat_count:
+        raise IndexError(
+            'compare_with_repeat_idx must be between '
+            f'0 and {repeat_count - 1}; got {repeat_idx}.'
+        )
+    return repeat_idx
+
+
 def _load_selected_values(config: Config):
     cache_path = config.cache_dir / 'decoding_confidence.pkl'
     if not cache_path.exists():
@@ -144,6 +162,20 @@ def _load_selected_values(config: Config):
         raise ValueError(
             'The bin dimension of decoding_confidence_repeats does not match time_bins.'
         )
+    compare_repeat_idx = _validated_compare_repeat_idx(
+        confidence_repeats.shape[1],
+        config.compare_with_repeat_idx,
+    )
+    compare_confidence = (
+        None
+        if compare_repeat_idx is None
+        else confidence_repeats[:, compare_repeat_idx, :]
+    )
+    compare_accuracy = (
+        None
+        if compare_repeat_idx is None
+        else accuracy_repeats[:, compare_repeat_idx, :]
+    )
     if config.use_decoding_estimates_from_subset_of_repeats:
         repeat_indices = _selected_repeat_indices(
             confidence_repeats.shape[1],
@@ -178,6 +210,9 @@ def _load_selected_values(config: Config):
         time_bins,
         confidence_repeats,
         accuracy_repeats,
+        compare_repeat_idx,
+        compare_confidence,
+        compare_accuracy,
     )
 
 
@@ -254,8 +289,21 @@ def save_inspection_figure(
     null_confidence_values: np.ndarray | None = None,
     *,
     bin_index: int | None = None,
+    compare_repeat_idx: int | None = None,
+    compare_accuracy_value: float | None = None,
+    compare_confidence_value: float | None = None,
 ) -> Path:
     """Save side-by-side repeat histograms as a PNG and return its path."""
+    if compare_repeat_idx is not None and (
+        compare_accuracy_value is None
+        or compare_confidence_value is None
+        or not np.isfinite(compare_accuracy_value)
+        or not np.isfinite(compare_confidence_value)
+    ):
+        raise ValueError(
+            'Finite comparison accuracy and confidence values are required '
+            'when compare_repeat_idx is provided.'
+        )
     session_part = _safe_filename_part(session)
     time_part = _format_time_filename_part(time_bin_start)
     bin_part = 'unknown' if bin_index is None else f'{int(bin_index):04d}'
@@ -289,6 +337,15 @@ def save_inspection_figure(
             linewidth=1.5,
             label='Null',
         )
+    if compare_repeat_idx is not None:
+        axes[0].axvline(
+            compare_accuracy_value,
+            color='lightgray',
+            linestyle='--',
+            linewidth=1.5,
+            label=f'Repeat {compare_repeat_idx}',
+            zorder=4,
+        )
     axes[0].set_xticks([0, 1])
     axes[0].set_xlim(-0.75, 1.75)
     axes[0].set_xlabel('Decoding accuracy')
@@ -315,7 +372,20 @@ def save_inspection_figure(
     axes[1].set_ylabel('Count')
     axes[1].set_title(f'Confidence ({confidence_values.size} repeats)')
     axes[1].axvline(0.5, color='black', linestyle='--', linewidth=1)
-    if null_accuracy_values is not None or null_confidence_values is not None:
+    if compare_repeat_idx is not None:
+        axes[1].axvline(
+            compare_confidence_value,
+            color='lightgray',
+            linestyle='--',
+            linewidth=1.5,
+            label=f'Repeat {compare_repeat_idx}',
+            zorder=4,
+        )
+    if (
+        null_accuracy_values is not None
+        or null_confidence_values is not None
+        or compare_repeat_idx is not None
+    ):
         axes[0].legend(loc='upper right', frameon=False)
         axes[1].legend(loc='upper right', frameon=False)
 
@@ -339,6 +409,9 @@ def main(config: Config):
         time_bins,
         confidence_repeats,
         accuracy_repeats,
+        compare_repeat_idx,
+        compare_confidence,
+        compare_accuracy,
     ) = _load_selected_values(config)
     null_confidence = null_accuracy = None
     if config.with_null:
@@ -354,6 +427,16 @@ def main(config: Config):
         for bin_index in selected_bin_indices:
             confidence_values = confidence_repeats[trial_row, :, bin_index]
             accuracy_values = accuracy_repeats[trial_row, :, bin_index]
+            compare_confidence_value = (
+                None
+                if compare_confidence is None
+                else float(compare_confidence[trial_row, bin_index])
+            )
+            compare_accuracy_value = (
+                None
+                if compare_accuracy is None
+                else float(compare_accuracy[trial_row, bin_index])
+            )
             null_confidence_values = (
                 None
                 if null_confidence is None
@@ -384,6 +467,15 @@ def main(config: Config):
                     f'Trial row {trial_row}, time bin {time_bin_start:g} ms '
                     'contains no finite accuracy repeats.'
                 )
+            if compare_repeat_idx is not None and (
+                not np.isfinite(compare_confidence_value)
+                or not np.isfinite(compare_accuracy_value)
+            ):
+                raise ValueError(
+                    f'Comparison repeat {compare_repeat_idx} has a non-finite '
+                    f'result for trial row {trial_row}, time bin '
+                    f'{time_bin_start:g} ms.'
+                )
             if config.with_null and null_confidence_values.size == 0:
                 raise ValueError(
                     f'Trial row {trial_row}, time bin {time_bin_start:g} ms '
@@ -405,6 +497,9 @@ def main(config: Config):
                     null_accuracy_values=null_accuracy_values,
                     null_confidence_values=null_confidence_values,
                     bin_index=int(bin_index),
+                    compare_repeat_idx=compare_repeat_idx,
+                    compare_accuracy_value=compare_accuracy_value,
+                    compare_confidence_value=compare_confidence_value,
                 )
             )
     if config.verbose >= 1:

@@ -188,13 +188,16 @@ def decode_one_trial(
     svm_kernel: SVMKernel,
     n_repeats_for_model_fit: int,
     n_shuffle: int,
+    cue_preserved_train_set_shuffle: bool = False,
 ):
     """Decode a single test trial across all bins with optional shuffles.
 
     The model-fit repeats use one RNG stream to draw a fresh balanced training
-    set for every repeat. Shuffles use a separate stream and one training set,
-    so changing the number of model-fit repeats does not change the null
-    estimates.
+    set for every repeat. When cue_preserved_train_set_shuffle is enabled,
+    repeats after the first independently shuffle each cell's trial indices
+    within cue labels after training-set selection. The first repeat remains
+    unchanged. Null shuffles use a separate stream and one unshuffled training
+    set, so changing repeat behavior does not change the null estimates.
     """
     if n_repeats_for_model_fit < 1:
         raise ValueError('n_repeats_for_model_fit must be at least 1.')
@@ -239,6 +242,8 @@ def decode_one_trial(
             train_balanced = train_idx
         train_balanced_repeats.append(train_balanced)
 
+    train_shuffle_rng = np.random.default_rng(seed + int(test_idx))
+
     repeat_conf = np.empty(
         (n_repeats_for_model_fit, num_bins), dtype=np.float32
     )
@@ -273,10 +278,17 @@ def decode_one_trial(
 
     for repeat_idx, train_balanced in enumerate(train_balanced_repeats):
         y_bal = labels[train_balanced]
+        repeat_binned_rates = binned_rates[train_balanced]
+        if cue_preserved_train_set_shuffle and repeat_idx > 0:
+            repeat_binned_rates = shuffle_trial_idx_within_labels(
+                repeat_binned_rates,
+                y_bal,
+                train_shuffle_rng,
+            )
         for b in range(num_bins):
             # Train a per-bin decoder to isolate the time-resolved confidence.
             X_train = np.nan_to_num(
-                binned_rates[train_balanced, b, :].astype(np.float64, copy=False),
+                repeat_binned_rates[:, b, :].astype(np.float64, copy=False),
                 nan=0.0,
                 posinf=0.0,
                 neginf=0.0,
@@ -486,6 +498,7 @@ class Config:
     t_decode_step: int = 10
     n_cue_preserved_trial_idx_shuffle: int = 0 # number of cue-label-preserved, cell-independent trial-index shuffles
     n_repeats_for_model_fit: int = 1 # number of model fits per trial/bin
+    cue_preserved_train_set_shuffle: bool = False # shuffle each cell's within-cue training-trial indices after repeat 0
     n_decode_shuffle: int = 0 # number of label shuffles for null distribution of decoding confidence (0 to skip)
     plot_only: bool = False # if True, only generate plots from cached decoding results
     plot_actual_trial_id: bool = False # if True, y-axis shows actual trial ids instead of 1 to N
@@ -505,9 +518,13 @@ def main(config: Config):
     each preferred-cue trial in parallel to produce a time-by-trial confidence map.
     Each trial/bin model can be fit repeatedly with fresh balanced training
     trials; the repeat count is controlled by n_repeats_for_model_fit. The
-    cached confidence map is averaged over repeats, while per-repeat confidence,
-    accuracy, and predictions are retained. Optional label shuffles generate a
-    null distribution. When n_cue_preserved_trial_idx_shuffle is positive,
+    optional cue_preserved_train_set_shuffle leaves repeat zero unchanged and
+    independently shuffles each cell's trial indices within cue labels for
+    every later repeat after its training set has been selected. This does not
+    affect label-shuffled null estimates. The cached confidence map is averaged
+    over repeats, while per-repeat confidence, accuracy, and predictions are
+    retained. Optional label shuffles generate a null distribution. When
+    n_cue_preserved_trial_idx_shuffle is positive,
     trial indices are shuffled independently for each cell within each cue
     label before decoding; this mode forces one model-fit repeat and one label
     shuffle per cue-preserved shuffle. Training trials are balanced by default,
@@ -727,6 +744,8 @@ def main(config: Config):
             f'kernel={svm_kernel.value if decoder_model is DecoderModel.SVM else "ignored"}, '
             f'balance_trials={config.balance_decoder_training_trials}, '
             f'model_fit_repeats={n_repeats_for_model_fit}, '
+            f'cue_preserved_train_set_shuffle='
+            f'{config.cue_preserved_train_set_shuffle}, '
             f'decode_shuffles={n_decode_shuffle}, '
             f'cue_preserved_trial_idx_shuffles='
             f'{config.n_cue_preserved_trial_idx_shuffle}, '
@@ -766,6 +785,9 @@ def main(config: Config):
                 svm_kernel,
                 n_repeats_for_model_fit,
                 n_decode_shuffle,
+                cue_preserved_train_set_shuffle=(
+                    config.cue_preserved_train_set_shuffle
+                ),
             )
             return (
                 'ok',
@@ -918,6 +940,9 @@ def main(config: Config):
             'decoding_accuracy_repeats': decode_accuracy_repeats,
             'decoding_accuracy_per_trial_repeats': decode_accuracy_per_trial_repeats,
             'n_repeats_for_model_fit': int(n_repeats_for_model_fit),
+            'cue_preserved_train_set_shuffle': bool(
+                config.cue_preserved_train_set_shuffle
+            ),
             'n_decode_shuffle': int(n_decode_shuffle),
             'n_cue_preserved_trial_idx_shuffle': int(
                 config.n_cue_preserved_trial_idx_shuffle

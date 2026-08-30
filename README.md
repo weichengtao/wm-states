@@ -36,7 +36,14 @@ regression, and cell-count regression in that order. Use the same
 The commands below run the full-session pipeline. Cell selection writes the
 selection cache, decoding reuses it and writes repeat-level confidence and
 accuracy results, and the final analysis uses the decoding cache to identify
-on/off states. The inspection script is optional and saves one PNG per
+on/off states.
+
+In the decoding command, `--cue-preserved-train-set-shuffle` leaves repeat 0
+unchanged. For every later model-fit repeat, after the balanced or imbalanced
+training set is selected, it independently permutes each cell's trial indices
+within cue labels. This shuffle is not applied to the null estimates.
+
+The inspection script is optional and saves one PNG per
 selected trial and time bin; `--with-null` overlays null confidence and
 accuracy, two range endpoints are inclusive, and time-bin endpoints are
 matched to the nearest cached bin.
@@ -67,6 +74,7 @@ uv run python scripts/decoding_confidence.py \
 --t-decode-window 50 \
 --min-cell-per-group 1 \
 --n-repeats-for-model-fit 500 \
+--cue-preserved-train-set-shuffle \
 --n-decode-shuffle 500 \
 --n-jobs 10 \
 --cells-used-for-decoder STATIONARY \
@@ -82,7 +90,8 @@ uv run python scripts/inspect_decoding_results.py \
 --session 210921 \
 --trial 0 1 \
 --time-bin-start -200 1400 \
---with-null
+--with-null \
+--compare-with-repeat-idx 0
 
 # 4. Identify and summarize on/off states.
 uv run python scripts/on_off_states.py \
@@ -106,3 +115,87 @@ uv run python scripts/predict_off_state_duration_using_cell_count.py \
 --data-dir data/nature \
 --cache-dir cache/run_029_full_session
 ```
+
+## Mixed-effects analyses
+
+The mixed-effects analyses use `cell_trial_selection.pkl` from step 1 and
+`on_off_states.pkl` from step 4 above. First, prepare one trial-level table with
+the off-state duration, session and trial IDs, raw cell counts, period-specific
+activity features, and their history EMAs. The default active-cell threshold is
+z = 0 (activity above the cell's across-trial mean), and the history EMA uses
+alpha = 0.2.
+
+```bash
+# 1. Prepare the shared trial-level MixedLM input table.
+uv run python scripts/prepare_data_for_mixedlm.py \
+--data-dir data/nature \
+--cache-dir cache/run_029_full_session \
+--output-subdir prepare_data_for_mixedlm \
+--output-filename mixedlm_data.pkl \
+--active-threshold 0 \
+--history-alpha 0.2
+```
+
+This writes
+`cache/run_029_full_session/prepare_data_for_mixedlm/mixedlm_data.pkl`.
+Use that table to run the standard forward and reverse-order model comparison:
+
+```bash
+# 2. Compare the M0--M5 and RM2--RM5 model families.
+uv run python scripts/compare_mixed_effect_models.py \
+--cache-dir cache/run_029_full_session \
+--input-subdir prepare_data_for_mixedlm \
+--input-filename mixedlm_data.pkl \
+--output-subdir compare_mixed_effect_models \
+--significance-alpha 0.05 \
+--max-iterations 1000 \
+--figure-dpi 200
+```
+
+The model tables, detailed Statsmodels log, and marginal-effect figures are
+saved under
+`cache/run_029_full_session/compare_mixed_effect_models/`.
+
+The active-cell criticality scan converts the 10th through 90th percentiles to
+z thresholds, prepares threshold-specific data, and refits every model that
+uses current or historical active-cell fraction. It reads the Run 029 cell
+selection and on/off-state caches directly, so it does not overwrite the
+shared table prepared above.
+
+```bash
+# 3. Scan active-cell thresholds from the 10th to 90th percentiles.
+uv run python scripts/find_active_cell_criticality.py \
+--data-dir data/nature \
+--cache-dir cache/run_029_full_session \
+--output-subdir find_active_cell_criticality \
+--active-percentiles 10 20 30 40 50 60 70 80 90 \
+--history-alpha 0.2 \
+--significance-alpha 0.05 \
+--max-iterations 1000 \
+--figure-dpi 200
+```
+
+Threshold-specific prepared data, comparison tables, fit logs, and criticality
+figures are saved under
+`cache/run_029_full_session/find_active_cell_criticality/`.
+
+Finally, use the shared trial-level table to fit the IM1--IM9 model branches for
+preferred, selective non-preferred, and stationary non-selective cells. These
+models test two-way activity interactions across periods and interactions
+between cell count and period activity.
+
+```bash
+# 4. Test interactions across periods for each cell group.
+uv run python scripts/test_interactions_across_periods.py \
+--cache-dir cache/run_029_full_session \
+--input-subdir prepare_data_for_mixedlm \
+--input-filename mixedlm_data.pkl \
+--output-subdir test_interactions_across_periods \
+--significance-alpha 0.05 \
+--max-iterations 1000 \
+--figure-dpi 200
+```
+
+The interaction-model comparison tables, coefficients, fit log, and figures
+are saved under
+`cache/run_029_full_session/test_interactions_across_periods/`.
