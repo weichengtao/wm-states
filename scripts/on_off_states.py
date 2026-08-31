@@ -106,6 +106,30 @@ def off_state_duration_per_trial(
     )
 
 
+def max_off_state_duration_per_trial(
+    off_state_mask,
+    bin_starts,
+    t_decode_step,
+    delay_start,
+    delay_end,
+):
+    """Return the longest contiguous delay-period off-state run per trial."""
+    bin_starts = np.asarray(bin_starts, dtype=float)
+    delay_bins = (bin_starts >= delay_start) & (bin_starts <= delay_end)
+    delay_mask = np.asarray(off_state_mask[:, delay_bins], dtype=bool)
+    max_bin_counts = np.zeros(delay_mask.shape[0], dtype=float)
+
+    for trial_idx, trial_mask in enumerate(delay_mask):
+        padded_mask = np.pad(trial_mask, (1, 1), constant_values=False)
+        transitions = np.diff(padded_mask.astype(np.int8))
+        run_starts = np.flatnonzero(transitions == 1)
+        run_ends = np.flatnonzero(transitions == -1)
+        if run_starts.size:
+            max_bin_counts[trial_idx] = np.max(run_ends - run_starts)
+
+    return max_bin_counts * t_decode_step
+
+
 def state_durations(
     state_mask,
     state_ids,
@@ -557,6 +581,9 @@ def main(config: Config):
             off_duration_per_trial = np.zeros(
                 decoding_confidence.shape[0], dtype=float
             )
+            max_off_duration_per_trial = np.zeros(
+                decoding_confidence.shape[0], dtype=float
+            )
             if off_state_mask is not None:
                 off_duration_per_trial = off_state_duration_per_trial(
                     off_state_mask,
@@ -565,10 +592,21 @@ def main(config: Config):
                     delay_start,
                     delay_end,
                 )
+                max_off_duration_per_trial = max_off_state_duration_per_trial(
+                    off_state_mask,
+                    bin_starts,
+                    t_decode_step,
+                    delay_start,
+                    delay_end,
+                )
 
             off_duration_per_trial_cc_skipped = np.array([], dtype=float)
+            max_off_duration_per_trial_cc_skipped = np.array([], dtype=float)
             if compare_off:
                 off_duration_per_trial_cc_skipped = np.zeros(
+                    decoding_confidence.shape[0], dtype=float
+                )
+                max_off_duration_per_trial_cc_skipped = np.zeros(
                     decoding_confidence.shape[0], dtype=float
                 )
                 if off_state_mask_cc_skipped is not None:
@@ -580,7 +618,16 @@ def main(config: Config):
                             delay_start,
                             delay_end,
                         )
-            )
+                    )
+                    max_off_duration_per_trial_cc_skipped = (
+                        max_off_state_duration_per_trial(
+                            off_state_mask_cc_skipped,
+                            bin_starts,
+                            t_decode_step,
+                            delay_start,
+                            delay_end,
+                        )
+                    )
             if off_durations.size or off_durations_cc_skipped.size:
                 fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
                 if compare_off:
@@ -654,6 +701,45 @@ def main(config: Config):
             )
             plt.close(fig)
 
+            # This also includes one value per trial. For trials with multiple
+            # off-states, only the longest contiguous delay-period run is used.
+            fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+            if compare_off:
+                sns.histplot(
+                    max_off_duration_per_trial,
+                    bins=off_bins,
+                    ax=ax,
+                    color='tab:blue',
+                    label='CC applied',
+                )
+                sns.histplot(
+                    max_off_duration_per_trial_cc_skipped,
+                    bins=off_bins,
+                    ax=ax,
+                    element='step',
+                    fill=False,
+                    linewidth=2,
+                    color='tab:orange',
+                    label='CC skipped',
+                )
+                ax.legend(frameon=False)
+            else:
+                sns.histplot(max_off_duration_per_trial, bins=off_bins, ax=ax)
+            show_spines(ax)
+            plt.xlabel('Maximum duration per trial (ms)')
+            plt.ylabel('Count')
+            plt.title(
+                f'Trial-Level Maximum Off-State Duration\n'
+                f'Session: {session}, Cue: {cue_to_deg(cue)}°'
+            )
+            plt.xlim(*off_xlim)
+            save_figure_all_formats(
+                fig,
+                fig_dir / f'max_off_state_duration_per_trial_{session}_{cue}.png',
+                dpi=300,
+            )
+            plt.close(fig)
+
             # save histgram of off-state null cluster masses
             if isinstance(null_cluster_masses, np.ndarray) and null_cluster_masses.size:
                 masses = null_cluster_masses[np.isfinite(null_cluster_masses)]
@@ -718,6 +804,7 @@ def main(config: Config):
                 'cue': cue,
                 'trial_idx': np.asarray(out_dict.get('trial_idx', []), dtype=np.int64),
                 'off_state_duration_per_trial': off_duration_per_trial,
+                'max_off_state_duration_per_trial': max_off_duration_per_trial,
                 'off_state_duration_per_state': np.asarray(off_durations, dtype=float),
                 'off_state_duration_correction': 'applied',
                 'off_state_duration_delay_start': delay_start,
