@@ -203,6 +203,20 @@ def _decoding_confidence_for_analysis(out_dict, config):
     return np.nanmean(confidence_repeats[:, repeat_indices, :], axis=1)
 
 
+def state_mask_for_cache(state_mask, expected_shape):
+    """Return a boolean state mask with stable trial-by-bin dimensions."""
+    expected_shape = tuple(expected_shape)
+    if state_mask is None:
+        return np.zeros(expected_shape, dtype=np.bool_)
+    state_mask = np.asarray(state_mask, dtype=np.bool_)
+    if state_mask.shape != expected_shape:
+        raise ValueError(
+            f'State mask shape {state_mask.shape} does not match expected '
+            f'trial-by-bin shape {expected_shape}.'
+        )
+    return state_mask
+
+
 @dataclass
 class Config:
     cache_dir: Path = Path('cache/run_001') # directory for cached results and figures
@@ -803,6 +817,15 @@ def main(config: Config):
                 'session': session,
                 'cue': cue,
                 'trial_idx': np.asarray(out_dict.get('trial_idx', []), dtype=np.int64),
+                'time_bins': np.asarray(bin_starts, dtype=float),
+                'on_state_mask': state_mask_for_cache(
+                    on_state_mask,
+                    decoding_confidence.shape,
+                ),
+                'off_state_mask': state_mask_for_cache(
+                    off_state_mask,
+                    decoding_confidence.shape,
+                ),
                 'off_state_duration_per_trial': off_duration_per_trial,
                 'max_off_state_duration_per_trial': max_off_duration_per_trial,
                 'off_state_duration_per_state': np.asarray(off_durations, dtype=float),
