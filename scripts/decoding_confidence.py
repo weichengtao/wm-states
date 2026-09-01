@@ -177,6 +177,46 @@ def shuffle_trial_idx_within_labels(spikes, labels, rng):
     return shuffled_spikes
 
 
+def prepare_decoder_training_samples(
+    binned_rates,
+    labels,
+    test_bin_idx,
+    delay_bin_mask,
+    train_delay_decoder_using_all_delay_time_bins: bool,
+):
+    """Return the feature matrix and labels used to fit one decoder.
+
+    Delay-bin pooling treats every delay bin from every selected training trial
+    as a separate sample. The caller is responsible for selecting training
+    trials first, which ensures that a held-out test trial cannot contribute
+    activity from any time bin.
+    """
+    binned_rates = np.asarray(binned_rates)
+    labels = np.asarray(labels)
+    delay_bin_mask = np.asarray(delay_bin_mask, dtype=np.bool_)
+    if binned_rates.ndim != 3:
+        raise ValueError('binned_rates must have shape (trial, bin, cell).')
+    if labels.shape != (binned_rates.shape[0],):
+        raise ValueError('labels must contain one label per training trial.')
+    if delay_bin_mask.shape != (binned_rates.shape[1],):
+        raise ValueError('delay_bin_mask must contain one value per time bin.')
+
+    if (
+        train_delay_decoder_using_all_delay_time_bins
+        and delay_bin_mask[test_bin_idx]
+    ):
+        num_delay_bins = int(delay_bin_mask.sum())
+        X_train = binned_rates[:, delay_bin_mask, :].reshape(
+            binned_rates.shape[0] * num_delay_bins,
+            binned_rates.shape[2],
+        )
+        y_train = np.repeat(labels, num_delay_bins)
+    else:
+        X_train = binned_rates[:, test_bin_idx, :]
+        y_train = labels
+    return X_train, y_train
+
+
 def decode_one_trial(
     test_idx,
     binned_rates,
@@ -189,6 +229,8 @@ def decode_one_trial(
     n_repeats_for_model_fit: int,
     n_shuffle: int,
     cue_preserved_train_set_shuffle: bool = False,
+    bin_starts=None,
+    train_delay_decoder_using_all_delay_time_bins: bool = False,
 ):
     """Decode a single test trial across all bins with optional shuffles.
 
@@ -197,7 +239,9 @@ def decode_one_trial(
     repeats after the first independently shuffle each cell's trial indices
     within cue labels after training-set selection. The first repeat remains
     unchanged. Null shuffles use a separate stream and one unshuffled training
-    set, so changing repeat behavior does not change the null estimates.
+    set, so changing repeat behavior does not change the null estimates. When
+    delay pooling is enabled, a decoder tested at a bin starting in [500, 1400]
+    is trained on every delay bin from each selected training trial.
     """
     if n_repeats_for_model_fit < 1:
         raise ValueError('n_repeats_for_model_fit must be at least 1.')
@@ -205,6 +249,18 @@ def decode_one_trial(
     repeat_rng = np.random.default_rng(seed + int(test_idx))
     num_trials = binned_rates.shape[0]
     num_bins = binned_rates.shape[1]
+    if bin_starts is None:
+        if train_delay_decoder_using_all_delay_time_bins:
+            raise ValueError(
+                'bin_starts is required when '
+                'train_delay_decoder_using_all_delay_time_bins is enabled.'
+            )
+        delay_bin_mask = np.zeros(num_bins, dtype=np.bool_)
+    else:
+        bin_starts = np.asarray(bin_starts)
+        if bin_starts.shape != (num_bins,):
+            raise ValueError('bin_starts must contain one start time per time bin.')
+        delay_bin_mask = (bin_starts >= 500) & (bin_starts <= 1400)
     # Leave-one-out split for the current test trial.
     train_mask = np.ones(num_trials, dtype=np.bool_)
     train_mask[test_idx] = False
@@ -285,10 +341,32 @@ def decode_one_trial(
                 y_bal,
                 train_shuffle_rng,
             )
+        pooled_delay_training = None
+        if (
+            train_delay_decoder_using_all_delay_time_bins
+            and np.any(delay_bin_mask)
+        ):
+            first_delay_bin = int(np.flatnonzero(delay_bin_mask)[0])
+            pooled_delay_training = prepare_decoder_training_samples(
+                repeat_binned_rates,
+                y_bal,
+                first_delay_bin,
+                delay_bin_mask,
+                True,
+            )
         for b in range(num_bins):
-            # Train a per-bin decoder to isolate the time-resolved confidence.
+            if pooled_delay_training is not None and delay_bin_mask[b]:
+                X_train_raw, y_train = pooled_delay_training
+            else:
+                X_train_raw, y_train = prepare_decoder_training_samples(
+                    repeat_binned_rates,
+                    y_bal,
+                    b,
+                    delay_bin_mask,
+                    False,
+                )
             X_train = np.nan_to_num(
-                repeat_binned_rates[:, b, :].astype(np.float64, copy=False),
+                X_train_raw.astype(np.float64, copy=False),
                 nan=0.0,
                 posinf=0.0,
                 neginf=0.0,
@@ -300,7 +378,7 @@ def decode_one_trial(
                 neginf=0.0,
             )
             model = create_model()
-            model.fit(X_train, y_bal)
+            model.fit(X_train, y_train)
             proba = model.predict_proba(X_test)[0]
             class_index = 1 if model.classes_[1] == 1 else 0
             repeat_conf[repeat_idx, b] = proba[class_index]
@@ -325,12 +403,34 @@ def decode_one_trial(
         else:
             shuffle_train_balanced = train_idx
         y_bal = labels[shuffle_train_balanced]
+        shuffle_binned_rates = binned_rates[shuffle_train_balanced]
+        pooled_delay_training = None
+        if (
+            train_delay_decoder_using_all_delay_time_bins
+            and np.any(delay_bin_mask)
+        ):
+            first_delay_bin = int(np.flatnonzero(delay_bin_mask)[0])
+            pooled_delay_training = prepare_decoder_training_samples(
+                shuffle_binned_rates,
+                y_bal,
+                first_delay_bin,
+                delay_bin_mask,
+                True,
+            )
 
         for b in range(num_bins):
+            if pooled_delay_training is not None and delay_bin_mask[b]:
+                X_train_raw, y_train = pooled_delay_training
+            else:
+                X_train_raw, y_train = prepare_decoder_training_samples(
+                    shuffle_binned_rates,
+                    y_bal,
+                    b,
+                    delay_bin_mask,
+                    False,
+                )
             X_train = np.nan_to_num(
-                binned_rates[shuffle_train_balanced, b, :].astype(
-                    np.float64, copy=False
-                ),
+                X_train_raw.astype(np.float64, copy=False),
                 nan=0.0,
                 posinf=0.0,
                 neginf=0.0,
@@ -346,7 +446,7 @@ def decode_one_trial(
             # Shuffle labels to estimate a null confidence distribution.
             model = create_model()
             for s in range(n_shuffle):
-                y_shuf = shuffle_rng.permutation(y_bal)
+                y_shuf = shuffle_rng.permutation(y_train)
                 model.fit(X_train, y_shuf)
                 proba = model.predict_proba(X_test)[0]
                 class_index = 1 if model.classes_[1] == 1 else 0
@@ -499,6 +599,7 @@ class Config:
     n_cue_preserved_trial_idx_shuffle: int = 0 # number of cue-label-preserved, cell-independent trial-index shuffles
     n_repeats_for_model_fit: int = 1 # number of model fits per trial/bin
     cue_preserved_train_set_shuffle: bool = False # shuffle each cell's within-cue training-trial indices after repeat 0
+    train_delay_decoder_using_all_delay_time_bins: bool = False # pool training activity from bins starting in [500, 1400] for delay-bin tests
     n_decode_shuffle: int = 0 # number of label shuffles for null distribution of decoding confidence (0 to skip)
     plot_only: bool = False # if True, only generate plots from cached decoding results
     plot_actual_trial_id: bool = False # if True, y-axis shows actual trial ids instead of 1 to N
@@ -521,9 +622,13 @@ def main(config: Config):
     optional cue_preserved_train_set_shuffle leaves repeat zero unchanged and
     independently shuffles each cell's trial indices within cue labels for
     every later repeat after its training set has been selected. This does not
-    affect label-shuffled null estimates. The cached confidence map is averaged
-    over repeats, while per-repeat confidence, accuracy, and predictions are
-    retained. Optional label shuffles generate a null distribution. When
+    affect label-shuffled null estimates. When
+    train_delay_decoder_using_all_delay_time_bins is enabled, models tested at
+    bins starting in [500, 1400] are trained using all such delay bins from the
+    selected training trials; the held-out test trial remains entirely excluded.
+    The cached confidence map is averaged over repeats, while per-repeat
+    confidence, accuracy, and predictions are retained. Optional label shuffles
+    generate a null distribution. When
     n_cue_preserved_trial_idx_shuffle is positive,
     trial indices are shuffled independently for each cell within each cue
     label before decoding; this mode forces one model-fit repeat and one label
@@ -746,6 +851,8 @@ def main(config: Config):
             f'model_fit_repeats={n_repeats_for_model_fit}, '
             f'cue_preserved_train_set_shuffle='
             f'{config.cue_preserved_train_set_shuffle}, '
+            f'train_delay_decoder_using_all_delay_time_bins='
+            f'{config.train_delay_decoder_using_all_delay_time_bins}, '
             f'decode_shuffles={n_decode_shuffle}, '
             f'cue_preserved_trial_idx_shuffles='
             f'{config.n_cue_preserved_trial_idx_shuffle}, '
@@ -787,6 +894,10 @@ def main(config: Config):
                 n_decode_shuffle,
                 cue_preserved_train_set_shuffle=(
                     config.cue_preserved_train_set_shuffle
+                ),
+                bin_starts=bin_starts,
+                train_delay_decoder_using_all_delay_time_bins=(
+                    config.train_delay_decoder_using_all_delay_time_bins
                 ),
             )
             return (
@@ -942,6 +1053,9 @@ def main(config: Config):
             'n_repeats_for_model_fit': int(n_repeats_for_model_fit),
             'cue_preserved_train_set_shuffle': bool(
                 config.cue_preserved_train_set_shuffle
+            ),
+            'train_delay_decoder_using_all_delay_time_bins': bool(
+                config.train_delay_decoder_using_all_delay_time_bins
             ),
             'n_decode_shuffle': int(n_decode_shuffle),
             'n_cue_preserved_trial_idx_shuffle': int(
