@@ -1,9 +1,41 @@
+import pickle
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import numpy as np
 
 from scripts import decoding_confidence
+
+
+class CacheCheckpointTest(unittest.TestCase):
+    def test_atomic_save_replaces_only_with_complete_pickle(self):
+        class Unpickleable:
+            def __reduce__(self):
+                raise RuntimeError('intentional pickle failure')
+
+        with TemporaryDirectory() as temporary_directory:
+            cache_path = Path(temporary_directory) / 'decoding_confidence.pkl'
+            decoding_confidence.save_pickle_atomic(
+                [{'session': 'first'}],
+                cache_path,
+            )
+            with open(cache_path, 'rb') as cache_file:
+                self.assertEqual(pickle.load(cache_file), [{'session': 'first'}])
+
+            with self.assertRaisesRegex(RuntimeError, 'intentional pickle failure'):
+                decoding_confidence.save_pickle_atomic(
+                    [Unpickleable()],
+                    cache_path,
+                )
+
+            with open(cache_path, 'rb') as cache_file:
+                self.assertEqual(pickle.load(cache_file), [{'session': 'first'}])
+            self.assertEqual(
+                list(Path(temporary_directory).glob('*.tmp')),
+                [],
+            )
 
 
 class CuePreservedTrainSetShuffleTest(unittest.TestCase):
@@ -192,6 +224,148 @@ class DelayTrainingBinPoolingTest(unittest.TestCase):
         # trials match repeat zero's first two preparations exactly.
         for repeat_zero_call, null_call in zip(prepared[:2], prepared[-2:]):
             np.testing.assert_array_equal(repeat_zero_call[0], null_call[0])
+
+
+class LogisticCalibrationTest(unittest.TestCase):
+    def setUp(self):
+        rng = np.random.default_rng(321)
+        self.binned_rates = rng.normal(size=(12, 3, 4)).astype(np.float32)
+        self.labels = np.asarray([0] * 6 + [1] * 6, dtype=np.int64)
+        self.test_idx = 6
+
+    def decode(
+        self,
+        decoder_model=decoding_confidence.DecoderModel.LOGISTIC_REGRESSION,
+        calibration_method=decoding_confidence.LogisticCalibrationMethod.SIGMOID,
+        calibration_cv=5,
+        n_shuffle=0,
+        **kwargs,
+    ):
+        return decoding_confidence.decode_one_trial(
+            self.test_idx,
+            self.binned_rates,
+            self.labels,
+            seed=42,
+            balance_decoder_training_trials=True,
+            classifier_c=0.1,
+            decoder_model=decoder_model,
+            svm_kernel=decoding_confidence.SVMKernel.LINEAR,
+            n_repeats_for_model_fit=1,
+            n_shuffle=n_shuffle,
+            logistic_calibration_method=calibration_method,
+            logistic_calibration_cv=calibration_cv,
+            **kwargs,
+        )
+
+    def test_grouped_folds_keep_pooled_samples_from_one_trial_together(self):
+        trial_labels = np.asarray([0, 0, 0, 1, 1, 1], dtype=np.int64)
+        labels = np.repeat(trial_labels, 3)
+        groups = decoding_confidence.decoder_training_sample_groups(6, 18)
+        splits, effective_cv = (
+            decoding_confidence.make_logistic_calibration_cv_splits(
+                labels,
+                groups,
+                requested_cv_folds=5,
+                seed=42,
+            )
+        )
+
+        self.assertEqual(effective_cv, 3)
+        validation_indices = []
+        for train_indices, fold_validation_indices in splits:
+            self.assertEqual(np.unique(labels[train_indices]).size, 2)
+            self.assertEqual(np.unique(labels[fold_validation_indices]).size, 2)
+            self.assertFalse(
+                np.intersect1d(
+                    groups[train_indices],
+                    groups[fold_validation_indices],
+                ).size
+            )
+            validation_indices.extend(fold_validation_indices.tolist())
+        np.testing.assert_array_equal(
+            np.sort(validation_indices),
+            np.arange(labels.size),
+        )
+
+    def test_fold_count_is_reduced_to_smallest_class_trial_count(self):
+        labels = np.asarray([0, 0, 1, 1, 1, 1], dtype=np.int64)
+        groups = np.arange(labels.size)
+        _, effective_cv = (
+            decoding_confidence.make_logistic_calibration_cv_splits(
+                labels,
+                groups,
+                requested_cv_folds=5,
+                seed=42,
+            )
+        )
+        self.assertEqual(effective_cv, 2)
+
+    def test_sigmoid_calibration_is_finite_and_deterministic(self):
+        first = self.decode()
+        second = self.decode()
+        uncalibrated = self.decode(
+            calibration_method=(
+                decoding_confidence.LogisticCalibrationMethod.NONE
+            )
+        )
+
+        np.testing.assert_array_equal(first[0], second[0])
+        np.testing.assert_array_equal(first[1], second[1])
+        np.testing.assert_array_equal(first[2], second[2])
+        self.assertFalse(np.allclose(first[0], uncalibrated[0]))
+        self.assertEqual(first[4], (5,))
+        self.assertTrue(np.all(np.isfinite(first[0])))
+        self.assertTrue(np.all((first[0] >= 0.0) & (first[0] <= 1.0)))
+
+    def test_calibration_never_fits_on_outer_test_trial(self):
+        self.binned_rates[self.test_idx] = 999.0
+        fitted_features = []
+        original_fit = decoding_confidence.CalibratedClassifierCV.fit
+
+        def record_fit(calibrator, X, y, *args, **kwargs):
+            fitted_features.append(np.asarray(X).copy())
+            return original_fit(calibrator, X, y, *args, **kwargs)
+
+        with patch.object(
+            decoding_confidence.CalibratedClassifierCV,
+            'fit',
+            new=record_fit,
+        ):
+            self.decode()
+
+        self.assertTrue(fitted_features)
+        for X_train in fitted_features:
+            self.assertFalse(np.any(np.all(X_train == 999.0, axis=1)))
+
+    def test_calibration_is_applied_to_label_shuffled_null(self):
+        output = self.decode(
+            n_shuffle=2,
+            bin_starts=np.asarray([500, 600, 700]),
+            train_delay_decoder_using_all_delay_time_bins=True,
+        )
+        self.assertEqual(output[3].shape, (3, 2))
+        self.assertTrue(np.all(np.isfinite(output[3])))
+        self.assertTrue(np.all((output[3] >= 0.0) & (output[3] <= 1.0)))
+        self.assertTrue(output[4])
+
+    def test_logistic_calibration_settings_do_not_change_svm(self):
+        uncalibrated = self.decode(
+            decoder_model=decoding_confidence.DecoderModel.SVM,
+            calibration_method=decoding_confidence.LogisticCalibrationMethod.NONE,
+        )
+        ignored_calibration = self.decode(
+            decoder_model=decoding_confidence.DecoderModel.SVM,
+            calibration_method=decoding_confidence.LogisticCalibrationMethod.ISOTONIC,
+            calibration_cv=1,
+        )
+
+        for output_idx in range(3):
+            np.testing.assert_array_equal(
+                uncalibrated[output_idx],
+                ignored_calibration[output_idx],
+            )
+        self.assertEqual(uncalibrated[4], ())
+        self.assertEqual(ignored_calibration[4], ())
 
 
 if __name__ == '__main__':

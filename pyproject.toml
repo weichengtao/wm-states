@@ -7,15 +7,15 @@ name = "wm-states"
 version = "0.1.0"
 description = "Working memory states analysis scripts."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "joblib",
-  "llvmlite==0.44.*",
+  "llvmlite==0.49.*",
   "matplotlib",
-  "numba==0.61.*",
-  "numpy",
+  "numba==0.67.*",
+  "numpy>=2.3.5,<2.6",
   "pandas",
-  "scikit-learn",
+  "scikit-learn>=1.8,<1.9",
   "scipy",
   "seaborn",
   "statsmodels>=0.14.6",

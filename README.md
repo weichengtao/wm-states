@@ -81,8 +81,23 @@ uv run python scripts/decoding_confidence.py \
 --svm-kernel LINEAR \
 --decoder-model LOGISTIC_REGRESSION \
 --classifier-c 0.01 \
+--logistic-calibration-method SIGMOID \
+--logistic-calibration-cv 5 \
 --seed 42 \
 --max-sessions-to-run 25
+
+`SIGMOID` enables nested CV-based calibration of logistic-regression
+probabilities. The held-out decoding trial remains excluded from calibration,
+and pooled delay-bin samples from the same training trial stay in one inner CV
+fold. Use `NONE` to reproduce the uncalibrated logistic probabilities or
+`ISOTONIC` when the calibration set is large enough to support a nonparametric
+mapping. Calibration is also applied to label-shuffled null fits, so runtime is
+approximately multiplied by the requested number of calibration folds plus
+the final full-training-set fit.
+
+The decoding cache is atomically updated after each completed session, so an
+interrupted multi-session run retains every completed session without exposing
+a partially written pickle.
 
 # 3. Inspect repeat-level accuracy and confidence distributions (optional).
 uv run python scripts/inspect_decoding_results.py \

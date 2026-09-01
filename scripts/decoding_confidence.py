@@ -1,4 +1,6 @@
+import os
 import pickle
+import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -10,7 +12,9 @@ import seaborn as sns
 import tyro
 from joblib import Parallel, delayed
 from scipy.io import loadmat
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -47,6 +51,37 @@ class DecoderModel(str, Enum):
 
     SVM = 'svm'
     LOGISTIC_REGRESSION = 'logistic_regression'
+
+
+class LogisticCalibrationMethod(str, Enum):
+    """Probability calibration applied to logistic regression."""
+
+    NONE = 'none'
+    SIGMOID = 'sigmoid'
+    ISOTONIC = 'isotonic'
+
+
+def save_pickle_atomic(value, output_path):
+    """Replace a pickle only after its complete contents reach disk."""
+    output_path = Path(output_path)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode='wb',
+            dir=output_path.parent,
+            prefix=f'.{output_path.name}.',
+            suffix='.tmp',
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            pickle.dump(value, temporary_file)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, output_path)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def cue_to_deg(cue):
@@ -217,6 +252,135 @@ def prepare_decoder_training_samples(
     return X_train, y_train
 
 
+def decoder_training_sample_groups(num_training_trials, num_training_samples):
+    """Map decoder samples to their source trials.
+
+    Delay-bin pooling stores samples in trial-major order, so repeating each
+    trial index keeps every time bin from one trial in the same calibration
+    fold. Without pooling, there is one sample per trial.
+    """
+    if num_training_trials < 1:
+        raise ValueError('num_training_trials must be at least 1.')
+    if num_training_samples % num_training_trials != 0:
+        raise ValueError(
+            'The number of decoder training samples must be divisible by the '
+            'number of source trials.'
+        )
+    samples_per_trial = num_training_samples // num_training_trials
+    if samples_per_trial < 1:
+        raise ValueError('Each training trial must contribute at least one sample.')
+    return np.repeat(
+        np.arange(num_training_trials, dtype=np.int64),
+        samples_per_trial,
+    )
+
+
+def make_logistic_calibration_cv_splits(
+    labels,
+    sample_groups,
+    requested_cv_folds: int,
+    seed: int,
+):
+    """Build deterministic, class-stratified calibration folds by trial.
+
+    The effective fold count is reduced when the requested value exceeds the
+    number of source trials represented in the smallest class. Every returned
+    train and validation fold contains both classes, and no source trial can
+    appear on both sides of a split.
+    """
+    labels = np.asarray(labels)
+    sample_groups = np.asarray(sample_groups)
+    if labels.ndim != 1:
+        raise ValueError('Calibration labels must be one-dimensional.')
+    if sample_groups.shape != labels.shape:
+        raise ValueError('Calibration groups must contain one value per sample.')
+    if requested_cv_folds < 2:
+        raise ValueError('logistic_calibration_cv must be at least 2.')
+
+    classes = np.unique(labels)
+    if classes.size != 2:
+        raise ValueError(
+            'Logistic calibration requires exactly two classes in the training set.'
+        )
+    unique_groups = np.unique(sample_groups)
+    labels_by_group = [np.unique(labels[sample_groups == group]) for group in unique_groups]
+    groups_are_class_homogeneous = all(
+        group_labels.size == 1 for group_labels in labels_by_group
+    )
+    if groups_are_class_homogeneous:
+        group_labels = np.asarray(
+            [labels_for_group[0] for labels_for_group in labels_by_group]
+        )
+        groups_per_class = [
+            np.count_nonzero(group_labels == class_label)
+            for class_label in classes
+        ]
+    else:
+        groups_per_class = [
+            np.unique(sample_groups[labels == class_label]).size
+            for class_label in classes
+        ]
+    max_folds = min(int(requested_cv_folds), min(groups_per_class))
+    if max_folds < 2:
+        raise ValueError(
+            'Logistic calibration requires at least two source trials from '
+            'each class.'
+        )
+
+    dummy_features = np.zeros((labels.size, 1), dtype=np.float32)
+    if groups_are_class_homogeneous:
+        splitter = StratifiedKFold(
+            n_splits=max_folds,
+            shuffle=True,
+            random_state=int(seed),
+        )
+        splits = []
+        for train_group_indices, validation_group_indices in splitter.split(
+            unique_groups,
+            group_labels,
+        ):
+            train_groups = unique_groups[train_group_indices]
+            validation_groups = unique_groups[validation_group_indices]
+            splits.append((
+                np.flatnonzero(np.isin(sample_groups, train_groups)),
+                np.flatnonzero(np.isin(sample_groups, validation_groups)),
+            ))
+        return splits, max_folds
+
+    for n_splits in range(max_folds, 1, -1):
+        # A few deterministic alternatives make grouped stratification robust
+        # when shuffled null labels produce mixed-label trial groups.
+        for split_attempt in range(10):
+            splitter = StratifiedGroupKFold(
+                n_splits=n_splits,
+                shuffle=True,
+                random_state=int(seed) + split_attempt,
+            )
+            splits = list(
+                splitter.split(dummy_features, labels, groups=sample_groups)
+            )
+            valid = True
+            for train_indices, validation_indices in splits:
+                if (
+                    np.unique(labels[train_indices]).size != 2
+                    or np.unique(labels[validation_indices]).size != 2
+                    or np.intersect1d(
+                        sample_groups[train_indices],
+                        sample_groups[validation_indices],
+                    ).size
+                    != 0
+                ):
+                    valid = False
+                    break
+            if valid:
+                return splits, n_splits
+
+    raise ValueError(
+        'Could not construct grouped logistic-calibration folds with both '
+        'classes in every train and validation split.'
+    )
+
+
 def decode_one_trial(
     test_idx,
     binned_rates,
@@ -231,6 +395,10 @@ def decode_one_trial(
     cue_preserved_train_set_shuffle: bool = False,
     bin_starts=None,
     train_delay_decoder_using_all_delay_time_bins: bool = False,
+    logistic_calibration_method: LogisticCalibrationMethod = (
+        LogisticCalibrationMethod.NONE
+    ),
+    logistic_calibration_cv: int = 5,
 ):
     """Decode a single test trial across all bins with optional shuffles.
 
@@ -245,6 +413,15 @@ def decode_one_trial(
     """
     if n_repeats_for_model_fit < 1:
         raise ValueError('n_repeats_for_model_fit must be at least 1.')
+    logistic_calibration_method = LogisticCalibrationMethod(
+        logistic_calibration_method
+    )
+    if (
+        decoder_model is DecoderModel.LOGISTIC_REGRESSION
+        and logistic_calibration_method is not LogisticCalibrationMethod.NONE
+        and logistic_calibration_cv < 2
+    ):
+        raise ValueError('logistic_calibration_cv must be at least 2.')
 
     repeat_rng = np.random.default_rng(seed + int(test_idx))
     num_trials = binned_rates.shape[0]
@@ -283,7 +460,13 @@ def decode_one_trial(
             if n_shuffle <= 0
             else np.full((num_bins, n_shuffle), np.nan, dtype=np.float32)
         )
-        return repeat_conf, repeat_predicted_labels, repeat_accuracy, null_conf
+        return (
+            repeat_conf,
+            repeat_predicted_labels,
+            repeat_accuracy,
+            null_conf,
+            (),
+        )
 
     train_balanced_repeats = []
     for _ in range(n_repeats_for_model_fit):
@@ -310,7 +493,9 @@ def decode_one_trial(
         (n_repeats_for_model_fit, num_bins), dtype=np.float32
     )
 
-    def create_model():
+    effective_calibration_cv_folds: set[int] = set()
+
+    def create_model(y_train, sample_groups):
         if decoder_model is DecoderModel.SVM:
             classifier = SVC(
                 kernel=svm_kernel.value,
@@ -318,6 +503,10 @@ def decode_one_trial(
                 probability=True,
                 random_state=seed,
             )
+            return Pipeline([
+                ("scaler", StandardScaler()),
+                ("classifier", classifier),
+            ])
         elif decoder_model is DecoderModel.LOGISTIC_REGRESSION:
             classifier = LogisticRegression(
                 solver='liblinear',
@@ -325,12 +514,29 @@ def decode_one_trial(
                 max_iter=1000,
                 random_state=seed,
             )
+            base_estimator = Pipeline([
+                ("scaler", StandardScaler()),
+                ("classifier", classifier),
+            ])
+            if logistic_calibration_method is LogisticCalibrationMethod.NONE:
+                return base_estimator
+            calibration_cv, effective_cv_folds = (
+                make_logistic_calibration_cv_splits(
+                    y_train,
+                    sample_groups,
+                    logistic_calibration_cv,
+                    seed,
+                )
+            )
+            effective_calibration_cv_folds.add(effective_cv_folds)
+            return CalibratedClassifierCV(
+                estimator=base_estimator,
+                method=logistic_calibration_method.value,
+                cv=calibration_cv,
+                ensemble=False,
+            )
         else:
             raise ValueError(f'Unsupported decoder model: {decoder_model}')
-        return Pipeline([
-            ("scaler", StandardScaler()),
-            ("classifier", classifier),
-        ])
 
     for repeat_idx, train_balanced in enumerate(train_balanced_repeats):
         y_bal = labels[train_balanced]
@@ -377,10 +583,14 @@ def decode_one_trial(
                 posinf=0.0,
                 neginf=0.0,
             )
-            model = create_model()
+            sample_groups = decoder_training_sample_groups(
+                repeat_binned_rates.shape[0],
+                X_train.shape[0],
+            )
+            model = create_model(y_train, sample_groups)
             model.fit(X_train, y_train)
             proba = model.predict_proba(X_test)[0]
-            class_index = 1 if model.classes_[1] == 1 else 0
+            class_index = int(np.flatnonzero(model.classes_ == 1)[0])
             repeat_conf[repeat_idx, b] = proba[class_index]
             predicted_label = model.predict(X_test)[0]
             repeat_predicted_labels[repeat_idx, b] = predicted_label
@@ -443,16 +653,26 @@ def decode_one_trial(
                 posinf=0.0,
                 neginf=0.0,
             )
+            sample_groups = decoder_training_sample_groups(
+                shuffle_binned_rates.shape[0],
+                X_train.shape[0],
+            )
             # Shuffle labels to estimate a null confidence distribution.
-            model = create_model()
             for s in range(n_shuffle):
                 y_shuf = shuffle_rng.permutation(y_train)
+                model = create_model(y_shuf, sample_groups)
                 model.fit(X_train, y_shuf)
                 proba = model.predict_proba(X_test)[0]
-                class_index = 1 if model.classes_[1] == 1 else 0
+                class_index = int(np.flatnonzero(model.classes_ == 1)[0])
                 null_conf[b, s] = proba[class_index]
 
-    return repeat_conf, repeat_predicted_labels, repeat_accuracy, null_conf
+    return (
+        repeat_conf,
+        repeat_predicted_labels,
+        repeat_accuracy,
+        null_conf,
+        tuple(sorted(effective_calibration_cv_folds)),
+    )
 
 def plot_decoding_heatmap(
     fig_dir,
@@ -554,9 +774,15 @@ def plot_decoding_confidence_lineplot(
         alpha=0.5,
         label='Mean decoding confidence',
     )
+    ax.axvline(0, color='black', linewidth=1)
     ax.axhline(0.5, color='black', linestyle='--', linewidth=1)
     ax.set_xlim(-200, 1400)
     ax.set_ylim(0, 1)
+    ax.set_xticks([0, 500, 1000])
+    ax.set_yticks(
+        [0.0, 0.25, 0.5, 0.75, 1.0],
+        labels=['0', '', '0.5', '', '1'],
+    )
     ax.set_xlabel('Time (ms)')
     ax.set_ylabel('Decoding Confidence / Accuracy')
     ax.legend(loc='lower left', frameon=False)
@@ -590,6 +816,8 @@ class Config:
     svm_kernel: SVMKernel = SVMKernel.RBF # SVM kernel used by the decoder
     balance_decoder_training_trials: bool = True # balance preferred/opposite training trials
     classifier_c: float = 0.1 # regularization parameter shared by SVM and logistic regression
+    logistic_calibration_method: LogisticCalibrationMethod = LogisticCalibrationMethod.NONE # optional CV-based logistic probability calibration
+    logistic_calibration_cv: int = 5 # requested inner CV folds for logistic calibration
     min_cell_per_group: int = 12 # a good partition has at least one group with this many cells
     min_trials_good_session: int = 320 # a good session has at least this many trials in good partitions
     t_decode_start: int = -200
@@ -612,7 +840,9 @@ def main(config: Config):
     cells in at least one preferred-cue group and sufficient stable trials. The
     decoder feature-cell pool is controlled by cells_used_for_decoder, and the
     classifier is controlled by decoder_model. SVM uses svm_kernel and
-    probability=True; logistic regression uses its intrinsic predict_proba.
+    probability=True; logistic regression can optionally use nested, CV-based
+    sigmoid or isotonic probability calibration. Calibration folds contain only
+    outer training trials and keep pooled delay-bin samples grouped by trial.
     Both classifiers use classifier_c as their regularization parameter.
     For each eligible session, it keeps correct trials from the preferred cue
     and its opposite, bins spike rates over sliding time windows, and decodes
@@ -633,14 +863,28 @@ def main(config: Config):
     trial indices are shuffled independently for each cell within each cue
     label before decoding; this mode forces one model-fit repeat and one label
     shuffle per cue-preserved shuffle. Training trials are balanced by default,
-    controlled by balance_decoder_training_trials. Results are cached and
-    per-session heatmaps and confidence line plots are saved; when plot-only mode
-    is enabled, the cached results are used to regenerate both figures without
-    recomputing decoding.
+    controlled by balance_decoder_training_trials. Results are atomically
+    checkpointed after each completed session, and per-session heatmaps and
+    confidence line plots are saved; when plot-only mode is enabled, the cached
+    results are used to regenerate both figures without recomputing decoding.
     """
     decoder_mode = CellsUsedForDecoder(config.cells_used_for_decoder)
     decoder_model = DecoderModel(config.decoder_model)
     svm_kernel = SVMKernel(config.svm_kernel)
+    configured_logistic_calibration_method = LogisticCalibrationMethod(
+        config.logistic_calibration_method
+    )
+    logistic_calibration_method = (
+        configured_logistic_calibration_method
+        if decoder_model is DecoderModel.LOGISTIC_REGRESSION
+        else LogisticCalibrationMethod.NONE
+    )
+    logistic_calibration_cv = int(config.logistic_calibration_cv)
+    if (
+        logistic_calibration_method is not LogisticCalibrationMethod.NONE
+        and logistic_calibration_cv < 2
+    ):
+        raise ValueError('logistic_calibration_cv must be at least 2.')
     classifier_c = float(config.classifier_c)
     if not np.isfinite(classifier_c) or classifier_c <= 0:
         raise ValueError('classifier_c must be finite and greater than zero.')
@@ -847,6 +1091,9 @@ def main(config: Config):
             f'~{len(decoder_cell_set)} cells ({decoder_mode.value}), '
             f'decoder={decoder_model.value}, '
             f'kernel={svm_kernel.value if decoder_model is DecoderModel.SVM else "ignored"}, '
+            f'logistic_calibration={logistic_calibration_method.value}, '
+            f'logistic_calibration_cv='
+            f'{logistic_calibration_cv if logistic_calibration_method is not LogisticCalibrationMethod.NONE else "ignored"}, '
             f'balance_trials={config.balance_decoder_training_trials}, '
             f'model_fit_repeats={n_repeats_for_model_fit}, '
             f'cue_preserved_train_set_shuffle='
@@ -881,7 +1128,13 @@ def main(config: Config):
                     config.t_decode_window,
                 )
 
-            repeat_conf, repeat_predicted_labels, repeat_accuracy, null_conf = decode_one_trial(
+            (
+                repeat_conf,
+                repeat_predicted_labels,
+                repeat_accuracy,
+                null_conf,
+                effective_calibration_cv_folds,
+            ) = decode_one_trial(
                 idx_test,
                 binned_rates,
                 labels_sel,
@@ -899,6 +1152,8 @@ def main(config: Config):
                 train_delay_decoder_using_all_delay_time_bins=(
                     config.train_delay_decoder_using_all_delay_time_bins
                 ),
+                logistic_calibration_method=logistic_calibration_method,
+                logistic_calibration_cv=logistic_calibration_cv,
             )
             return (
                 'ok',
@@ -908,6 +1163,7 @@ def main(config: Config):
                 repeat_predicted_labels,
                 repeat_accuracy,
                 null_conf,
+                effective_calibration_cv_folds,
                 int(cell_idx.size),
             )
 
@@ -947,6 +1203,7 @@ def main(config: Config):
             accuracy_list = []
             test_labels_pref = []
             num_cells_per_trial: list[int] = []
+            effective_calibration_cv_folds: set[int] = set()
             for (
                 status,
                 trial_abs,
@@ -955,6 +1212,7 @@ def main(config: Config):
                 repeat_predicted_labels,
                 repeat_accuracy,
                 null_conf,
+                trial_effective_calibration_cv_folds,
                 n_cell,
             ) in decoded:
                 if status == 'warn_no_partitions':
@@ -971,6 +1229,9 @@ def main(config: Config):
                     null_list.append(null_conf)
                 trial_idx_pref.append(trial_abs)
                 num_cells_per_trial.append(n_cell)
+                effective_calibration_cv_folds.update(
+                    trial_effective_calibration_cv_folds
+                )
 
             if not conf_list:
                 return None
@@ -982,6 +1243,9 @@ def main(config: Config):
                 'trial_idx': np.asarray(trial_idx_pref, dtype=np.int64),
                 'test_labels': np.asarray(test_labels_pref, dtype=np.int8),
                 'num_cells_per_trial': num_cells_per_trial,
+                'effective_calibration_cv_folds': tuple(
+                    sorted(effective_calibration_cv_folds)
+                ),
             }
 
         decoded_batches = [
@@ -995,6 +1259,11 @@ def main(config: Config):
         trial_idx_pref = first_batch['trial_idx']
         decode_test_labels = first_batch['test_labels']
         num_cells_per_trial = first_batch['num_cells_per_trial']
+        effective_calibration_cv_folds = sorted({
+            fold_count
+            for batch in decoded_batches
+            for fold_count in batch['effective_calibration_cv_folds']
+        })
         for batch in decoded_batches[1:]:
             if not np.array_equal(batch['trial_idx'], trial_idx_pref):
                 raise RuntimeError(
@@ -1038,7 +1307,7 @@ def main(config: Config):
                 )
 
         cue_angle = int(cue_to_deg(pref_cue))
-        results.append({
+        session_result = {
             'session': session,
             'cue': int(pref_cue),
             'cue_deg': cue_angle,
@@ -1061,12 +1330,25 @@ def main(config: Config):
             'n_cue_preserved_trial_idx_shuffle': int(
                 config.n_cue_preserved_trial_idx_shuffle
             ),
+            'logistic_calibration_method': logistic_calibration_method.value,
+            'logistic_calibration_requested_cv_folds': logistic_calibration_cv,
+            'logistic_calibration_effective_cv_folds': (
+                effective_calibration_cv_folds
+            ),
+            'logistic_calibration_grouped_by_trial': bool(
+                logistic_calibration_method is not LogisticCalibrationMethod.NONE
+            ),
             'decoding_test_labels': decode_test_labels,
             'decoding_confidence_null': decode_confidence_null,
             'num_cells': int(max(num_cells_per_trial)),
             'num_cells_per_trial': num_cells_per_trial,
             'num_trials': int(len(trial_idx_pref)),
-        })
+        }
+        results.append(session_result)
+        save_pickle_atomic(results, decode_pkl)
+        print(
+            f'  Cached {len(results)} completed session(s) to {decode_pkl}'
+        )
 
         plot_decoding_heatmap(
             fig_dir,
@@ -1092,9 +1374,6 @@ def main(config: Config):
             decode_test_labels,
             int(max(num_cells_per_trial)),
         )
-
-    with open(decode_pkl, 'wb') as f:
-        pickle.dump(results, f)
 
 if __name__ == "__main__":
     config = tyro.cli(Config)
