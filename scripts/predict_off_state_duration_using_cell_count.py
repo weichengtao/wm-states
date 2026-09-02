@@ -18,6 +18,7 @@ try:
         _fit_multiple_regression,
         _same_session,
         _significance_stars,
+        _results_root,
     )
 except ModuleNotFoundError:
     from figure_exports import configure_figure_style, save_figure_png_only
@@ -28,6 +29,7 @@ except ModuleNotFoundError:
         _fit_multiple_regression,
         _same_session,
         _significance_stars,
+        _results_root,
     )
 
 configure_figure_style(matplotlib)
@@ -59,6 +61,7 @@ class Config:
 
     data_dir: Path = Path('data/nature')
     cache_dir: Path = Path('cache/run_001')
+    output_subdir: str = 'fixedlm'
 
 
 def _load_pickle(path: Path):
@@ -272,7 +275,10 @@ def _write_log(log_path, session_entries, regression_entries):
 def main(config: Config):
     off_state_results = _load_pickle(config.cache_dir / 'on_off_states.pkl')
     selection_results = _load_pickle(config.cache_dir / 'cell_trial_selection.pkl')
-    output_dir = config.cache_dir / 'predict_off_state_duration_using_cell_count'
+    output_dir = (
+        _results_root(config.cache_dir, config.output_subdir)
+        / 'predict_off_state_duration_using_cell_count'
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     session_entries = []

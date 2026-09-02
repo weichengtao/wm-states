@@ -17,7 +17,7 @@ import math
 import re
 import textwrap
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +31,25 @@ import statsmodels.formula.api as smf
 import tyro
 from scipy.stats import chi2
 
+try:
+    from scripts.mixedlm_outcomes import (
+        OutcomeSelection,
+        OutcomeSpec,
+        TOTAL_OUTCOME,
+        analysis_output_dir,
+        select_outcomes,
+    )
+except ModuleNotFoundError:
+    from mixedlm_outcomes import (
+        OutcomeSelection,
+        OutcomeSpec,
+        TOTAL_OUTCOME,
+        analysis_output_dir,
+        select_outcomes,
+    )
 
-OUTCOME = "off_state_duration_ms"
+
+OUTCOME = TOTAL_OUTCOME.column
 SESSION = "session"
 GROUP_NAMES = (
     "preferred",
@@ -54,11 +71,12 @@ class ModelSpec:
     description: str
     predictors: tuple[str, ...]
     parent: str | None
+    outcome: str = OUTCOME
 
     @property
     def formula(self) -> str:
         right_hand_side = " + ".join(self.predictors) if self.predictors else "1"
-        return f"{OUTCOME} ~ {right_hand_side}"
+        return f"{self.outcome} ~ {right_hand_side}"
 
 
 @dataclass
@@ -66,11 +84,12 @@ class Config:
     """Locations, fitting settings, and output settings."""
 
     cache_dir: Path = Path("cache/run_029_full_session")
-    input_subdir: str = "prepare_data_for_mixedlm"
-    input_filename: str = "mixedlm_data.pkl"
-    output_subdir: str = "compare_mixed_effect_models"
-    cv_input_subdir: str = "prepare_data_for_mixedlm_cv"
-    cv_input_filename: str = "mixedlm_cv_data.pkl"
+    input_subdir: str = "mixedlm/prepared"
+    input_filename: str = "trial_table.pkl"
+    output_subdir: str = "mixedlm"
+    cv_input_subdir: str = "mixedlm/prepared"
+    cv_input_filename: str = "cv_feature_cache.pkl"
+    outcome: OutcomeSelection = "both"
     run_cv: bool = True
     cv_shuffles: int = 50
     cv_holdout_fraction: float = 0.2
@@ -95,7 +114,7 @@ def _period_predictors(period_column_name: str) -> tuple[tuple[str, ...], ...]:
     return mean_activity, active_fraction, mean_history, fraction_history
 
 
-def _model_specs() -> list[ModelSpec]:
+def _model_specs(outcome: str = OUTCOME) -> list[ModelSpec]:
     specs = [
         ModelSpec(
             name="M0",
@@ -219,7 +238,7 @@ def _model_specs() -> list[ModelSpec]:
                 ),
             ]
         )
-    return specs
+    return [replace(spec, outcome=outcome) for spec in specs]
 
 
 def _validate_relative_component(value: str, field_name: str) -> None:
@@ -242,7 +261,7 @@ def _load_and_validate_data(config: Config, specs: list[ModelSpec]) -> pd.DataFr
         raise TypeError(f"Expected a pandas DataFrame in {input_path}.")
 
     required = {
-        OUTCOME,
+        *(spec.outcome for spec in specs),
         SESSION,
         "trial_id",
         *(predictor for spec in specs for predictor in spec.predictors),
@@ -297,8 +316,9 @@ def _fit_model(
 def _predictions_and_r2(
     result: Any,
     frame: pd.DataFrame,
+    outcome: str = OUTCOME,
 ) -> dict[str, float | np.ndarray]:
-    outcome = frame[OUTCOME].to_numpy(dtype=float)
+    observed = frame[outcome].to_numpy(dtype=float)
     fixed_design = np.asarray(result.model.exog, dtype=float)
     fixed_coefficients = np.asarray(result.fe_params, dtype=float)
     # Elementwise multiplication avoids a macOS Accelerate/NumPy matmul warning
@@ -330,10 +350,10 @@ def _predictions_and_r2(
         "conditional_r2": (fixed_variance + random_variance) / total_variance,
         "icc": random_variance / (random_variance + residual_variance),
         "marginal_rmse_ms": float(
-            np.sqrt(np.mean((outcome - fixed_prediction) ** 2))
+            np.sqrt(np.mean((observed - fixed_prediction) ** 2))
         ),
         "conditional_rmse_ms": float(
-            np.sqrt(np.mean((outcome - conditional_prediction) ** 2))
+            np.sqrt(np.mean((observed - conditional_prediction) ** 2))
         ),
     }
     return row
@@ -351,6 +371,7 @@ def _fixed_effect_rows(
         rows.append(
             {
                 "model": spec.name,
+                "outcome": spec.outcome,
                 "term": str(term),
                 "coefficient": float(result.fe_params[term]),
                 "std_error": float(result.bse_fe[term]),
@@ -397,6 +418,7 @@ def _comparison_row(
     )
     row = {
         "model": spec.name,
+        "outcome": spec.outcome,
         "description": spec.description,
         "parent_model": spec.parent or "",
         "formula": spec.formula,
@@ -460,7 +482,7 @@ def _plot_observed_vs_fitted(
     ax.set_xlim(limits)
     ax.set_ylim(limits)
     ax.set_xlabel("Conditional fitted duration (ms)")
-    ax.set_ylabel("Observed duration (ms)")
+    ax.set_ylabel(f"Observed {spec.outcome.replace('_', ' ')}")
     ax.set_title(
         f"{spec.name}: observed vs fitted\n"
         f"conditional R²={float(variance_metrics['conditional_r2']):.3f}"
@@ -472,8 +494,9 @@ def _plot_predictor_effect(
     frame: pd.DataFrame,
     result: Any,
     predictor: str,
+    outcome: str = OUTCOME,
 ) -> None:
-    outcome = frame[OUTCOME].to_numpy(dtype=float)
+    observed = frame[outcome].to_numpy(dtype=float)
     x = frame[predictor].to_numpy(dtype=float)
     coefficients = result.fe_params
 
@@ -488,7 +511,7 @@ def _plot_predictor_effect(
         other_contribution += coefficient * (other_values - other_mean)
         fixed_reference += coefficient * other_mean
 
-    adjusted_outcome = outcome - other_contribution
+    adjusted_outcome = observed - other_contribution
     x_min = float(np.min(x))
     x_max = float(np.max(x))
     if np.isclose(x_min, x_max):
@@ -501,7 +524,7 @@ def _plot_predictor_effect(
     ax.scatter(x, adjusted_outcome, s=10, alpha=0.22, edgecolors="none")
     ax.plot(x_line, fitted_line, color="C3", linewidth=2)
     ax.set_xlabel(textwrap.fill(predictor.replace("_", " "), width=32))
-    ax.set_ylabel("Adjusted off-state duration (ms)")
+    ax.set_ylabel(f"Adjusted {outcome.replace('_', ' ')}")
     ax.set_title(
         f"β={coefficient:.3g}, p={float(result.pvalues[predictor]):.3g}"
     )
@@ -528,17 +551,18 @@ def _save_model_plot(
     flat_axes = axes.ravel()
     _plot_observed_vs_fitted(
         flat_axes[0],
-        frame[OUTCOME].to_numpy(dtype=float),
+        frame[spec.outcome].to_numpy(dtype=float),
         np.asarray(variance_metrics["conditional_prediction"], dtype=float),
         spec,
         variance_metrics,
     )
     for ax, predictor in zip(flat_axes[1:], spec.predictors):
-        _plot_predictor_effect(ax, frame, result, predictor)
+        _plot_predictor_effect(ax, frame, result, predictor, spec.outcome)
     for ax in flat_axes[num_panels:]:
         ax.set_visible(False)
 
     fig.suptitle(
+        f"{spec.outcome.replace('_', ' ')}\n"
         f"{spec.name}: {spec.description}\n"
         "Marginal lines use fixed effects with other predictors at their means",
         fontsize=12,
@@ -554,10 +578,12 @@ def _write_log_header(
     config: Config,
     input_path: Path,
     frame: pd.DataFrame,
+    outcome: OutcomeSpec,
 ) -> None:
     handle.write("Mixed-effects model comparison\n")
     handle.write("=" * 80 + "\n")
     handle.write(f"Input: {input_path}\n")
+    handle.write(f"Outcome: {outcome.label} ({outcome.column})\n")
     handle.write(f"Rows: {len(frame)}\n")
     handle.write(f"Sessions: {frame[SESSION].nunique()}\n")
     handle.write("Estimator: statsmodels MixedLM\n")
@@ -620,7 +646,7 @@ def _append_model_log(
     handle.write("\n\n")
 
 
-def main(config: Config) -> None:
+def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
     if not np.isfinite(config.significance_alpha) or not (
         0 < config.significance_alpha < 1
     ):
@@ -633,26 +659,33 @@ def main(config: Config) -> None:
     if Path(config.cv_input_filename).name != config.cv_input_filename:
         raise ValueError("cv_input_filename must be a filename, not a path.")
 
-    specs = _model_specs()
+    specs = _model_specs(outcome.column)
     frame = _load_and_validate_data(config, specs)
     input_path = config.cache_dir / config.input_subdir / config.input_filename
-    output_dir = config.cache_dir / config.output_subdir
-    figure_dir = output_dir / "marginal_effects"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = analysis_output_dir(
+        config.cache_dir, config.output_subdir, outcome, "model_family"
+    )
+    table_dir = output_dir / "tables"
+    figure_dir = output_dir / "figures" / "marginal_effects"
+    log_dir = output_dir / "logs"
+    table_dir.mkdir(parents=True, exist_ok=True)
     figure_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     results: dict[str, Any] = {}
     comparison_rows: list[dict[str, Any]] = []
     all_fixed_effect_rows: list[dict[str, Any]] = []
-    log_path = output_dir / "mixed_effect_models.log"
+    log_path = log_dir / "model_family_fits.log"
     with log_path.open("w") as log_handle:
-        _write_log_header(log_handle, config, input_path, frame)
+        _write_log_header(log_handle, config, input_path, frame, outcome)
         for index, spec in enumerate(specs, start=1):
-            print(f"Fitting {index}/{len(specs)}: {spec.name}")
+            print(
+                f"[{outcome.name}] Fitting {index}/{len(specs)}: {spec.name}"
+            )
             result, warning_messages = _fit_model(
                 frame, spec, config.max_iterations
             )
-            variance_metrics = _predictions_and_r2(result, frame)
+            variance_metrics = _predictions_and_r2(result, frame, spec.outcome)
             fixed_effect_rows = _fixed_effect_rows(
                 result, spec, config.significance_alpha
             )
@@ -687,9 +720,9 @@ def main(config: Config) -> None:
 
     comparison = pd.DataFrame(comparison_rows)
     fixed_effects = pd.DataFrame(all_fixed_effect_rows)
-    comparison_csv_path = output_dir / "model_comparison.csv"
-    comparison_pickle_path = output_dir / "model_comparison.pkl"
-    fixed_effects_csv_path = output_dir / "fixed_effects.csv"
+    comparison_csv_path = table_dir / "model_family_comparison.csv"
+    comparison_pickle_path = table_dir / "model_family_comparison.pkl"
+    fixed_effects_csv_path = table_dir / "fixed_effect_estimates.csv"
     comparison.to_csv(comparison_csv_path, index=False)
     comparison.to_pickle(comparison_pickle_path)
     fixed_effects.to_csv(fixed_effects_csv_path, index=False)
@@ -737,6 +770,11 @@ def main(config: Config) -> None:
                 ),
             ),
         )
+
+
+def main(config: Config) -> None:
+    for outcome in select_outcomes(config.outcome):
+        _run_outcome(config, outcome)
 
 
 if __name__ == "__main__":

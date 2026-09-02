@@ -1,4 +1,4 @@
-"""Prepare trial-level predictors and off-state durations for MixedLM analyses.
+"""Prepare trial-level predictors and off-state outcomes for MixedLM analyses.
 
 The output contains one row for every preferred-cue trial that has at least one
 earlier preferred-cue trial in the same session.  Cell activity is normalized
@@ -13,6 +13,7 @@ cache to estimate normalization statistics from training trials only.
 
 from __future__ import annotations
 
+import json
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,11 @@ import numpy as np
 import pandas as pd
 import tyro
 from scipy.io import loadmat
+
+try:
+    from scripts.mixedlm_outcomes import ALL_OUTCOMES
+except ModuleNotFoundError:
+    from mixedlm_outcomes import ALL_OUTCOMES
 
 
 PERIODS = {
@@ -36,6 +42,7 @@ GROUP_NAMES = (
     "selective_nonpreferred",
     "stationary_nonselective",
 )
+CV_CACHE_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -44,10 +51,10 @@ class Config:
 
     data_dir: Path = Path("data/nature")
     cache_dir: Path = Path("cache/run_001")
-    output_subdir: str = "prepare_data_for_mixedlm"
-    output_filename: str = "mixedlm_data.pkl"
-    cv_output_subdir: str = "prepare_data_for_mixedlm_cv"
-    cv_output_filename: str = "mixedlm_cv_data.pkl"
+    output_subdir: str = "mixedlm/prepared"
+    output_filename: str = "trial_table.pkl"
+    cv_output_subdir: str = "mixedlm/prepared"
+    cv_output_filename: str = "cv_feature_cache.pkl"
     cv_shuffles: int = 50
     cv_holdout_fraction: float = 0.2
     cv_seed: int = 42
@@ -187,7 +194,7 @@ def _causal_history_ema(values: np.ndarray, alpha: float) -> np.ndarray:
 def _validate_off_state_result(
     state_result: dict[str, Any],
     session: str,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if state_result.get("off_state_duration_correction") != "applied":
         raise ValueError(
             f"Session {session} does not contain CC-applied off-state durations."
@@ -199,30 +206,58 @@ def _validate_off_state_result(
         raise ValueError(
             f"Session {session} has unexpected off-state delay metadata."
         )
+    missing_outcomes = [
+        outcome.cache_key
+        for outcome in ALL_OUTCOMES
+        if outcome.cache_key not in state_result
+    ]
+    if missing_outcomes:
+        raise ValueError(
+            f"Session {session} is missing off-state outcomes {missing_outcomes}; "
+            "rerun on_off_states.py."
+        )
 
     trial_ids = np.asarray(state_result["trial_idx"], dtype=np.int64).ravel()
-    durations = np.asarray(
+    total_durations = np.asarray(
         state_result["off_state_duration_per_trial"], dtype=float
     ).ravel()
-    if trial_ids.shape != durations.shape:
+    maximum_durations = np.asarray(
+        state_result["max_off_state_duration_per_trial"], dtype=float
+    ).ravel()
+    if trial_ids.shape != total_durations.shape:
         raise ValueError(
-            f"Off-state trial IDs and durations do not align for session {session}."
+            f"Off-state trial IDs and total durations do not align for session "
+            f"{session}."
+        )
+    if trial_ids.shape != maximum_durations.shape:
+        raise ValueError(
+            f"Off-state trial IDs and maximum durations do not align for session "
+            f"{session}."
         )
     if trial_ids.size < 2:
         raise ValueError(
             f"Session {session} needs at least two preferred-cue trials for history."
         )
-    if not np.all(np.isfinite(durations)):
+    if not np.all(np.isfinite(total_durations)) or not np.all(
+        np.isfinite(maximum_durations)
+    ):
         raise ValueError(f"Off-state durations are non-finite for session {session}.")
+    if np.any(total_durations < 0) or np.any(maximum_durations < 0):
+        raise ValueError(f"Off-state durations are negative for session {session}.")
+    if np.any(maximum_durations > total_durations):
+        raise ValueError(
+            f"Maximum off-state duration exceeds total duration for session {session}."
+        )
 
     order = np.argsort(trial_ids, kind="stable")
     trial_ids = trial_ids[order]
-    durations = durations[order]
+    total_durations = total_durations[order]
+    maximum_durations = maximum_durations[order]
     if np.any(np.diff(trial_ids) <= 0):
         raise ValueError(
             f"Preferred-cue trial IDs are not unique for session {session}."
         )
-    return trial_ids, durations
+    return trial_ids, total_durations, maximum_durations
 
 
 def _prepare_session_rows(
@@ -231,8 +266,8 @@ def _prepare_session_rows(
     config: Config,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     session = str(state_result.get("session", "unknown_session"))
-    trial_ids, off_state_durations = _validate_off_state_result(
-        state_result, session
+    trial_ids, total_off_state_durations, maximum_off_state_durations = (
+        _validate_off_state_result(state_result, session)
     )
     preferred_cue = int(state_result["cue"])
 
@@ -304,8 +339,11 @@ def _prepare_session_rows(
             "session": session,
             "trial_id": int(trial_ids[trial_position]),
             "preferred_cue": preferred_cue,
-            "off_state_duration_ms": float(
-                off_state_durations[trial_position]
+            "total_off_state_duration_ms": float(
+                total_off_state_durations[trial_position]
+            ),
+            "maximum_off_state_duration_ms": float(
+                maximum_off_state_durations[trial_position]
             ),
             **counts,
         }
@@ -320,7 +358,8 @@ def _prepare_session_rows(
         "session": session,
         "preferred_cue": preferred_cue,
         "trial_ids": trial_ids,
-        "off_state_duration_ms": off_state_durations,
+        "total_off_state_duration_ms": total_off_state_durations,
+        "maximum_off_state_duration_ms": maximum_off_state_durations,
         "cell_counts": counts,
         "raw_firing_rates_hz": raw_rates_by_period,
     }
@@ -427,7 +466,7 @@ def prepare_data(config: Config) -> pd.DataFrame:
     cv_output_path: Path | None = None
     if config.save_cv_cache:
         cv_cache = {
-            "schema_version": 1,
+            "schema_version": CV_CACHE_SCHEMA_VERSION,
             "periods_ms": PERIODS,
             "group_names": GROUP_NAMES,
             "history_alpha": config.history_alpha,
@@ -448,6 +487,53 @@ def prepare_data(config: Config) -> pd.DataFrame:
         cv_output_path = cv_output_dir / config.cv_output_filename
         with cv_output_path.open("wb") as handle:
             pickle.dump(cv_cache, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    manifest = {
+        "schema_version": CV_CACHE_SCHEMA_VERSION,
+        "source_caches": {
+            "cell_selection": str(config.cache_dir / "cell_trial_selection.pkl"),
+            "on_off_states": str(config.cache_dir / "on_off_states.pkl"),
+        },
+        "outputs": {
+            "trial_table": str(output_path),
+            "cv_feature_cache": str(cv_output_path) if cv_output_path else None,
+        },
+        "outcomes": [
+            {
+                "name": outcome.name,
+                "column": outcome.column,
+                "source_cache_key": outcome.cache_key,
+                "label": outcome.label,
+            }
+            for outcome in ALL_OUTCOMES
+        ],
+        "delay_outcome_definition": {
+            "first_bin_start_ms": 500,
+            "last_bin_start_ms": 1400,
+            "bin_selection": "inclusive",
+            "state_mask": "cluster-correction-applied off-state mask",
+        },
+        "periods_ms": {
+            name: {"start_inclusive": start, "end_exclusive": end}
+            for name, (start, end) in PERIODS.items()
+        },
+        "group_names": list(GROUP_NAMES),
+        "history_alpha": config.history_alpha,
+        "default_active_threshold": config.active_threshold,
+        "n_rows": len(frame),
+        "n_sessions": int(frame["session"].nunique()),
+        "cv": {
+            "saved": config.save_cv_cache,
+            "shuffles": config.cv_shuffles if config.save_cv_cache else None,
+            "holdout_fraction": (
+                config.cv_holdout_fraction if config.save_cv_cache else None
+            ),
+            "seed": config.cv_seed if config.save_cv_cache else None,
+        },
+    }
+    manifest_path = output_dir / "manifest.json"
+    with manifest_path.open("w") as handle:
+        json.dump(manifest, handle, indent=2)
+        handle.write("\n")
     print(
         f"Saved {len(frame)} trials from {frame['session'].nunique()} sessions "
         f"with {len(frame.columns)} columns to {output_path}"
@@ -457,6 +543,7 @@ def prepare_data(config: Config) -> pd.DataFrame:
             f"Saved raw fold-safe features and {config.cv_shuffles} "
             f"trial-holdout splits to {cv_output_path}"
         )
+    print(f"Saved preparation manifest to {manifest_path}")
     return frame
 
 

@@ -10,7 +10,7 @@ trial holdouts provide a separate out-of-sample comparison.
 from __future__ import annotations
 
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,12 @@ try:
         _fixed_effect_rows,
         _predictions_and_r2,
     )
+    from scripts.mixedlm_outcomes import (
+        OutcomeSelection,
+        OutcomeSpec,
+        analysis_output_dir,
+        select_outcomes,
+    )
 except ModuleNotFoundError:
     from compare_mixed_effect_models import (
         OUTCOME,
@@ -41,6 +47,12 @@ except ModuleNotFoundError:
         _fit_model,
         _fixed_effect_rows,
         _predictions_and_r2,
+    )
+    from mixedlm_outcomes import (
+        OutcomeSelection,
+        OutcomeSpec,
+        analysis_output_dir,
+        select_outcomes,
     )
 
 
@@ -65,11 +77,12 @@ class Config:
     """Input, model-fitting, and output settings."""
 
     cache_dir: Path = Path("cache/run_029_full_session")
-    input_subdir: str = "prepare_data_for_mixedlm"
-    input_filename: str = "mixedlm_data.pkl"
-    output_subdir: str = "test_interactions_across_periods"
-    cv_input_subdir: str = "prepare_data_for_mixedlm_cv"
-    cv_input_filename: str = "mixedlm_cv_data.pkl"
+    input_subdir: str = "mixedlm/prepared"
+    input_filename: str = "trial_table.pkl"
+    output_subdir: str = "mixedlm"
+    cv_input_subdir: str = "mixedlm/prepared"
+    cv_input_filename: str = "cv_feature_cache.pkl"
+    outcome: OutcomeSelection = "both"
     run_cv: bool = True
     cv_shuffles: int = 50
     cv_holdout_fraction: float = 0.2
@@ -94,7 +107,9 @@ def _interaction(left: str, right: str) -> str:
     return f"{left}:{right}"
 
 
-def _model_specs() -> tuple[list[ModelSpec], dict[str, SpecMetadata]]:
+def _model_specs(
+    outcome: str = OUTCOME,
+) -> tuple[list[ModelSpec], dict[str, SpecMetadata]]:
     specs = [
         ModelSpec(
             name="M0",
@@ -193,7 +208,7 @@ def _model_specs() -> tuple[list[ModelSpec], dict[str, SpecMetadata]]:
                 interaction_terms=tuple(cumulative_interactions),
             )
             parent = name
-    return specs, metadata
+    return [replace(spec, outcome=outcome) for spec in specs], metadata
 
 
 def _validate_relative_path(value: str, field_name: str) -> None:
@@ -221,7 +236,7 @@ def _load_data(config: Config, specs: list[ModelSpec]) -> tuple[pd.DataFrame, Pa
     if not isinstance(frame, pd.DataFrame):
         raise TypeError(f"Expected a pandas DataFrame in {input_path}.")
 
-    required = {OUTCOME, SESSION, "trial_id"}
+    required = {*(spec.outcome for spec in specs), SESSION, "trial_id"}
     for spec in specs:
         required.update(_base_columns_from_terms(spec.predictors))
     missing = sorted(required.difference(frame.columns))
@@ -247,7 +262,7 @@ def _fit_one(
     config: Config,
 ) -> tuple[Any, dict[str, Any], list[dict[str, Any]], list[str]]:
     result, warning_messages = _fit_model(frame, spec, config.max_iterations)
-    variance_metrics = _predictions_and_r2(result, frame)
+    variance_metrics = _predictions_and_r2(result, frame, spec.outcome)
     fixed_effect_rows = _fixed_effect_rows(
         result, spec, config.significance_alpha
     )
@@ -309,6 +324,7 @@ def _plot_model_progression(
     comparison: pd.DataFrame,
     output_dir: Path,
     figure_dpi: int,
+    outcome_label: str,
 ) -> Path:
     metrics = (
         ("aic", "AIC (lower is better)"),
@@ -334,7 +350,7 @@ def _plot_model_progression(
                 label.set_color("lightgray")
         ax.grid(alpha=0.2)
     axes[0, 0].legend()
-    fig.suptitle("Across-period interaction model progression")
+    fig.suptitle(f"{outcome_label}: across-period interaction model progression")
     output_path = output_dir / "model_progression.png"
     fig.savefig(output_path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
@@ -345,6 +361,7 @@ def _plot_likelihood_ratio_tests(
     comparison: pd.DataFrame,
     output_dir: Path,
     figure_dpi: int,
+    outcome_label: str,
 ) -> Path:
     fig, ax = plt.subplots(figsize=(10, 5.5), layout="constrained")
     tiny = np.finfo(float).tiny
@@ -365,7 +382,9 @@ def _plot_likelihood_ratio_tests(
             label.set_color("lightgray")
     ax.set_xlabel("Newly completed model stage")
     ax.set_ylabel("−log₁₀ LRT p-value vs parent")
-    ax.set_title("Joint significance of each added predictor block")
+    ax.set_title(
+        f"{outcome_label}: joint significance of each added predictor block"
+    )
     ax.legend()
     ax.grid(alpha=0.2)
     output_path = output_dir / "likelihood_ratio_progression.png"
@@ -389,6 +408,7 @@ def _plot_final_interactions(
     fixed_effects: pd.DataFrame,
     output_dir: Path,
     figure_dpi: int,
+    outcome_label: str,
 ) -> list[Path]:
     def draw_panel(
         ax: plt.Axes,
@@ -458,7 +478,7 @@ def _plot_final_interactions(
         draw_panel(axes[0], activity_by_activity, "Activity × activity")
         draw_panel(axes[1], count_by_activity, "Cell count × activity")
         fig.suptitle(
-            f"IM9-{group_label}: two-way interaction estimates\n"
+            f"{outcome_label}: IM9-{group_label} interaction estimates\n"
             "Panels use independent x-axes; red indicates nominal p < 0.05"
         )
         output_path = output_dir / f"im9_interactions_{group_label}.png"
@@ -468,7 +488,7 @@ def _plot_final_interactions(
     return output_paths
 
 
-def main(config: Config) -> None:
+def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
     if not np.isfinite(config.significance_alpha) or not (
         0 < config.significance_alpha < 1
     ):
@@ -481,21 +501,30 @@ def main(config: Config) -> None:
     if Path(config.cv_input_filename).name != config.cv_input_filename:
         raise ValueError("cv_input_filename must be a filename, not a path.")
 
-    specs, metadata_by_model = _model_specs()
+    specs, metadata_by_model = _model_specs(outcome.column)
     frame, input_path = _load_data(config, specs)
-    output_dir = config.cache_dir / config.output_subdir
+    output_dir = analysis_output_dir(
+        config.cache_dir,
+        config.output_subdir,
+        outcome,
+        "period_interactions",
+    )
+    table_dir = output_dir / "tables"
     figure_dir = output_dir / "figures"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = output_dir / "logs"
+    table_dir.mkdir(parents=True, exist_ok=True)
     figure_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     results: dict[str, Any] = {}
     comparison_rows: list[dict[str, Any]] = []
     all_fixed_effect_rows: list[dict[str, Any]] = []
-    log_path = output_dir / "interaction_models.log"
+    log_path = log_dir / "period_interaction_fits.log"
     with log_path.open("w") as log_handle:
         log_handle.write("Across-period interaction MixedLM comparison\n")
         log_handle.write("=" * 88 + "\n")
         log_handle.write(f"Input: {input_path}\n")
+        log_handle.write(f"Outcome: {outcome.label} ({outcome.column})\n")
         log_handle.write(f"Rows: {len(frame)}; sessions: {frame[SESSION].nunique()}\n")
         log_handle.write(
             "REML: False; random effects: session intercept; CV: none\n"
@@ -505,7 +534,10 @@ def main(config: Config) -> None:
         )
 
         for position, spec in enumerate(specs, start=1):
-            print(f"Fitting {position}/{len(specs)}: {spec.name}")
+            print(
+                f"[{outcome.name}] Fitting {position}/{len(specs)}: "
+                f"{spec.name}"
+            )
             metadata = metadata_by_model[spec.name]
             result, row, fixed_rows, warning_messages = _fit_one(
                 frame, spec, results, config
@@ -554,15 +586,23 @@ def main(config: Config) -> None:
     interaction_effects = fixed_effects[fixed_effects["is_interaction"]].copy()
     final_models = comparison[comparison["stage"] == 9].copy()
 
-    comparison.to_csv(output_dir / "model_comparison.csv", index=False)
-    comparison.to_pickle(output_dir / "model_comparison.pkl")
-    fixed_effects.to_csv(output_dir / "fixed_effects.csv", index=False)
-    interaction_effects.to_csv(output_dir / "interaction_effects.csv", index=False)
-    final_models.to_csv(output_dir / "im9_model_comparison.csv", index=False)
+    comparison.to_csv(table_dir / "period_model_comparison.csv", index=False)
+    comparison.to_pickle(table_dir / "period_model_comparison.pkl")
+    fixed_effects.to_csv(table_dir / "fixed_effect_estimates.csv", index=False)
+    interaction_effects.to_csv(
+        table_dir / "period_interaction_effects.csv", index=False
+    )
+    final_models.to_csv(table_dir / "final_im9_models.csv", index=False)
 
-    _plot_model_progression(comparison, figure_dir, config.figure_dpi)
-    _plot_likelihood_ratio_tests(comparison, figure_dir, config.figure_dpi)
-    _plot_final_interactions(fixed_effects, figure_dir, config.figure_dpi)
+    _plot_model_progression(
+        comparison, figure_dir, config.figure_dpi, outcome.label
+    )
+    _plot_likelihood_ratio_tests(
+        comparison, figure_dir, config.figure_dpi, outcome.label
+    )
+    _plot_final_interactions(
+        fixed_effects, figure_dir, config.figure_dpi, outcome.label
+    )
 
     print(f"Saved {len(comparison)} model rows to {output_dir}")
     print(f"Saved {len(interaction_effects)} interaction-effect rows")
@@ -612,6 +652,11 @@ def main(config: Config) -> None:
                 ),
             ),
         )
+
+
+def main(config: Config) -> None:
+    for outcome in select_outcomes(config.outcome):
+        _run_outcome(config, outcome)
 
 
 if __name__ == "__main__":

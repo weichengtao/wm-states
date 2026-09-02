@@ -34,6 +34,12 @@ try:
         Config as PrepareConfig,
         prepare_data,
     )
+    from scripts.mixedlm_outcomes import (
+        OutcomeSelection,
+        OutcomeSpec,
+        analysis_output_dir,
+        select_outcomes,
+    )
 except ModuleNotFoundError:
     from compare_mixed_effect_models import (
         ModelSpec,
@@ -44,6 +50,12 @@ except ModuleNotFoundError:
         _predictions_and_r2,
     )
     from prepare_data_for_mixedlm import Config as PrepareConfig, prepare_data
+    from mixedlm_outcomes import (
+        OutcomeSelection,
+        OutcomeSpec,
+        analysis_output_dir,
+        select_outcomes,
+    )
 
 
 PERIOD_LABELS = ("baseline", "encoding", "pre-delay", "full-delay")
@@ -55,9 +67,11 @@ class Config:
 
     data_dir: Path = Path("data/nature")
     cache_dir: Path = Path("cache/run_029_full_session")
-    output_subdir: str = "find_active_cell_criticality"
-    cv_input_subdir: str = "prepare_data_for_mixedlm_cv"
-    cv_input_filename: str = "mixedlm_cv_data.pkl"
+    output_subdir: str = "mixedlm"
+    prepared_subdir: str = "mixedlm/prepared"
+    cv_input_subdir: str = "mixedlm/prepared"
+    cv_input_filename: str = "cv_feature_cache.pkl"
+    outcome: OutcomeSelection = "both"
     run_cv: bool = True
     cv_shuffles: int = 50
     cv_holdout_fraction: float = 0.2
@@ -76,6 +90,9 @@ def _validate_config(config: Config) -> list[int]:
     output_subdir = Path(config.output_subdir)
     if output_subdir.is_absolute() or ".." in output_subdir.parts:
         raise ValueError("output_subdir must stay within cache_dir.")
+    prepared_subdir = Path(config.prepared_subdir)
+    if prepared_subdir.is_absolute() or ".." in prepared_subdir.parts:
+        raise ValueError("prepared_subdir must stay within cache_dir.")
     if not config.active_percentiles:
         raise ValueError("active_percentiles must not be empty.")
     if any(
@@ -141,6 +158,7 @@ def _threshold_spec(
         ),
         predictors=spec.predictors,
         parent=parent,
+        outcome=spec.outcome,
     )
 
 
@@ -154,9 +172,9 @@ def _prepare_threshold_data(
     for index, percentile in enumerate(percentiles, start=1):
         z_threshold = _active_z_threshold(percentile)
         threshold_subdir = (
-            Path(config.output_subdir)
-            / "prepared_data"
-            / f"active_z_{_ordinal(percentile)}"
+            Path(config.prepared_subdir)
+            / "active_thresholds"
+            / f"percentile_{percentile:02d}"
         )
         print(
             f"Preparing threshold {index}/{len(percentiles)}: "
@@ -166,7 +184,7 @@ def _prepare_threshold_data(
             data_dir=config.data_dir,
             cache_dir=config.cache_dir,
             output_subdir=str(threshold_subdir),
-            output_filename="mixedlm_data.pkl",
+            output_filename="trial_table.pkl",
             active_threshold=z_threshold,
             history_alpha=config.history_alpha,
             save_cv_cache=False,
@@ -186,7 +204,7 @@ def _fit_one(
     config: Config,
 ) -> tuple[Any, dict[str, Any], list[dict[str, Any]], list[str]]:
     result, warning_messages = _fit_model(frame, spec, config.max_iterations)
-    variance_metrics = _predictions_and_r2(result, frame)
+    variance_metrics = _predictions_and_r2(result, frame, spec.outcome)
     fixed_effect_rows = _fixed_effect_rows(
         result, spec, config.significance_alpha
     )
@@ -395,6 +413,7 @@ def _plot_period_criticality(
         ax.grid(alpha=0.2)
     axes[0, 0].legend(fontsize=8, ncol=2)
     fig.suptitle(
+        f"{comparison['outcome'].iloc[0].replace('_', ' ')}\n"
         f"Active-cell threshold criticality: {period}\n"
         "Dashed line marks the default 50th percentile (z=0)"
     )
@@ -440,6 +459,7 @@ def _plot_cv_period_criticality(
         ax.grid(alpha=0.2)
     axes[0, 0].legend(fontsize=8, ncol=2)
     fig.suptitle(
+        f"{summary['outcome'].iloc[0].replace('_', ' ')}\n"
         f"Cross-validated active-cell threshold comparison: {period}\n"
         "Each point is the mean across trial-holdout shuffles"
     )
@@ -449,17 +469,28 @@ def _plot_cv_period_criticality(
     return path
 
 
-def main(config: Config) -> None:
-    percentiles = _validate_config(config)
-    output_dir = config.cache_dir / config.output_subdir
-    figure_dir = output_dir / "figures"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    figure_dir.mkdir(parents=True, exist_ok=True)
-
-    frames, z_thresholds, prepared_paths = _prepare_threshold_data(
-        config, percentiles
+def _run_outcome(
+    config: Config,
+    outcome: OutcomeSpec,
+    percentiles: list[int],
+    frames: dict[int, pd.DataFrame],
+    z_thresholds: dict[int, float],
+    prepared_paths: dict[int, Path],
+) -> None:
+    output_dir = analysis_output_dir(
+        config.cache_dir,
+        config.output_subdir,
+        outcome,
+        "active_cell_criticality",
     )
-    base_specs = _model_specs()
+    table_dir = output_dir / "tables"
+    figure_dir = output_dir / "figures"
+    log_dir = output_dir / "logs"
+    table_dir.mkdir(parents=True, exist_ok=True)
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    base_specs = _model_specs(outcome.column)
     independent_specs = [spec for spec in base_specs if not _uses_active_fraction(spec)]
     dependent_specs = [spec for spec in base_specs if _uses_active_fraction(spec)]
     dependent_model_names = {spec.name for spec in dependent_specs}
@@ -470,11 +501,12 @@ def main(config: Config) -> None:
     total_fits = len(independent_specs) + len(percentiles) * len(dependent_specs)
     fit_position = 0
     reference_percentile = 50 if 50 in frames else percentiles[0]
-    log_path = output_dir / "active_cell_criticality.log"
+    log_path = log_dir / "active_cell_criticality.log"
 
     with log_path.open("w") as log_handle:
         log_handle.write("Active-cell threshold criticality scan\n")
         log_handle.write("=" * 88 + "\n")
+        log_handle.write(f"Outcome: {outcome.label} ({outcome.column})\n")
         log_handle.write(f"Percentiles: {percentiles}\n")
         log_handle.write(
             "Z thresholds: "
@@ -493,7 +525,10 @@ def main(config: Config) -> None:
         reference_frame = frames[reference_percentile]
         for spec in independent_specs:
             fit_position += 1
-            print(f"Fitting {fit_position}/{total_fits}: {spec.name}")
+            print(
+                f"[{outcome.name}] Fitting {fit_position}/{total_fits}: "
+                f"{spec.name}"
+            )
             result, row, fixed_rows, warning_messages = _fit_one(
                 reference_frame, spec, results, config
             )
@@ -537,7 +572,10 @@ def main(config: Config) -> None:
                     z_threshold,
                     dependent_model_names,
                 )
-                print(f"Fitting {fit_position}/{total_fits}: {spec.name}")
+                print(
+                    f"[{outcome.name}] Fitting {fit_position}/{total_fits}: "
+                    f"{spec.name}"
+                )
                 result, row, fixed_rows, warning_messages = _fit_one(
                     frame, spec, results, config
                 )
@@ -574,26 +612,19 @@ def main(config: Config) -> None:
     fixed_effects = pd.DataFrame(all_fixed_effect_rows)
     summary = _criticality_summary(comparison)
 
-    comparison.to_csv(output_dir / "model_comparison.csv", index=False)
-    comparison.to_pickle(output_dir / "model_comparison.pkl")
-    fixed_effects.to_csv(output_dir / "fixed_effects.csv", index=False)
-    summary.to_csv(output_dir / "criticality_summary.csv", index=False)
+    summary.insert(0, "outcome", outcome.column)
+    comparison.to_csv(
+        table_dir / "active_cell_model_comparison.csv", index=False
+    )
+    comparison.to_pickle(table_dir / "active_cell_model_comparison.pkl")
+    fixed_effects.to_csv(table_dir / "fixed_effect_estimates.csv", index=False)
+    summary.to_csv(
+        table_dir / "active_cell_criticality_summary.csv", index=False
+    )
     for period in PERIOD_LABELS:
         _plot_period_criticality(
             comparison, period, figure_dir, config.figure_dpi
         )
-
-    threshold_table = pd.DataFrame(
-        {
-            "active_percentile": percentiles,
-            "active_z_threshold": [z_thresholds[p] for p in percentiles],
-            "active_rule": [
-                f"normalized activity > {z_thresholds[p]:.12g}"
-                for p in percentiles
-            ],
-        }
-    )
-    threshold_table.to_csv(output_dir / "thresholds.csv", index=False)
 
     print(f"Saved {len(comparison)} model rows to {output_dir}")
     print(f"Saved {len(summary)} per-model criticality summaries")
@@ -667,6 +698,40 @@ def main(config: Config) -> None:
             _plot_cv_period_criticality(
                 cv_summary, period, cv_figure_dir, config.figure_dpi
             )
+
+
+def main(config: Config) -> None:
+    percentiles = _validate_config(config)
+    frames, z_thresholds, prepared_paths = _prepare_threshold_data(
+        config, percentiles
+    )
+    threshold_table = pd.DataFrame(
+        {
+            "active_percentile": percentiles,
+            "active_z_threshold": [z_thresholds[p] for p in percentiles],
+            "active_rule": [
+                f"normalized activity > {z_thresholds[p]:.12g}"
+                for p in percentiles
+            ],
+        }
+    )
+    threshold_path = (
+        config.cache_dir
+        / config.prepared_subdir
+        / "active_thresholds"
+        / "thresholds.csv"
+    )
+    threshold_path.parent.mkdir(parents=True, exist_ok=True)
+    threshold_table.to_csv(threshold_path, index=False)
+    for outcome in select_outcomes(config.outcome):
+        _run_outcome(
+            config,
+            outcome,
+            percentiles,
+            frames,
+            z_thresholds,
+            prepared_paths,
+        )
 
 
 if __name__ == "__main__":

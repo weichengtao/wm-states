@@ -14,7 +14,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from patsy import build_design_matrices
 
 try:
     from scripts.compare_mixed_effect_models import (
@@ -24,19 +23,23 @@ try:
         _fit_model,
     )
     from scripts.prepare_data_for_mixedlm import (
+        CV_CACHE_SCHEMA_VERSION,
         GROUP_NAMES,
         PERIODS,
         _causal_history_ema,
         _group_features,
     )
+    from scripts.mixedlm_outcomes import ALL_OUTCOMES
 except ModuleNotFoundError:
     from compare_mixed_effect_models import OUTCOME, SESSION, ModelSpec, _fit_model
     from prepare_data_for_mixedlm import (
+        CV_CACHE_SCHEMA_VERSION,
         GROUP_NAMES,
         PERIODS,
         _causal_history_ema,
         _group_features,
     )
+    from mixedlm_outcomes import ALL_OUTCOMES
 
 
 @dataclass(frozen=True)
@@ -67,8 +70,14 @@ def load_cv_cache(path: Path) -> dict[str, Any]:
         )
     with path.open("rb") as handle:
         cache = pickle.load(handle)
-    if not isinstance(cache, dict) or cache.get("schema_version") != 1:
-        raise ValueError(f"Unsupported cross-validation cache format in {path}.")
+    if (
+        not isinstance(cache, dict)
+        or cache.get("schema_version") != CV_CACHE_SCHEMA_VERSION
+    ):
+        raise ValueError(
+            f"Unsupported cross-validation cache format in {path}; regenerate it "
+            "with prepare_data_for_mixedlm.py."
+        )
     if not isinstance(cache.get("sessions"), list) or not cache["sessions"]:
         raise ValueError(f"Cross-validation cache has no sessions: {path}")
     return cache
@@ -180,9 +189,14 @@ def build_fold_frame(
     for session_data in cache["sessions"]:
         session = str(session_data["session"])
         trial_ids = np.asarray(session_data["trial_ids"], dtype=np.int64)
-        outcomes = np.asarray(
-            session_data["off_state_duration_ms"], dtype=float
-        )
+        outcomes = {
+            outcome.column: np.asarray(
+                session_data[outcome.column], dtype=float
+            ).ravel()
+            for outcome in ALL_OUTCOMES
+        }
+        if any(values.shape != trial_ids.shape for values in outcomes.values()):
+            raise ValueError(f"Outcome arrays do not align for session {session}.")
         test_ids = np.asarray(test_by_session[session], dtype=np.int64)
         is_test = np.isin(trial_ids, test_ids)
         is_model_row = np.arange(trial_ids.size) > 0
@@ -218,9 +232,12 @@ def build_fold_frame(
                 SESSION: session,
                 "trial_id": int(trial_ids[position]),
                 "preferred_cue": int(session_data["preferred_cue"]),
-                OUTCOME: float(outcomes[position]),
                 "cv_is_test": bool(is_test[position]),
                 **session_data["cell_counts"],
+                **{
+                    column: float(values[position])
+                    for column, values in outcomes.items()
+                },
             }
             row.update(
                 {name: float(values[position]) for name, values in features.items()}
@@ -235,15 +252,10 @@ def build_fold_frame(
 
 
 def _test_predictions(result: Any, test: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    design = np.asarray(
-        build_design_matrices(
-            [result.model.data.design_info], test, return_type="dataframe"
-        )[0],
-        dtype=float,
-    )
-    fixed = np.sum(
-        design * np.asarray(result.fe_params, dtype=float)[None, :], axis=1
-    )
+    # Let statsmodels rebuild the fixed-effect design matrix from the fitted
+    # formula metadata.  Accessing model.data.design_info directly broke in
+    # statsmodels 0.15, where that metadata moved to model_spec.
+    fixed = np.asarray(result.predict(test), dtype=float)
     random_effects = result.random_effects
     offsets = np.empty(len(test), dtype=float)
     for index, session in enumerate(test[SESSION].astype(str)):
@@ -295,6 +307,7 @@ def _aggregate_metrics(repeat_metrics: pd.DataFrame) -> pd.DataFrame:
     ]
     static_columns = [
         "model",
+        "outcome",
         "description",
         "formula",
         "active_threshold",
@@ -332,7 +345,10 @@ def _aggregate_metrics(repeat_metrics: pd.DataFrame) -> pd.DataFrame:
 
 
 def _plot_overview(
-    summary: pd.DataFrame, output_dir: Path, figure_dpi: int
+    summary: pd.DataFrame,
+    output_dir: Path,
+    figure_dpi: int,
+    outcome: str,
 ) -> Path:
     successful = summary[summary["n_successful_fits"] > 0].sort_values(
         "conditional_rmse_ms_mean"
@@ -350,7 +366,10 @@ def _plot_overview(
         ax.set_yticks(y, shown["model"] if ax is axes[0] else [])
         ax.set_xlabel(label)
         ax.grid(axis="x", alpha=0.2)
-    fig.suptitle("Top models by mean held-out conditional RMSE; bars show ±1 SD")
+    fig.suptitle(
+        f"{outcome.replace('_', ' ')}\n"
+        "Top models by mean held-out conditional RMSE; bars show ±1 SD"
+    )
     path = output_dir / "cv_model_performance.png"
     fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
@@ -362,6 +381,7 @@ def _plot_prediction_sample(
     summary: pd.DataFrame,
     output_dir: Path,
     figure_dpi: int,
+    outcome: str,
 ) -> Path | None:
     if predictions.empty:
         return None
@@ -372,13 +392,13 @@ def _plot_prediction_sample(
     for ax, model in zip(axes.ravel(), best_models):
         rows = predictions[predictions["model"] == model]
         x = rows["conditional_prediction_ms"].to_numpy(dtype=float)
-        y = rows[OUTCOME].to_numpy(dtype=float)
+        y = rows[outcome].to_numpy(dtype=float)
         ax.scatter(x, y, s=9, alpha=0.2, edgecolors="none")
         limits = [min(x.min(), y.min()), max(x.max(), y.max())]
         ax.plot(limits, limits, "k--", linewidth=1)
         ax.set_title(model)
         ax.set_xlabel("Held-out conditional prediction (ms)")
-        ax.set_ylabel("Observed duration (ms)")
+        ax.set_ylabel(f"Observed {outcome.replace('_', ' ')}")
     path = output_dir / "cv_observed_vs_predicted_sample.png"
     fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
@@ -398,9 +418,18 @@ def run_trial_holdout_cv(
     names = [request.spec.name for request in requests]
     if len(names) != len(set(names)):
         raise ValueError("CV model names must be unique.")
+    outcomes = {request.spec.outcome for request in requests}
+    if len(outcomes) != 1:
+        raise ValueError("All CV model requests must use the same outcome.")
+    outcome = outcomes.pop()
     cache = load_cv_cache(cache_path)
     splits, split_source = _select_splits(cache, config)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    table_dir = output_dir / "tables"
+    figure_dir = output_dir / "figures"
+    log_dir = output_dir / "logs"
+    table_dir.mkdir(parents=True, exist_ok=True)
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     requests_by_threshold: dict[float, list[CVModelRequest]] = {}
     for request in requests:
@@ -419,11 +448,12 @@ def run_trial_holdout_cv(
         )
         for model_index, name in enumerate(names)
     }
-    log_path = output_dir / "cross_validation.log"
+    log_path = log_dir / "cross_validation.log"
     with log_path.open("w") as log:
         log.write("Repeated within-session trial-holdout MixedLM comparison\n")
         log.write("=" * 88 + "\n")
         log.write(f"Raw feature cache: {cache_path}\n")
+        log.write(f"Outcome: {outcome}\n")
         log.write(f"Shuffles: {config.n_shuffles}\n")
         log.write(f"Holdout fraction: {config.holdout_fraction}\n")
         log.write(f"Seed: {config.seed}\n")
@@ -455,6 +485,7 @@ def run_trial_holdout_cv(
                     base_row: dict[str, Any] = {
                         "repeat": repeat,
                         "model": spec.name,
+                        "outcome": spec.outcome,
                         "description": spec.description,
                         "formula": spec.formula,
                         "parent_model": spec.parent or "",
@@ -473,7 +504,7 @@ def run_trial_holdout_cv(
                             train, spec, config.max_iterations
                         )
                         fixed, conditional = _test_predictions(result, test)
-                        observed = test[OUTCOME].to_numpy(dtype=float)
+                        observed = test[spec.outcome].to_numpy(dtype=float)
                         sessions = test[SESSION].astype(str).to_numpy()
                         fixed_metrics = _metrics(observed, fixed, sessions)
                         conditional_metrics = _metrics(
@@ -530,7 +561,7 @@ def run_trial_holdout_cv(
                                 "model": spec.name,
                                 SESSION: sessions[index],
                                 "trial_id": int(test.iloc[index]["trial_id"]),
-                                OUTCOME: observed[index],
+                                spec.outcome: observed[index],
                                 "fixed_prediction_ms": fixed[index],
                                 "conditional_prediction_ms": conditional[index],
                             }
@@ -588,12 +619,12 @@ def run_trial_holdout_cv(
         log.write(summary[display_columns].to_string(index=False))
         log.write("\n")
 
-    metrics.to_csv(output_dir / "cv_repeat_metrics.csv", index=False)
-    metrics.to_pickle(output_dir / "cv_repeat_metrics.pkl")
-    summary.to_csv(output_dir / "cv_model_summary.csv", index=False)
-    summary.to_pickle(output_dir / "cv_model_summary.pkl")
-    predictions.to_pickle(output_dir / "cv_prediction_sample.pkl")
-    with (output_dir / "cv_config.json").open("w") as handle:
+    metrics.to_csv(table_dir / "cv_repeat_metrics.csv", index=False)
+    metrics.to_pickle(table_dir / "cv_repeat_metrics.pkl")
+    summary.to_csv(table_dir / "cv_model_summary.csv", index=False)
+    summary.to_pickle(table_dir / "cv_model_summary.pkl")
+    predictions.to_pickle(table_dir / "cv_prediction_sample.pkl")
+    with (table_dir / "cv_config.json").open("w") as handle:
         json.dump(
             {
                 "n_shuffles": config.n_shuffles,
@@ -603,11 +634,14 @@ def run_trial_holdout_cv(
                 "max_iterations": config.max_iterations,
                 "split_source": split_source,
                 "prediction_sample_per_model": config.prediction_sample_per_model,
+                "outcome": outcome,
             },
             handle,
             indent=2,
         )
-    _plot_overview(summary, output_dir, config.figure_dpi)
-    _plot_prediction_sample(predictions, summary, output_dir, config.figure_dpi)
+    _plot_overview(summary, figure_dir, config.figure_dpi, outcome)
+    _plot_prediction_sample(
+        predictions, summary, figure_dir, config.figure_dpi, outcome
+    )
     print(f"Saved cross-validation metrics and plots to {output_dir}")
     return metrics, summary, predictions

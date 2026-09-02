@@ -41,10 +41,19 @@ class Config:
 
     data_dir: Path = Path('data/nature')
     cache_dir: Path = Path('cache/run_001')
+    output_subdir: str = 'fixedlm'
     skip_group_level_norm_before_fit: bool = False
     z_threshold_for_active_cell: float = -0.842
     compare_with_delay: bool = False
     compare_with_encoding: bool = False
+
+
+def _results_root(cache_dir: Path, output_subdir: str) -> Path:
+    """Return a validated results root within the selected cache directory."""
+    relative_path = Path(output_subdir)
+    if relative_path.is_absolute() or '..' in relative_path.parts:
+        raise ValueError('output_subdir must stay within cache_dir.')
+    return cache_dir / relative_path
 
 
 def _same_session(left, right) -> bool:
@@ -528,12 +537,13 @@ def _run_activity_regressions(
     off_state_results = _load_pickle(config.cache_dir / 'on_off_states.pkl')
     selection_results = _load_pickle(config.cache_dir / 'cell_trial_selection.pkl')
     group_level_norm_applied = not config.skip_group_level_norm_before_fit
+    results_root = _results_root(config.cache_dir, config.output_subdir)
     output_dir = (
-        config.cache_dir
+        results_root
         / f'predict_off_state_duration_using_{activity_label}_activity'
     )
     active_cell_count_output_dir = (
-        config.cache_dir
+        results_root
         / f'predict_off_state_duration_using_{activity_label}_active_cell_count'
     )
     output_dir.mkdir(parents=True, exist_ok=True)
