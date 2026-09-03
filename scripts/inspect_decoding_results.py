@@ -17,6 +17,9 @@ except ModuleNotFoundError:
 
 configure_figure_style(matplotlib)
 
+DEFAULT_Z_THRESHOLD_OFF = 0.842
+DEFAULT_Z_THRESHOLD_ON = 1.645
+
 
 @dataclass
 class Config:
@@ -63,6 +66,11 @@ def _format_time_filename_part(value) -> str:
     if formatted.startswith('-'):
         return f'neg{formatted[1:]}'
     return formatted
+
+
+def _comparison_label(repeat_idx: int) -> str:
+    """Return the display label for a comparison repeat."""
+    return 'Observed' if repeat_idx == 0 else f'Repeat {repeat_idx}'
 
 
 def _parse_range(values, name: str):
@@ -343,7 +351,7 @@ def save_inspection_figure(
             color='lightgray',
             linestyle='--',
             linewidth=1.5,
-            label=f'Repeat {compare_repeat_idx}',
+            label=_comparison_label(compare_repeat_idx),
             zorder=4,
         )
     axes[0].set_xticks([0, 1])
@@ -367,6 +375,24 @@ def save_inspection_figure(
             linewidth=1.5,
             label='Null',
         )
+        null_mean = np.mean(null_confidence_values)
+        null_std = np.std(null_confidence_values)
+        axes[1].axvline(
+            null_mean + DEFAULT_Z_THRESHOLD_OFF * null_std,
+            color='lightgreen',
+            linestyle='--',
+            linewidth=1.5,
+            label=f'Off-state threshold (+{DEFAULT_Z_THRESHOLD_OFF:g} SD)',
+            zorder=4,
+        )
+        axes[1].axvline(
+            null_mean + DEFAULT_Z_THRESHOLD_ON * null_std,
+            color='darkgreen',
+            linestyle='--',
+            linewidth=1.5,
+            label=f'On-state threshold (+{DEFAULT_Z_THRESHOLD_ON:g} SD)',
+            zorder=4,
+        )
     axes[1].set_xlim(0.0, 1.0)
     axes[1].set_xlabel('Decoding confidence')
     axes[1].set_ylabel('Count')
@@ -378,7 +404,7 @@ def save_inspection_figure(
             color='lightgray',
             linestyle='--',
             linewidth=1.5,
-            label=f'Repeat {compare_repeat_idx}',
+            label=_comparison_label(compare_repeat_idx),
             zorder=4,
         )
     if (

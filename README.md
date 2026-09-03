@@ -70,7 +70,7 @@ uv run python scripts/decoding_confidence.py \
 # 3. Inspect repeat-level accuracy and confidence distributions (optional).
 uv run python scripts/inspect_decoding_results.py \
 --cache-dir cache/run_034_full_session \
---session 210921 \
+--session 221024 \
 --trial 0 1 \
 --time-bin-start -200 1400 \
 --with-null \
