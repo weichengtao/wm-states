@@ -32,6 +32,7 @@ try:
         _fixed_effect_rows,
         _load_and_validate_data,
         _predictions_and_r2,
+        _save_coefficient_forest,
         _save_model_plot,
         _validate_relative_component,
     )
@@ -51,6 +52,7 @@ except ModuleNotFoundError:
         _fixed_effect_rows,
         _load_and_validate_data,
         _predictions_and_r2,
+        _save_coefficient_forest,
         _save_model_plot,
         _validate_relative_component,
     )
@@ -365,38 +367,6 @@ def _plot_nested_contrasts(
     return path
 
 
-def _plot_m5_coefficients(
-    fixed_effects: pd.DataFrame,
-    output_dir: Path,
-    figure_dpi: int,
-    outcome_label: str,
-) -> Path:
-    rows = fixed_effects[
-        (fixed_effects["model"] == "M5") & (fixed_effects["term"] != "Intercept")
-    ].copy()
-    y = np.arange(len(rows))
-    coefficients = rows["coefficient"].to_numpy(dtype=float)
-    lower = rows["ci_95_lower"].to_numpy(dtype=float)
-    upper = rows["ci_95_upper"].to_numpy(dtype=float)
-    fig, ax = plt.subplots(figsize=(10, 6), layout="constrained")
-    ax.errorbar(
-        coefficients,
-        y,
-        xerr=np.vstack([coefficients - lower, upper - coefficients]),
-        fmt="o",
-        capsize=3,
-    )
-    ax.axvline(0, color="black", linestyle="--", linewidth=1)
-    ax.set_yticks(y, rows["term"].str.replace("_", " "))
-    ax.set_xlabel("M5 fixed-effect coefficient (95% CI)")
-    ax.grid(axis="x", alpha=0.2)
-    ax.set_title(f"{outcome_label}: final-model fixed effects")
-    path = output_dir / "m5_coefficient_forest.png"
-    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
-    plt.close(fig)
-    return path
-
-
 def _plot_cv_progression(
     summary: pd.DataFrame,
     output_dir: Path,
@@ -475,12 +445,14 @@ def _append_model_log(
     row: dict[str, Any],
     warning_messages: list[str],
     plot_path: Path,
+    coefficient_plot_path: Path,
 ) -> None:
     handle.write("=" * 88 + "\n")
     handle.write(f"{spec.name}: {spec.description}\n")
     handle.write(f"Parent: {spec.parent or 'none'}\n")
     handle.write(f"Formula: {spec.formula}\n")
     handle.write(f"Diagnostic figure: {plot_path}\n")
+    handle.write(f"Coefficient forest: {coefficient_plot_path}\n")
     handle.write("Computed metrics:\n")
     for key in (
         "log_likelihood",
@@ -577,9 +549,11 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
     table_dir = output_dir / "tables"
     figure_dir = output_dir / "figures"
     marginal_figure_dir = figure_dir / "marginal_effects"
+    coefficient_figure_dir = figure_dir / "coefficient_forests"
     log_dir = output_dir / "logs"
     table_dir.mkdir(parents=True, exist_ok=True)
     marginal_figure_dir.mkdir(parents=True, exist_ok=True)
+    coefficient_figure_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     results: dict[str, Any] = {}
@@ -614,8 +588,21 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
                 marginal_figure_dir,
                 config.figure_dpi,
             )
+            coefficient_plot_path = _save_coefficient_forest(
+                fixed_effect_rows,
+                spec,
+                coefficient_figure_dir,
+                config.figure_dpi,
+                outcome.label,
+            )
             _append_model_log(
-                log, spec, result, row, warning_messages, plot_path
+                log,
+                spec,
+                result,
+                row,
+                warning_messages,
+                plot_path,
+                coefficient_plot_path,
             )
             results[spec.name] = result
             comparison_rows.append(row)
@@ -659,9 +646,6 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
         config.figure_dpi,
         outcome.label,
         config.significance_alpha,
-    )
-    _plot_m5_coefficients(
-        fixed_effects, figure_dir, config.figure_dpi, outcome.label
     )
     print(f"Saved nested mean-normalized-activity comparison to {output_dir}")
     if config.run_cv:

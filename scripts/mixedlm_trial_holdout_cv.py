@@ -352,21 +352,26 @@ def _aggregate_metrics(repeat_metrics: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _rank_models_by_marginal_rmse(summary: pd.DataFrame) -> pd.DataFrame:
+    """Return successful models ranked by mean held-out fixed-effect RMSE."""
+    return summary[summary["n_successful_fits"] > 0].sort_values(
+        ["fixed_rmse_ms_mean", "model"], kind="stable"
+    )
+
+
 def _plot_overview(
     summary: pd.DataFrame,
     output_dir: Path,
     figure_dpi: int,
     outcome: str,
 ) -> Path:
-    successful = summary[summary["n_successful_fits"] > 0].sort_values(
-        "conditional_rmse_ms_mean"
-    )
+    successful = _rank_models_by_marginal_rmse(summary)
     shown = successful.head(30).iloc[::-1]
     fig, axes = plt.subplots(1, 2, figsize=(15, max(6, 0.3 * len(shown))), layout="constrained")
     y = np.arange(len(shown))
     for ax, metric, label in (
-        (axes[0], "conditional_rmse_ms", "Held-out conditional RMSE (ms)"),
-        (axes[1], "conditional_r2", "Held-out conditional R²"),
+        (axes[0], "fixed_rmse_ms", "Held-out marginal RMSE (ms)"),
+        (axes[1], "fixed_r2", "Held-out marginal R²"),
     ):
         means = shown[f"{metric}_mean"].to_numpy(dtype=float)
         stds = shown[f"{metric}_std"].to_numpy(dtype=float)
@@ -376,7 +381,7 @@ def _plot_overview(
         ax.grid(axis="x", alpha=0.2)
     fig.suptitle(
         f"{outcome.replace('_', ' ')}\n"
-        "Top models by mean held-out conditional RMSE; bars show ±1 SD"
+        "Top models by mean held-out marginal RMSE; bars show ±1 SD"
     )
     path = output_dir / "cv_model_performance.png"
     fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
@@ -393,20 +398,48 @@ def _plot_prediction_sample(
 ) -> Path | None:
     if predictions.empty:
         return None
-    best_models = summary[summary["n_successful_fits"] > 0].nsmallest(
-        4, "conditional_rmse_ms_mean"
-    )["model"]
-    fig, axes = plt.subplots(2, 2, figsize=(10, 9), layout="constrained")
-    for ax, model in zip(axes.ravel(), best_models):
+    best_models = _rank_models_by_marginal_rmse(summary).head(4)["model"]
+    if best_models.empty:
+        return None
+    fig, axes = plt.subplots(
+        2,
+        len(best_models),
+        figsize=(4.2 * len(best_models), 8),
+        squeeze=False,
+        layout="constrained",
+    )
+    prediction_rows = (
+        ("fixed_prediction_ms", "Marginal"),
+        ("conditional_prediction_ms", "Conditional"),
+    )
+    for column, model in enumerate(best_models):
         rows = predictions[predictions["model"] == model]
-        x = rows["conditional_prediction_ms"].to_numpy(dtype=float)
         y = rows[outcome].to_numpy(dtype=float)
-        ax.scatter(x, y, s=9, alpha=0.2, edgecolors="none")
-        limits = [min(x.min(), y.min()), max(x.max(), y.max())]
-        ax.plot(limits, limits, "k--", linewidth=1)
-        ax.set_title(model)
-        ax.set_xlabel("Held-out conditional prediction (ms)")
-        ax.set_ylabel(f"Observed {outcome.replace('_', ' ')}")
+        for row_index, (prediction_column, prediction_label) in enumerate(
+            prediction_rows
+        ):
+            ax = axes[row_index, column]
+            x = rows[prediction_column].to_numpy(dtype=float)
+            ax.scatter(x, y, s=9, alpha=0.2, edgecolors="none")
+            limits = np.asarray(
+                [min(x.min(), y.min()), max(x.max(), y.max())], dtype=float
+            )
+            if np.isclose(limits[0], limits[1]):
+                limits += np.asarray([-0.5, 0.5])
+            ax.plot(limits, limits, "k--", linewidth=1)
+            ax.set_xlim(limits)
+            ax.set_ylim(limits)
+            ax.set_xlabel(f"Held-out {prediction_label.lower()} prediction (ms)")
+            if column == 0:
+                ax.set_ylabel(
+                    f"{prediction_label}\nObserved {outcome.replace('_', ' ')}"
+                )
+            if row_index == 0:
+                ax.set_title(str(model))
+    fig.suptitle(
+        f"{outcome.replace('_', ' ')}\n"
+        "Models ranked by mean held-out marginal RMSE"
+    )
     path = output_dir / "cv_observed_vs_predicted_sample.png"
     fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)

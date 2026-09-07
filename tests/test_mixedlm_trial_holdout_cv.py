@@ -9,10 +9,30 @@ from scripts.compare_mixed_effect_models import (
     _predictions_and_r2,
 )
 from scripts.mixedlm_outcomes import TOTAL_OUTCOME
-from scripts.mixedlm_trial_holdout_cv import _test_predictions
+from scripts.mixedlm_trial_holdout_cv import (
+    _rank_models_by_marginal_rmse,
+    _test_predictions,
+)
 
 
 class TestPredictionsTest(unittest.TestCase):
+    def test_ranks_models_by_held_out_marginal_rmse(self):
+        summary = pd.DataFrame(
+            {
+                "model": ["conditional-winner", "marginal-winner", "failed"],
+                "n_successful_fits": [5, 5, 0],
+                "fixed_rmse_ms_mean": [2.0, 1.0, 0.1],
+                "conditional_rmse_ms_mean": [0.5, 3.0, 0.1],
+            }
+        )
+
+        ranked = _rank_models_by_marginal_rmse(summary)
+
+        self.assertEqual(
+            ranked["model"].tolist(),
+            ["marginal-winner", "conditional-winner"],
+        )
+
     def test_predicts_held_out_rows_with_fixed_and_random_effects(self):
         rng = np.random.default_rng(123)
         sessions = np.repeat([f"session-{index}" for index in range(6)], 20)

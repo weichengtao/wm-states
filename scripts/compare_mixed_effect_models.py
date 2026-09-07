@@ -579,6 +579,65 @@ def _save_model_plot(
     return output_path
 
 
+def _save_coefficient_forest(
+    fixed_effect_rows: list[dict[str, Any]],
+    spec: ModelSpec,
+    output_dir: Path,
+    figure_dpi: int,
+    outcome_label: str,
+) -> Path:
+    """Save one 95% Wald-CI forest plot for a model's predictors."""
+    rows = pd.DataFrame(fixed_effect_rows)
+    rows = rows[rows["term"] != "Intercept"].copy()
+    figure_height = max(3.2, 1.8 + 0.55 * len(rows))
+    fig, ax = plt.subplots(
+        figsize=(10, figure_height),
+        layout="constrained",
+    )
+    if rows.empty:
+        ax.text(
+            0.5,
+            0.5,
+            "No non-intercept fixed effects",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        ax.set_axis_off()
+    else:
+        y = np.arange(len(rows))
+        coefficients = rows["coefficient"].to_numpy(dtype=float)
+        lower = rows["ci_95_lower"].to_numpy(dtype=float)
+        upper = rows["ci_95_upper"].to_numpy(dtype=float)
+        errors = np.maximum(
+            np.vstack([coefficients - lower, upper - coefficients]),
+            0.0,
+        )
+        ax.errorbar(
+            coefficients,
+            y,
+            xerr=errors,
+            fmt="none",
+            ecolor="0.35",
+            capsize=3,
+            linewidth=1.3,
+        )
+        colors = np.where(rows["significant"].to_numpy(dtype=bool), "C3", "C0")
+        ax.scatter(coefficients, y, c=colors, zorder=3)
+        ax.scatter([], [], color="C3", label="p < significance alpha")
+        ax.scatter([], [], color="C0", label="not significant")
+        ax.axvline(0, color="black", linestyle="--", linewidth=1)
+        ax.set_yticks(y, rows["term"].str.replace("_", " "))
+        ax.set_xlabel("Fixed-effect coefficient (95% Wald CI)")
+        ax.grid(axis="x", alpha=0.2)
+        ax.legend(fontsize=8, loc="best")
+    ax.set_title(f"{outcome_label}\n{spec.name}: {spec.description}")
+    output_path = output_dir / f"coefficient_forest_{_safe_filename(spec.name)}.png"
+    fig.savefig(output_path, dpi=figure_dpi, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
 def _write_log_header(
     handle: Any,
     config: Config,
