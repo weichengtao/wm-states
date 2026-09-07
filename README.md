@@ -87,13 +87,14 @@ uv run python scripts/inspect_decoding_results.py \
 --with-state \
 --compare-with-repeat-idx 0
 
-# 5. Compare top preferred-cell activity across on/off and opposite-cue states.
+# 5. Compare top preferred-cell activity across states and cue groups.
 uv run python scripts/compare_activity_across_states.py \
 --data-dir data/nature \
 --cache-dir cache/run_034_full_session \
 --activity-bin-width-ms 50 \
 --seed 42 \
---max-points-per-color-group 50
+--max-points-per-color-group 50 \
+--compare-with-max-off-state
 
 # 6. Regress CC-applied off-state duration on baseline, delay, and encoding activity.
 uv run python scripts/predict_off_state_duration_using_baseline_activity.py \
@@ -123,8 +124,16 @@ uv run python scripts/predict_off_state_duration_using_cell_count.py \
   effect unless the repeat count is increased.
 - On/off-state detection uses one-tailed cluster correction, also generates
   uncorrected comparison summaries, and uses decoder repeat 0.
-- The activity comparison uses 50 ms bins and displays at most 50
-  deterministically sampled points per color group.
+- The activity comparison generates separate figures for preferred-cue on/off
+  states and for preferred- versus opposite-cue activity across all delay bins.
+  It uses 50 ms activity bins.
+- `--max-points-per-color-group 50` deterministically samples at most 50 points
+  from each ordinary blue, orange, green, or gray group. It never affects the
+  red maximum-off-state points.
+- Red maximum-off-state points are disabled by default. The example enables
+  them with `--compare-with-max-off-state`. By default every bin in each
+  session's maximum off-state is retained; use
+  `--max-points-per-max-off-state N` to subsample each state independently.
 - `--compare-with-delay` and `--compare-with-encoding` add delay- and
   encoding-activity regressions to the baseline regression.
 

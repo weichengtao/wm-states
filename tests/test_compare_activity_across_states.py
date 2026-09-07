@@ -3,11 +3,15 @@ import unittest
 import numpy as np
 
 from scripts.compare_activity_across_states import (
+    Config,
     SessionActivity,
     activity_point_categories,
+    apply_activity_normalization,
+    balanced_activity_normalization_parameters,
     balance_trial_groups,
     compute_binned_firing_rates,
     fixed_width_bin_edges,
+    maximum_delay_off_state_mask,
     normalize_balanced_activity,
     plot_session_activity,
     plot_session_activity_marginal_histograms,
@@ -101,6 +105,40 @@ class BalanceTrialGroupsTest(unittest.TestCase):
         np.testing.assert_array_equal(preferred_ids, preferred[positions])
 
 
+class MaximumDelayOffStateMaskTest(unittest.TestCase):
+    def test_selects_longest_delay_overlap_and_keeps_one_contiguous_state(self):
+        off_state_mask = np.asarray(
+            [
+                [False, True, True, False, True, True, False],
+                [True, True, True, True, False, False, False],
+            ]
+        )
+        delay_bins = np.asarray([False, True, True, True, True, False, False])
+
+        maximum_mask = maximum_delay_off_state_mask(off_state_mask, delay_bins)
+
+        expected = np.zeros_like(off_state_mask)
+        expected[1, 1:4] = True
+        np.testing.assert_array_equal(maximum_mask, expected)
+
+    def test_resolves_equal_length_states_to_earliest_state(self):
+        off_state_mask = np.asarray(
+            [
+                [False, True, True, False],
+                [True, True, False, False],
+            ]
+        )
+
+        maximum_mask = maximum_delay_off_state_mask(
+            off_state_mask,
+            np.ones(4, dtype=bool),
+        )
+
+        expected = np.zeros_like(off_state_mask)
+        expected[0, 1:3] = True
+        np.testing.assert_array_equal(maximum_mask, expected)
+
+
 class BinnedFiringRatesTest(unittest.TestCase):
     def test_computes_trial_bin_cell_rates(self):
         spikes = np.zeros((2, 4, 2), dtype=float)
@@ -156,6 +194,22 @@ class NormalizeBalancedActivityTest(unittest.TestCase):
         self.assertEqual(preferred_z.shape, (2, 3, 0))
         self.assertEqual(opposite_z.shape, (2, 3, 0))
 
+    def test_applies_balanced_reference_parameters_to_an_extra_trial(self):
+        preferred = np.asarray([[[1.0], [10.0]], [[3.0], [14.0]]])
+        opposite = np.asarray([[[5.0], [18.0]], [[7.0], [22.0]]])
+        extra_trial = np.asarray([[[9.0], [26.0]]])
+
+        means, stds = balanced_activity_normalization_parameters(
+            preferred,
+            opposite,
+        )
+        normalized = apply_activity_normalization(extra_trial, means, stds)
+
+        np.testing.assert_allclose(
+            normalized,
+            (extra_trial - means) / stds,
+        )
+
 
 class FixedWidthBinEdgesTest(unittest.TestCase):
     def test_uses_aligned_point_two_five_width_bins(self):
@@ -166,7 +220,7 @@ class FixedWidthBinEdgesTest(unittest.TestCase):
 
 
 class PairwisePlotTest(unittest.TestCase):
-    def test_plots_each_cell_pair_with_all_four_categories(self):
+    def test_separates_state_and_cue_categories_in_each_cell_pair(self):
         activity = SessionActivity(
             session="example",
             preferred_cue=7,
@@ -180,23 +234,47 @@ class PairwisePlotTest(unittest.TestCase):
             off_state_mask=np.asarray([[False, True], [True, False]]),
             preferred_trial_ids=np.asarray([1, 2]),
             opposite_trial_ids=np.asarray([3, 4]),
+            max_off_state_activity=np.asarray(
+                [[100.0, 101.0, 102.0], [103.0, 104.0, 105.0]]
+            ),
         )
 
-        fig = plot_session_activity_pairwise(activity)
+        default_state_fig = plot_session_activity_pairwise(
+            activity,
+            comparison="state",
+        )
+        state_fig = plot_session_activity_pairwise(
+            activity,
+            comparison="state",
+            compare_with_max_off_state=True,
+        )
+        cue_fig = plot_session_activity_pairwise(activity, comparison="cue")
 
-        self.assertEqual(len(fig.axes), 3)
-        for ax in fig.axes:
-            self.assertEqual(len(ax.collections), 4)
+        self.assertFalse(Config().compare_with_max_off_state)
+        self.assertTrue(
+            all(len(ax.collections) == 2 for ax in default_state_fig.axes)
+        )
+        self.assertEqual(len(state_fig.axes), 3)
+        for ax in state_fig.axes:
+            self.assertEqual(len(ax.collections), 3)
             self.assertEqual(
                 [collection.get_zorder() for collection in ax.collections],
-                [4, 3, 2, 1],
+                [4, 3, 5],
             )
-        self.assertIn("Cell 10", fig.axes[0].get_xlabel())
-        self.assertIn("Cell 20", fig.axes[0].get_ylabel())
-        self.assertIn("Cell 30", fig.axes[2].get_ylabel())
+        for ax in cue_fig.axes:
+            self.assertEqual(len(ax.collections), 2)
+            self.assertEqual(
+                [collection.get_zorder() for collection in ax.collections],
+                [2, 1],
+            )
+        self.assertIn("Cell 10", state_fig.axes[0].get_xlabel())
+        self.assertIn("Cell 20", state_fig.axes[0].get_ylabel())
+        self.assertIn("Cell 30", state_fig.axes[2].get_ylabel())
         import matplotlib.pyplot as plt
 
-        plt.close(fig)
+        plt.close(default_state_fig)
+        plt.close(state_fig)
+        plt.close(cue_fig)
 
     def test_adapts_all_plot_layouts_to_fewer_than_three_cells(self):
         expected_marginal_axes = {2: 10, 1: 8, 0: 6}
@@ -221,11 +299,29 @@ class PairwisePlotTest(unittest.TestCase):
                 off_state_mask=np.asarray([[False, True], [True, False]]),
                 preferred_trial_ids=np.asarray([1, 2]),
                 opposite_trial_ids=np.asarray([3, 4]),
+                max_off_state_activity=np.arange(
+                    2 * num_cells,
+                    dtype=float,
+                ).reshape(2, num_cells),
             )
 
-            activity_fig = plot_session_activity(activity)
-            pairwise_fig = plot_session_activity_pairwise(activity)
-            marginal_fig = plot_session_activity_marginal_histograms(activity)
+            activity_fig = plot_session_activity(
+                activity,
+                compare_with_max_off_state=True,
+            )
+            pairwise_fig = plot_session_activity_pairwise(
+                activity,
+                compare_with_max_off_state=True,
+            )
+            marginal_fig = plot_session_activity_marginal_histograms(
+                activity,
+                compare_with_max_off_state=True,
+            )
+            cue_activity_fig = plot_session_activity(activity, comparison="cue")
+            cue_pairwise_fig = plot_session_activity_pairwise(
+                activity,
+                comparison="cue",
+            )
 
             self.assertEqual(len(activity_fig.axes), 1)
             self.assertEqual(len(pairwise_fig.axes), 1)
@@ -234,8 +330,10 @@ class PairwisePlotTest(unittest.TestCase):
                 expected_marginal_axes[num_cells],
             )
             if num_cells > 0:
-                self.assertEqual(len(activity_fig.axes[0].collections), 4)
-                self.assertEqual(len(pairwise_fig.axes[0].collections), 4)
+                self.assertEqual(len(activity_fig.axes[0].collections), 3)
+                self.assertEqual(len(pairwise_fig.axes[0].collections), 3)
+                self.assertEqual(len(cue_activity_fig.axes[0].collections), 2)
+                self.assertEqual(len(cue_pairwise_fig.axes[0].collections), 2)
             else:
                 self.assertFalse(activity_fig.axes[0].axison)
                 self.assertFalse(pairwise_fig.axes[0].axison)
@@ -246,6 +344,8 @@ class PairwisePlotTest(unittest.TestCase):
             plt.close(activity_fig)
             plt.close(pairwise_fig)
             plt.close(marginal_fig)
+            plt.close(cue_activity_fig)
+            plt.close(cue_pairwise_fig)
 
     def test_subsamples_each_color_group_deterministically(self):
         activity = SessionActivity(
@@ -268,27 +368,63 @@ class PairwisePlotTest(unittest.TestCase):
                 [[-0.5, -1.0], [-1.5, -2.0]]
             ),
             preferred_population_cell_count=5,
+            max_off_state_activity=np.arange(30, 39, dtype=float).reshape(3, 3),
         )
 
         first = activity_point_categories(
             activity,
+            compare_with_max_off_state=True,
             max_points_per_color_group=1,
             seed=17,
         )
         second = activity_point_categories(
             activity,
+            compare_with_max_off_state=True,
             max_points_per_color_group=1,
             seed=17,
         )
 
-        self.assertEqual([category[3] for category in first], [2, 2, 4, 4])
+        self.assertEqual([category[3] for category in first], [2, 2, 3])
+        self.assertEqual(
+            [category[0].shape for category in first],
+            [(1, 3), (1, 3), (3, 3)],
+        )
         for first_category, second_category in zip(first, second):
-            self.assertEqual(first_category[0].shape, (1, 3))
             np.testing.assert_array_equal(first_category[0], second_category[0])
+
+        limited_first = activity_point_categories(
+            activity,
+            compare_with_max_off_state=True,
+            max_points_per_color_group=1,
+            max_points_per_max_off_state=1,
+            seed=17,
+        )
+        limited_second = activity_point_categories(
+            activity,
+            compare_with_max_off_state=True,
+            max_points_per_color_group=1,
+            max_points_per_max_off_state=1,
+            seed=17,
+        )
+        self.assertTrue(
+            all(category[0].shape == (1, 3) for category in limited_first)
+        )
+        for first_category, second_category in zip(limited_first, limited_second):
+            np.testing.assert_array_equal(first_category[0], second_category[0])
+
+        cue_categories = activity_point_categories(
+            activity,
+            comparison="cue",
+            max_points_per_color_group=1,
+            seed=17,
+        )
+        self.assertEqual([category[3] for category in cue_categories], [4, 4])
 
         fig = plot_session_activity_pairwise(
             activity,
+            compare_with_max_off_state=True,
             max_points_per_color_group=1,
+            max_points_per_max_off_state=1,
             point_seed=17,
         )
         for ax in fig.axes:
@@ -319,18 +455,20 @@ class PairwisePlotTest(unittest.TestCase):
 
         fig = plot_session_activity_pairwise(
             activity,
+            comparison="cue",
             hide_opposite_cue_points=True,
         )
 
         for ax in fig.axes:
-            self.assertEqual(len(ax.collections), 3)
+            self.assertEqual(len(ax.collections), 1)
         legend_labels = [text.get_text() for text in fig.axes[0].get_legend().texts]
         self.assertFalse(any("Opposite cue" in label for label in legend_labels))
         three_dimensional_fig = plot_session_activity(
             activity,
+            comparison="cue",
             hide_opposite_cue_points=True,
         )
-        self.assertEqual(len(three_dimensional_fig.axes[0].collections), 3)
+        self.assertEqual(len(three_dimensional_fig.axes[0].collections), 1)
         three_dimensional_legend_labels = [
             text.get_text()
             for text in three_dimensional_fig.axes[0].get_legend().texts
@@ -340,17 +478,21 @@ class PairwisePlotTest(unittest.TestCase):
         )
         hidden_all_preferred_fig = plot_session_activity_pairwise(
             activity,
+            comparison="cue",
             hide_all_preferred_cue_points=True,
         )
         self.assertTrue(
-            all(len(ax.collections) == 3 for ax in hidden_all_preferred_fig.axes)
+            all(len(ax.collections) == 1 for ax in hidden_all_preferred_fig.axes)
         )
         hidden_all_preferred_labels = [
             text.get_text()
             for text in hidden_all_preferred_fig.axes[0].get_legend().texts
         ]
         self.assertFalse(
-            any("all delay bins" in label for label in hidden_all_preferred_labels)
+            any(
+                "Preferred cue: all delay bins" in label
+                for label in hidden_all_preferred_labels
+            )
         )
         import matplotlib.pyplot as plt
 
@@ -396,25 +538,42 @@ class PairwisePlotTest(unittest.TestCase):
                     6,
                 ),
             },
+            max_off_state_activity=np.asarray(
+                [[0.7, 0.8, 0.9], [1.0, 1.1, 1.2]]
+            ),
+            max_off_state_population_mean_activities={
+                "preferred": np.asarray([0.8, 1.1]),
+                "selective_nonpreferred": np.asarray([0.3, 0.7]),
+                "stationary_nonselective": np.asarray([0.15, 0.35]),
+            },
         )
 
-        fig = plot_session_activity_marginal_histograms(activity)
+        fig = plot_session_activity_marginal_histograms(
+            activity,
+            compare_with_max_off_state=True,
+        )
+        cue_fig = plot_session_activity_marginal_histograms(
+            activity,
+            comparison="cue",
+        )
         hidden_opposite_fig = plot_session_activity_marginal_histograms(
             activity,
+            comparison="cue",
             hide_opposite_cue_points=True,
         )
         hidden_all_preferred_fig = plot_session_activity_marginal_histograms(
             activity,
+            comparison="cue",
             hide_all_preferred_cue_points=True,
         )
 
         self.assertEqual(len(fig.axes), 12)
         histogram_axes = fig.axes[:6]
         ecdf_axes = fig.axes[6:]
-        self.assertTrue(all(len(ax.patches) == 4 for ax in histogram_axes))
+        self.assertTrue(all(len(ax.patches) == 3 for ax in histogram_axes))
         self.assertTrue(
             all(
-                [patch.get_zorder() for patch in ax.patches] == [4, 3, 2, 1]
+                [patch.get_zorder() for patch in ax.patches] == [4, 3, 5]
                 for ax in histogram_axes
             )
         )
@@ -425,10 +584,10 @@ class PairwisePlotTest(unittest.TestCase):
             self.assertEqual(zero_line.get_color(), "black")
             self.assertEqual(zero_line.get_linestyle(), "--")
             self.assertEqual(zero_line.get_zorder(), 0)
-        self.assertTrue(all(len(ax.lines) == 5 for ax in ecdf_axes))
+        self.assertTrue(all(len(ax.lines) == 4 for ax in ecdf_axes))
         self.assertTrue(
             all(
-                [line.get_zorder() for line in ax.lines[1:]] == [4, 3, 2, 1]
+                [line.get_zorder() for line in ax.lines[1:]] == [4, 3, 5]
                 for ax in ecdf_axes
             )
         )
@@ -446,23 +605,32 @@ class PairwisePlotTest(unittest.TestCase):
             )
         )
         self.assertTrue(
-            all(len(ax.patches) == 3 for ax in hidden_opposite_fig.axes[:6])
+            all(len(ax.patches) == 2 for ax in cue_fig.axes[:6])
         )
         self.assertTrue(
-            all(len(ax.lines) == 4 for ax in hidden_opposite_fig.axes[6:])
+            all(len(ax.lines) == 3 for ax in cue_fig.axes[6:])
         )
         self.assertTrue(
-            all(len(ax.patches) == 3 for ax in hidden_all_preferred_fig.axes[:6])
+            all(len(ax.patches) == 1 for ax in hidden_opposite_fig.axes[:6])
         )
         self.assertTrue(
-            all(len(ax.lines) == 4 for ax in hidden_all_preferred_fig.axes[6:])
+            all(len(ax.lines) == 2 for ax in hidden_opposite_fig.axes[6:])
+        )
+        self.assertTrue(
+            all(len(ax.patches) == 1 for ax in hidden_all_preferred_fig.axes[:6])
+        )
+        self.assertTrue(
+            all(len(ax.lines) == 2 for ax in hidden_all_preferred_fig.axes[6:])
         )
         hidden_all_preferred_labels = [
             text.get_text()
             for text in hidden_all_preferred_fig.axes[0].get_legend().texts
         ]
         self.assertFalse(
-            any("all delay bins" in label for label in hidden_all_preferred_labels)
+            any(
+                "Preferred cue: all delay bins" in label
+                for label in hidden_all_preferred_labels
+            )
         )
         self.assertIn("Cell 10", fig.axes[6].get_xlabel())
         self.assertIn("Cell 30", fig.axes[8].get_xlabel())
@@ -472,6 +640,7 @@ class PairwisePlotTest(unittest.TestCase):
         import matplotlib.pyplot as plt
 
         plt.close(fig)
+        plt.close(cue_fig)
         plt.close(hidden_opposite_fig)
         plt.close(hidden_all_preferred_fig)
 

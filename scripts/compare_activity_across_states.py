@@ -1,11 +1,11 @@
-"""Compare top preferred-cell activity across on/off and opposite-cue states.
+"""Compare top preferred-cell activity across states and cue groups.
 
 For each session, this script selects up to three preferred-cue cells with the
 largest cached delay-period PEV, balances correct preferred- and opposite-cue
 trials, and z-normalizes each cell across the balanced trials independently at
-every delay-bin start. It adapts the plot dimensionality to the number of
-available preferred cells, coloring preferred-cue bins by their cached on/off
-state and all opposite-cue bins as a comparison population.
+every delay-bin start. Separate figures compare preferred-cue on/off states and
+preferred/opposite-cue all-delay-bin populations. The state figures highlight
+the delay bins in each session's longest off state.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import pickle
 from dataclasses import dataclass, field
 from itertools import combinations
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import matplotlib
 
@@ -53,7 +53,11 @@ class Config:
     figure_dpi: int = 300
     hide_opposite_cue_points: bool = False
     hide_all_preferred_cue_points: bool = False
+    compare_with_max_off_state: bool = False
+    # This general color-group cap never applies to the red maximum-state points.
     max_points_per_color_group: int | None = None
+    # The red points have their own independent, per-session cap; None keeps all.
+    max_points_per_max_off_state: int | None = None
     marginal_histogram_bin_width: float = 0.25
 
 
@@ -80,6 +84,15 @@ class SessionActivity:
         str,
         tuple[np.ndarray | None, np.ndarray | None, int],
     ] = field(default_factory=dict)
+    max_off_state_activity: np.ndarray | None = None
+    max_off_state_population_mean_activities: dict[
+        str,
+        np.ndarray | None,
+    ] = field(default_factory=dict)
+    max_off_state_trial_id: int | None = None
+    max_off_state_delay_bin_starts: np.ndarray = field(
+        default_factory=lambda: np.asarray([], dtype=float)
+    )
 
 
 def _load_pickle(path: Path) -> Any:
@@ -217,6 +230,37 @@ def balance_trial_groups(
     )
 
 
+def maximum_delay_off_state_mask(
+    off_state_mask: np.ndarray,
+    delay_bins: np.ndarray,
+) -> np.ndarray:
+    """Return only the longest contiguous off-state overlap with the delay."""
+    off_state_mask = np.asarray(off_state_mask, dtype=bool)
+    delay_bins = np.asarray(delay_bins, dtype=bool).ravel()
+    if off_state_mask.ndim != 2:
+        raise ValueError("off_state_mask must be two-dimensional.")
+    if off_state_mask.shape[1] != delay_bins.size:
+        raise ValueError("delay_bins must match the off-state mask time dimension.")
+
+    maximum_mask = np.zeros_like(off_state_mask, dtype=bool)
+    maximum_overlap_count = 0
+    for trial_position, trial_mask in enumerate(off_state_mask):
+        transitions = np.diff(np.pad(trial_mask.astype(np.int8), (1, 1)))
+        run_starts = np.flatnonzero(transitions == 1)
+        run_ends = np.flatnonzero(transitions == -1)
+        for run_start, run_end in zip(run_starts, run_ends):
+            run_bins = np.arange(run_start, run_end, dtype=np.int64)
+            delay_run_bins = run_bins[delay_bins[run_bins]]
+            if delay_run_bins.size > maximum_overlap_count:
+                maximum_mask.fill(False)
+                maximum_mask[trial_position, delay_run_bins] = True
+                maximum_overlap_count = int(delay_run_bins.size)
+
+    if maximum_overlap_count == 0:
+        raise ValueError("No off-state bins overlap the delay period.")
+    return maximum_mask
+
+
 def compute_binned_firing_rates(
     spikes: np.ndarray,
     times_ms: np.ndarray,
@@ -265,6 +309,20 @@ def normalize_balanced_activity(
     opposite_rates: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Z-normalize each bin/cell across the combined balanced trial groups."""
+    means, stds = balanced_activity_normalization_parameters(
+        preferred_rates,
+        opposite_rates,
+    )
+    preferred_normalized = apply_activity_normalization(preferred_rates, means, stds)
+    opposite_normalized = apply_activity_normalization(opposite_rates, means, stds)
+    return preferred_normalized, opposite_normalized
+
+
+def balanced_activity_normalization_parameters(
+    preferred_rates: np.ndarray,
+    opposite_rates: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit per-bin/cell normalization parameters to balanced cue groups."""
     preferred_rates = np.asarray(preferred_rates, dtype=float)
     opposite_rates = np.asarray(opposite_rates, dtype=float)
     if preferred_rates.shape != opposite_rates.shape:
@@ -274,11 +332,24 @@ def normalize_balanced_activity(
     combined = np.concatenate([preferred_rates, opposite_rates], axis=0)
     means = np.mean(combined, axis=0)
     stds = np.std(combined, axis=0, ddof=0)
-    normalized = np.zeros_like(combined, dtype=float)
+    return means, stds
+
+
+def apply_activity_normalization(
+    rates: np.ndarray,
+    means: np.ndarray,
+    stds: np.ndarray,
+) -> np.ndarray:
+    """Apply fitted per-bin/cell normalization, mapping zero variance to zero."""
+    rates = np.asarray(rates, dtype=float)
+    means = np.asarray(means, dtype=float)
+    stds = np.asarray(stds, dtype=float)
+    if rates.ndim != 3 or rates.shape[1:] != means.shape or means.shape != stds.shape:
+        raise ValueError("Rates and normalization parameters have incompatible shapes.")
+    normalized = np.zeros_like(rates, dtype=float)
     usable = np.isfinite(means) & np.isfinite(stds) & (stds > 0)
-    normalized[:, usable] = (combined[:, usable] - means[usable]) / stds[usable]
-    split = preferred_rates.shape[0]
-    return normalized[:split], normalized[split:]
+    normalized[:, usable] = (rates[:, usable] - means[usable]) / stds[usable]
+    return normalized
 
 
 def prepare_session_activity(
@@ -339,6 +410,16 @@ def prepare_session_activity(
     if not np.any(delay_bins):
         raise ValueError(f"Session {session} has no cached bins in the delay period.")
     delay_bin_starts = time_bins[delay_bins]
+    max_off_state_mask = maximum_delay_off_state_mask(off_state_mask, delay_bins)
+    max_off_state_rows, _ = np.nonzero(max_off_state_mask)
+    max_off_state_trial_position = int(max_off_state_rows[0])
+    max_off_state_trial_id = int(
+        preferred_trial_ids[max_off_state_trial_position]
+    )
+    max_off_state_delay_mask = max_off_state_mask[
+        max_off_state_trial_position,
+        delay_bins,
+    ]
 
     selection = find_full_session_selection(selection_results, session, spikes.shape[0])
     all_preferred_cell_ids, all_preferred_cell_pev = preferred_pev_cells(
@@ -376,13 +457,44 @@ def prepare_session_activity(
         delay_bin_starts,
         config.activity_bin_width_ms,
     )
-    all_preferred_activity, all_opposite_activity = normalize_balanced_activity(
-        preferred_rates,
-        opposite_rates,
+    normalization_means, normalization_stds = (
+        balanced_activity_normalization_parameters(
+            preferred_rates,
+            opposite_rates,
+        )
     )
+    all_preferred_activity = apply_activity_normalization(
+        preferred_rates,
+        normalization_means,
+        normalization_stds,
+    )
+    all_opposite_activity = apply_activity_normalization(
+        opposite_rates,
+        normalization_means,
+        normalization_stds,
+    )
+    max_off_state_rates = compute_binned_firing_rates(
+        spikes,
+        times_ms,
+        np.asarray([max_off_state_trial_id], dtype=np.int64),
+        analysis_cell_ids,
+        delay_bin_starts,
+        config.activity_bin_width_ms,
+    )
+    max_off_state_all_activity = apply_activity_normalization(
+        max_off_state_rates,
+        normalization_means,
+        normalization_stds,
+    )[0, max_off_state_delay_mask, :]
+    if max_off_state_all_activity.shape[0] != np.count_nonzero(
+        max_off_state_delay_mask
+    ):
+        raise RuntimeError("Maximum off-state activity extraction lost delay bins.")
+    max_off_state_activity = max_off_state_all_activity[:, :cell_ids.size]
     preferred_activity = all_preferred_activity[:, :, :cell_ids.size]
     opposite_activity = all_opposite_activity[:, :, :cell_ids.size]
     population_mean_activities = {}
+    max_off_state_population_mean_activities = {}
     cell_offset = 0
     for group_name, _ in POPULATION_GROUPS:
         group_count = int(group_cell_ids[group_name].size)
@@ -402,6 +514,15 @@ def prepare_session_activity(
             preferred_group_mean,
             opposite_group_mean,
             group_count,
+        )
+        max_off_state_group_mean = None
+        if group_count:
+            max_off_state_group_mean = np.mean(
+                max_off_state_all_activity[:, group_slice],
+                axis=1,
+            )
+        max_off_state_population_mean_activities[group_name] = (
+            max_off_state_group_mean
         )
         cell_offset += group_count
     (
@@ -426,22 +547,40 @@ def prepare_session_activity(
         opposite_population_mean_activity=opposite_population_mean_activity,
         preferred_population_cell_count=preferred_population_cell_count,
         population_mean_activities=population_mean_activities,
+        max_off_state_activity=max_off_state_activity,
+        max_off_state_population_mean_activities=(
+            max_off_state_population_mean_activities
+        ),
+        max_off_state_trial_id=max_off_state_trial_id,
+        max_off_state_delay_bin_starts=delay_bin_starts[
+            max_off_state_delay_mask
+        ],
     )
 
 
 def activity_point_categories(
     session_activity: SessionActivity,
+    comparison: Literal["state", "cue"] = "state",
+    compare_with_max_off_state: bool = False,
     hide_opposite_cue_points: bool = False,
     hide_all_preferred_cue_points: bool = False,
     max_points_per_color_group: int | None = None,
+    max_points_per_max_off_state: int | None = None,
     seed: int = 42,
 ):
-    """Return optionally subsampled activity points for each displayed color."""
+    """Return optionally subsampled points for one comparison figure."""
     if max_points_per_color_group is not None and (
         isinstance(max_points_per_color_group, (bool, np.bool_))
         or max_points_per_color_group <= 0
     ):
         raise ValueError("max_points_per_color_group must be positive when set.")
+    if max_points_per_max_off_state is not None and (
+        isinstance(max_points_per_max_off_state, (bool, np.bool_))
+        or max_points_per_max_off_state <= 0
+    ):
+        raise ValueError("max_points_per_max_off_state must be positive when set.")
+    if comparison not in ("state", "cue"):
+        raise ValueError("comparison must be either 'state' or 'cue'.")
 
     num_cells = session_activity.cell_ids.size
     preferred_point_count = int(np.prod(session_activity.preferred_activity.shape[:2]))
@@ -456,29 +595,71 @@ def activity_point_categories(
     )
     on_mask = session_activity.on_state_mask.ravel()
     off_mask = session_activity.off_state_mask.ravel()
-    categories = [
-        (preferred_points[on_mask], "tab:blue", "Preferred cue: on state"),
-        (preferred_points[off_mask], "tab:orange", "Preferred cue: off state"),
-    ]
-    if not hide_all_preferred_cue_points:
-        categories.append(
-            (preferred_points, "tab:green", "Preferred cue: all delay bins")
+    categories = []
+    if comparison == "state":
+        categories.extend(
+            [
+                (preferred_points[on_mask], "tab:blue", "Preferred cue: on state"),
+                (
+                    preferred_points[off_mask],
+                    "tab:orange",
+                    "Preferred cue: off state",
+                ),
+            ]
         )
-    if not hide_opposite_cue_points:
-        categories.append((opposite_points, "tab:gray", "Opposite cue"))
+        if (
+            compare_with_max_off_state
+            and session_activity.max_off_state_activity is not None
+        ):
+            max_off_state_points = np.asarray(
+                session_activity.max_off_state_activity,
+                dtype=float,
+            )
+            if (
+                max_off_state_points.ndim != 2
+                or max_off_state_points.shape[1] != num_cells
+            ):
+                raise ValueError(
+                    "Maximum off-state activity must have shape (bin, cell)."
+                )
+            categories.append(
+                (
+                    max_off_state_points,
+                    "tab:red",
+                    "Preferred cue: maximum off state",
+                )
+            )
+    else:
+        if not hide_all_preferred_cue_points:
+            categories.append(
+                (preferred_points, "tab:green", "Preferred cue: all delay bins")
+            )
+        if not hide_opposite_cue_points:
+            categories.append(
+                (opposite_points, "tab:gray", "Opposite cue: all delay bins")
+            )
 
     rng = np.random.default_rng(seed)
+    max_off_state_rng = np.random.default_rng(
+        np.random.SeedSequence([seed, 1])
+    )
     displayed_categories = []
     for points, color, label in categories:
         total_count = points.shape[0]
+        point_limit = (
+            max_points_per_max_off_state
+            if color == "tab:red"
+            else max_points_per_color_group
+        )
         if (
-            max_points_per_color_group is not None
-            and total_count > max_points_per_color_group
+            point_limit is not None
+            and total_count > point_limit
         ):
+            category_rng = max_off_state_rng if color == "tab:red" else rng
             point_indices = np.sort(
-                rng.choice(
+                category_rng.choice(
                     total_count,
-                    size=max_points_per_color_group,
+                    size=point_limit,
                     replace=False,
                 )
             )
@@ -490,8 +671,12 @@ def activity_point_categories(
 def population_mean_point_categories(
     session_activity: SessionActivity,
     population_group: str = "preferred",
+    comparison: Literal["state", "cue"] = "state",
+    compare_with_max_off_state: bool = False,
     hide_opposite_cue_points: bool = False,
     hide_all_preferred_cue_points: bool = False,
+    max_points_per_max_off_state: int | None = None,
+    seed: int = 42,
 ):
     """Return state groups for one cell population's mean normalized activity."""
     if population_group in session_activity.population_mean_activities:
@@ -514,6 +699,13 @@ def population_mean_point_categories(
         return None, 0
     if preferred_mean is None or opposite_mean is None or population_cell_count == 0:
         return None, 0
+    if comparison not in ("state", "cue"):
+        raise ValueError("comparison must be either 'state' or 'cue'.")
+    if max_points_per_max_off_state is not None and (
+        isinstance(max_points_per_max_off_state, (bool, np.bool_))
+        or max_points_per_max_off_state <= 0
+    ):
+        raise ValueError("max_points_per_max_off_state must be positive when set.")
 
     preferred_points = np.asarray(preferred_mean, dtype=float).ravel()
     opposite_points = np.asarray(opposite_mean, dtype=float).ravel()
@@ -521,38 +713,85 @@ def population_mean_point_categories(
     off_mask = session_activity.off_state_mask.ravel()
     if preferred_points.size != on_mask.size or preferred_points.size != off_mask.size:
         raise ValueError("Preferred population mean activity does not match state masks.")
-    categories = [
-        (
-            preferred_points[on_mask, None],
-            "tab:blue",
-            "Preferred cue: on state",
-            int(np.count_nonzero(on_mask)),
-        ),
-        (
-            preferred_points[off_mask, None],
-            "tab:orange",
-            "Preferred cue: off state",
-            int(np.count_nonzero(off_mask)),
-        ),
-    ]
-    if not hide_all_preferred_cue_points:
-        categories.append(
-            (
-                preferred_points[:, None],
-                "tab:green",
-                "Preferred cue: all delay bins",
-                int(preferred_points.size),
-            )
+    categories = []
+    if comparison == "state":
+        categories.extend(
+            [
+                (
+                    preferred_points[on_mask, None],
+                    "tab:blue",
+                    "Preferred cue: on state",
+                    int(np.count_nonzero(on_mask)),
+                ),
+                (
+                    preferred_points[off_mask, None],
+                    "tab:orange",
+                    "Preferred cue: off state",
+                    int(np.count_nonzero(off_mask)),
+                ),
+            ]
         )
-    if not hide_opposite_cue_points:
-        categories.append(
-            (
-                opposite_points[:, None],
-                "tab:gray",
-                "Opposite cue",
-                int(opposite_points.size),
+        max_off_state_mean = None
+        if compare_with_max_off_state:
+            max_off_state_mean = (
+                session_activity.max_off_state_population_mean_activities.get(
+                    population_group
+                )
             )
-        )
+        if (
+            compare_with_max_off_state
+            and max_off_state_mean is None
+            and population_group == "preferred"
+        ):
+            max_off_state_activity = session_activity.max_off_state_activity
+            if max_off_state_activity is not None and max_off_state_activity.shape[1]:
+                max_off_state_mean = np.mean(max_off_state_activity, axis=1)
+        if max_off_state_mean is not None:
+            max_off_state_points = np.asarray(
+                max_off_state_mean,
+                dtype=float,
+            ).ravel()
+            total_count = int(max_off_state_points.size)
+            if (
+                max_points_per_max_off_state is not None
+                and total_count > max_points_per_max_off_state
+            ):
+                rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
+                selected = np.sort(
+                    rng.choice(
+                        total_count,
+                        size=max_points_per_max_off_state,
+                        replace=False,
+                    )
+                )
+                max_off_state_points = max_off_state_points[selected]
+            categories.append(
+                (
+                    max_off_state_points[:, None],
+                    "tab:red",
+                    "Preferred cue: maximum off state",
+                    total_count,
+                )
+            )
+    else:
+        if not hide_all_preferred_cue_points:
+            categories.append(
+                (
+                    preferred_points[:, None],
+                    "tab:green",
+                    "Preferred cue: all delay bins",
+                    int(preferred_points.size),
+                )
+            )
+        if not hide_opposite_cue_points:
+            categories.append(
+                (
+                    opposite_points[:, None],
+                    "tab:gray",
+                    "Opposite cue: all delay bins",
+                    int(opposite_points.size),
+                )
+            )
     return categories, population_cell_count
 
 
@@ -603,6 +842,7 @@ def _category_zorder(color: str) -> int:
         "tab:green": 2,
         "tab:orange": 3,
         "tab:blue": 4,
+        "tab:red": 5,
     }[color]
 
 
@@ -634,20 +874,26 @@ def _plot_single_cell_strip(ax, session_activity: SessionActivity, categories):
 
 def plot_session_activity(
     session_activity: SessionActivity,
+    comparison: Literal["state", "cue"] = "state",
+    compare_with_max_off_state: bool = False,
     hide_opposite_cue_points: bool = False,
     hide_all_preferred_cue_points: bool = False,
     max_points_per_color_group: int | None = None,
+    max_points_per_max_off_state: int | None = None,
     point_seed: int = 42,
 ):
     """Create a session scatter plot using every available preferred cell."""
     num_cells = session_activity.cell_ids.size
     if num_cells == 0:
-        return _placeholder_figure(session_activity, "activity")
+        return _placeholder_figure(session_activity, f"{comparison} activity")
     categories = activity_point_categories(
         session_activity,
+        comparison=comparison,
+        compare_with_max_off_state=compare_with_max_off_state,
         hide_opposite_cue_points=hide_opposite_cue_points,
         hide_all_preferred_cue_points=hide_all_preferred_cue_points,
         max_points_per_color_group=max_points_per_color_group,
+        max_points_per_max_off_state=max_points_per_max_off_state,
         seed=point_seed,
     )
 
@@ -703,27 +949,37 @@ def plot_session_activity(
         _plot_single_cell_strip(ax, session_activity, categories)
     ax.set_title(
         f"Session {session_activity.session}: preferred cue "
-        f"{cue_to_deg(session_activity.preferred_cue)}°"
+        f"{cue_to_deg(session_activity.preferred_cue)}° "
+        f"({'on/off states' if comparison == 'state' else 'all delay bins by cue'})"
     )
     return fig
 
 
 def plot_session_activity_pairwise(
     session_activity: SessionActivity,
+    comparison: Literal["state", "cue"] = "state",
+    compare_with_max_off_state: bool = False,
     hide_opposite_cue_points: bool = False,
     hide_all_preferred_cue_points: bool = False,
     max_points_per_color_group: int | None = None,
+    max_points_per_max_off_state: int | None = None,
     point_seed: int = 42,
 ):
     """Create every available pairwise 2D projection for one session."""
     num_cells = session_activity.cell_ids.size
     if num_cells == 0:
-        return _placeholder_figure(session_activity, "pairwise activity")
+        return _placeholder_figure(
+            session_activity,
+            f"{comparison} pairwise activity",
+        )
     categories = activity_point_categories(
         session_activity,
+        comparison=comparison,
+        compare_with_max_off_state=compare_with_max_off_state,
         hide_opposite_cue_points=hide_opposite_cue_points,
         hide_all_preferred_cue_points=hide_all_preferred_cue_points,
         max_points_per_color_group=max_points_per_color_group,
+        max_points_per_max_off_state=max_points_per_max_off_state,
         seed=point_seed,
     )
     cell_pairs = list(combinations(range(num_cells), 2))
@@ -776,7 +1032,8 @@ def plot_session_activity_pairwise(
 
     fig.suptitle(
         f"Session {session_activity.session}: preferred cue "
-        f"{cue_to_deg(session_activity.preferred_cue)}°"
+        f"{cue_to_deg(session_activity.preferred_cue)}° "
+        f"({'on/off states' if comparison == 'state' else 'all delay bins by cue'})"
     )
     return fig
 
@@ -892,8 +1149,12 @@ def _plot_ecdf(
 
 def plot_session_activity_marginal_histograms(
     session_activity: SessionActivity,
+    comparison: Literal["state", "cue"] = "state",
+    compare_with_max_off_state: bool = False,
     hide_opposite_cue_points: bool = False,
     hide_all_preferred_cue_points: bool = False,
+    max_points_per_max_off_state: int | None = None,
+    point_seed: int = 42,
     bin_width: float = 0.25,
 ):
     """Plot selected-cell marginals plus three cell-population means."""
@@ -902,16 +1163,24 @@ def plot_session_activity_marginal_histograms(
     if num_cells:
         categories = activity_point_categories(
             session_activity,
+            comparison=comparison,
+            compare_with_max_off_state=compare_with_max_off_state,
             hide_opposite_cue_points=hide_opposite_cue_points,
             hide_all_preferred_cue_points=hide_all_preferred_cue_points,
+            max_points_per_max_off_state=max_points_per_max_off_state,
+            seed=point_seed,
         )
     population_data = []
     for group_name, group_title in POPULATION_GROUPS:
         group_categories, group_cell_count = population_mean_point_categories(
             session_activity,
             population_group=group_name,
+            comparison=comparison,
+            compare_with_max_off_state=compare_with_max_off_state,
             hide_opposite_cue_points=hide_opposite_cue_points,
             hide_all_preferred_cue_points=hide_all_preferred_cue_points,
+            max_points_per_max_off_state=max_points_per_max_off_state,
+            seed=point_seed,
         )
         population_data.append(
             (group_name, group_title, group_categories, group_cell_count)
@@ -1001,7 +1270,8 @@ def plot_session_activity_marginal_histograms(
 
     fig.suptitle(
         f"Session {session_activity.session}: preferred cue "
-        f"{cue_to_deg(session_activity.preferred_cue)}° marginal activity"
+        f"{cue_to_deg(session_activity.preferred_cue)}° marginal activity "
+        f"({'on/off states' if comparison == 'state' else 'all delay bins by cue'})"
     )
     return fig
 
@@ -1018,6 +1288,11 @@ def main(config: Config):
         or config.max_points_per_color_group <= 0
     ):
         raise ValueError("max_points_per_color_group must be positive when set.")
+    if config.max_points_per_max_off_state is not None and (
+        isinstance(config.max_points_per_max_off_state, (bool, np.bool_))
+        or config.max_points_per_max_off_state <= 0
+    ):
+        raise ValueError("max_points_per_max_off_state must be positive when set.")
     if (
         not np.isfinite(config.marginal_histogram_bin_width)
         or config.marginal_histogram_bin_width <= 0
@@ -1046,50 +1321,78 @@ def main(config: Config):
             config,
             session_seed=config.seed + session_idx,
         )
-        fig = plot_session_activity(
-            prepared,
-            hide_opposite_cue_points=config.hide_opposite_cue_points,
-            hide_all_preferred_cue_points=config.hide_all_preferred_cue_points,
-            max_points_per_color_group=config.max_points_per_color_group,
-            point_seed=config.seed + session_idx,
-        )
-        save_figure_all_formats(
-            fig,
-            figure_dir / f"activity_across_states_{prepared.session}.png",
-            dpi=config.figure_dpi,
-        )
-        plt.close(fig)
+        for comparison, filename_group in (("state", "states"), ("cue", "cues")):
+            fig = plot_session_activity(
+                prepared,
+                comparison=comparison,
+                compare_with_max_off_state=config.compare_with_max_off_state,
+                hide_opposite_cue_points=config.hide_opposite_cue_points,
+                hide_all_preferred_cue_points=config.hide_all_preferred_cue_points,
+                max_points_per_color_group=config.max_points_per_color_group,
+                max_points_per_max_off_state=(
+                    config.max_points_per_max_off_state
+                ),
+                point_seed=config.seed + session_idx,
+            )
+            save_figure_all_formats(
+                fig,
+                figure_dir
+                / f"activity_across_{filename_group}_{prepared.session}.png",
+                dpi=config.figure_dpi,
+            )
+            plt.close(fig)
 
-        pairwise_fig = plot_session_activity_pairwise(
-            prepared,
-            hide_opposite_cue_points=config.hide_opposite_cue_points,
-            hide_all_preferred_cue_points=config.hide_all_preferred_cue_points,
-            max_points_per_color_group=config.max_points_per_color_group,
-            point_seed=config.seed + session_idx,
-        )
-        save_figure_all_formats(
-            pairwise_fig,
-            figure_dir / f"activity_across_states_pairwise_{prepared.session}.png",
-            dpi=config.figure_dpi,
-        )
-        plt.close(pairwise_fig)
+            pairwise_fig = plot_session_activity_pairwise(
+                prepared,
+                comparison=comparison,
+                compare_with_max_off_state=config.compare_with_max_off_state,
+                hide_opposite_cue_points=config.hide_opposite_cue_points,
+                hide_all_preferred_cue_points=config.hide_all_preferred_cue_points,
+                max_points_per_color_group=config.max_points_per_color_group,
+                max_points_per_max_off_state=(
+                    config.max_points_per_max_off_state
+                ),
+                point_seed=config.seed + session_idx,
+            )
+            save_figure_all_formats(
+                pairwise_fig,
+                figure_dir
+                / (
+                    f"activity_across_{filename_group}_pairwise_"
+                    f"{prepared.session}.png"
+                ),
+                dpi=config.figure_dpi,
+            )
+            plt.close(pairwise_fig)
 
-        marginal_fig = plot_session_activity_marginal_histograms(
-            prepared,
-            hide_opposite_cue_points=config.hide_opposite_cue_points,
-            hide_all_preferred_cue_points=config.hide_all_preferred_cue_points,
-            bin_width=config.marginal_histogram_bin_width,
-        )
-        save_figure_all_formats(
-            marginal_fig,
-            figure_dir / f"activity_across_states_marginals_{prepared.session}.png",
-            dpi=config.figure_dpi,
-        )
-        plt.close(marginal_fig)
+            marginal_fig = plot_session_activity_marginal_histograms(
+                prepared,
+                comparison=comparison,
+                compare_with_max_off_state=config.compare_with_max_off_state,
+                hide_opposite_cue_points=config.hide_opposite_cue_points,
+                hide_all_preferred_cue_points=config.hide_all_preferred_cue_points,
+                max_points_per_max_off_state=(
+                    config.max_points_per_max_off_state
+                ),
+                point_seed=config.seed + session_idx,
+                bin_width=config.marginal_histogram_bin_width,
+            )
+            save_figure_all_formats(
+                marginal_fig,
+                figure_dir
+                / (
+                    f"activity_across_{filename_group}_marginals_"
+                    f"{prepared.session}.png"
+                ),
+                dpi=config.figure_dpi,
+            )
+            plt.close(marginal_fig)
         print(
-            f"Saved activity, pairwise, and marginal comparisons for session "
+            f"Saved state and cue activity, pairwise, and marginal comparisons "
+            f"for session "
             f"{prepared.session} "
-            f"({prepared.preferred_trial_ids.size} trials per cue)."
+            f"({prepared.preferred_trial_ids.size} trials per cue; "
+            f"{prepared.max_off_state_activity.shape[0]} maximum off-state bins)."
         )
 
 
