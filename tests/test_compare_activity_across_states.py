@@ -10,6 +10,7 @@ from scripts.compare_activity_across_states import (
     balanced_activity_normalization_parameters,
     balance_trial_groups,
     compute_binned_firing_rates,
+    compute_preferred_cell_principal_components,
     fixed_width_bin_edges,
     maximum_delay_off_state_mask,
     normalize_balanced_activity,
@@ -17,6 +18,7 @@ from scripts.compare_activity_across_states import (
     plot_session_activity_marginal_histograms,
     plot_session_activity_pairwise,
     preferred_pev_cells,
+    principal_component_session_activity,
     session_cell_groups,
     top_preferred_pev_cells,
 )
@@ -209,6 +211,113 @@ class NormalizeBalancedActivityTest(unittest.TestCase):
             normalized,
             (extra_trial - means) / stds,
         )
+
+
+class PreferredCellPrincipalComponentsTest(unittest.TestCase):
+    def test_fits_three_components_to_pooled_cues_and_projects_maximum_state(self):
+        preferred = np.asarray(
+            [
+                [[4.0, 1.0, 0.0, 2.0], [3.0, 2.0, 1.0, 0.0]],
+                [[2.0, 0.0, 3.0, 1.0], [1.0, 3.0, 2.0, 4.0]],
+            ]
+        )
+        opposite = np.asarray(
+            [
+                [[-4.0, -1.0, 0.0, -2.0], [-3.0, -2.0, -1.0, 0.0]],
+                [[-2.0, 0.0, -3.0, -1.0], [-1.0, -3.0, -2.0, -4.0]],
+            ]
+        )
+        maximum_state = np.asarray([[5.0, 1.0, 2.0, 3.0]])
+
+        projection = compute_preferred_cell_principal_components(
+            preferred,
+            opposite,
+            maximum_state,
+        )
+
+        self.assertEqual(projection.source_cell_count, 4)
+        self.assertEqual(projection.preferred_activity.shape, (2, 2, 3))
+        self.assertEqual(projection.opposite_activity.shape, (2, 2, 3))
+        self.assertEqual(projection.max_off_state_activity.shape, (1, 3))
+        self.assertTrue(
+            np.all(np.diff(projection.explained_variance_ratio) <= 0)
+        )
+        pooled_scores = np.concatenate(
+            [
+                projection.preferred_activity.reshape(-1, 3),
+                projection.opposite_activity.reshape(-1, 3),
+            ],
+            axis=0,
+        )
+        np.testing.assert_allclose(pooled_scores.mean(axis=0), 0.0, atol=1e-12)
+        np.testing.assert_allclose(
+            projection.max_off_state_activity,
+            (maximum_state - projection.center) @ projection.components.T,
+        )
+
+    def test_adapts_to_fewer_preferred_cells_and_builds_a_plotting_view(self):
+        preferred = np.arange(12, dtype=float).reshape(2, 3, 2)
+        opposite = np.arange(12, 24, dtype=float).reshape(2, 3, 2)
+        maximum_state = np.asarray([[24.0, 25.0]])
+        projection = compute_preferred_cell_principal_components(
+            preferred,
+            opposite,
+            maximum_state,
+        )
+        activity = SessionActivity(
+            session="example",
+            preferred_cue=7,
+            opposite_cue=3,
+            cell_ids=np.asarray([10, 20]),
+            cell_pev=np.asarray([8.0, 7.0]),
+            delay_bin_starts=np.asarray([500, 550, 600]),
+            preferred_activity=preferred,
+            opposite_activity=opposite,
+            on_state_mask=np.asarray(
+                [[True, False, True], [False, True, False]]
+            ),
+            off_state_mask=np.asarray(
+                [[False, True, False], [True, False, True]]
+            ),
+            preferred_trial_ids=np.asarray([1, 2]),
+            opposite_trial_ids=np.asarray([3, 4]),
+            max_off_state_activity=maximum_state,
+            principal_component_activity=projection,
+        )
+
+        pca_activity = principal_component_session_activity(activity)
+        fig = plot_session_activity(pca_activity)
+
+        self.assertFalse(Config().show_principal_components)
+        self.assertEqual(pca_activity.activity_space, "principal_components")
+        self.assertEqual(pca_activity.activity_source_cell_count, 2)
+        np.testing.assert_array_equal(pca_activity.cell_ids, [1, 2])
+        np.testing.assert_allclose(
+            pca_activity.cell_pev,
+            projection.explained_variance_ratio * 100,
+        )
+        self.assertIn("PC1 score", fig.axes[0].get_xlabel())
+        self.assertIn("explained variance", fig.axes[0].get_xlabel())
+        self.assertIn("PCA of 2 preferred cells", fig.axes[0].get_title())
+        np.testing.assert_array_equal(activity.cell_ids, [10, 20])
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_returns_empty_projection_when_no_preferred_cells_are_available(self):
+        empty = np.empty((2, 3, 0), dtype=float)
+        maximum_state = np.empty((1, 0), dtype=float)
+
+        projection = compute_preferred_cell_principal_components(
+            empty,
+            empty.copy(),
+            maximum_state,
+        )
+
+        self.assertEqual(projection.preferred_activity.shape, (2, 3, 0))
+        self.assertEqual(projection.opposite_activity.shape, (2, 3, 0))
+        self.assertEqual(projection.max_off_state_activity.shape, (1, 0))
+        self.assertEqual(projection.explained_variance_ratio.size, 0)
 
 
 class FixedWidthBinEdgesTest(unittest.TestCase):

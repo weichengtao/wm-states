@@ -1,17 +1,19 @@
-"""Compare top preferred-cell activity across states and cue groups.
+"""Compare preferred-cell activity across states and cue groups.
 
 For each session, this script selects up to three preferred-cue cells with the
 largest cached delay-period PEV, balances correct preferred- and opposite-cue
 trials, and z-normalizes each cell across the balanced trials independently at
 every delay-bin start. Separate figures compare preferred-cue on/off states and
 preferred/opposite-cue all-delay-bin populations. The state figures highlight
-the delay bins in each session's longest off state.
+the delay bins in each session's longest off state. Optionally, it also plots
+the three highest-variance principal components of all preferred cells using a
+single PCA basis fitted to the pooled balanced cue groups.
 """
 
 from __future__ import annotations
 
 import pickle
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import combinations
 from pathlib import Path
 from typing import Any, Literal
@@ -24,6 +26,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tyro
 from scipy.io import loadmat
+from sklearn.decomposition import PCA
 
 try:
     from scripts.figure_exports import configure_figure_style, save_figure_all_formats
@@ -54,11 +57,27 @@ class Config:
     hide_opposite_cue_points: bool = False
     hide_all_preferred_cue_points: bool = False
     compare_with_max_off_state: bool = False
+    # Add parallel plots of up to three PCs fitted across all preferred cells.
+    show_principal_components: bool = False
     # This general color-group cap never applies to the red maximum-state points.
     max_points_per_color_group: int | None = None
     # The red points have their own independent, per-session cap; None keeps all.
     max_points_per_max_off_state: int | None = None
+    # Use this fixed normalized-activity bin width for marginal histograms.
     marginal_histogram_bin_width: float = 0.25
+
+
+@dataclass
+class PrincipalComponentActivity:
+    """A shared PCA projection of one session's preferred-cell activity."""
+
+    preferred_activity: np.ndarray
+    opposite_activity: np.ndarray
+    max_off_state_activity: np.ndarray
+    components: np.ndarray
+    center: np.ndarray
+    explained_variance_ratio: np.ndarray
+    source_cell_count: int
 
 
 @dataclass
@@ -93,6 +112,9 @@ class SessionActivity:
     max_off_state_delay_bin_starts: np.ndarray = field(
         default_factory=lambda: np.asarray([], dtype=float)
     )
+    principal_component_activity: PrincipalComponentActivity | None = None
+    activity_space: Literal["cells", "principal_components"] = "cells"
+    activity_source_cell_count: int = 0
 
 
 def _load_pickle(path: Path) -> Any:
@@ -352,6 +374,139 @@ def apply_activity_normalization(
     return normalized
 
 
+def compute_preferred_cell_principal_components(
+    preferred_activity: np.ndarray,
+    opposite_activity: np.ndarray,
+    max_off_state_activity: np.ndarray,
+    count: int = 3,
+) -> PrincipalComponentActivity:
+    """Fit pooled balanced-cue PCA and project each preferred-cell point set."""
+    preferred_activity = np.asarray(preferred_activity, dtype=float)
+    opposite_activity = np.asarray(opposite_activity, dtype=float)
+    max_off_state_activity = np.asarray(max_off_state_activity, dtype=float)
+    if preferred_activity.shape != opposite_activity.shape:
+        raise ValueError(
+            "Balanced preferred and opposite activity must match in shape."
+        )
+    if preferred_activity.ndim != 3:
+        raise ValueError("Activity must have shape (trial, bin, cell).")
+    if (
+        max_off_state_activity.ndim != 2
+        or max_off_state_activity.shape[1] != preferred_activity.shape[2]
+    ):
+        raise ValueError(
+            "Maximum off-state activity must have shape (bin, cell)."
+        )
+    if (
+        isinstance(count, (bool, np.bool_))
+        or not isinstance(count, (int, np.integer))
+        or count <= 0
+    ):
+        raise ValueError("Principal-component count must be positive.")
+    if not (
+        np.all(np.isfinite(preferred_activity))
+        and np.all(np.isfinite(opposite_activity))
+        and np.all(np.isfinite(max_off_state_activity))
+    ):
+        raise ValueError("PCA activity inputs must contain only finite values.")
+
+    source_cell_count = int(preferred_activity.shape[2])
+    observation_count_per_cue = int(np.prod(preferred_activity.shape[:2]))
+    if source_cell_count and observation_count_per_cue == 0:
+        raise ValueError("PCA requires at least one activity observation per cue.")
+    component_count = min(
+        count,
+        source_cell_count,
+        observation_count_per_cue * 2,
+    )
+    if component_count == 0:
+        empty_preferred = np.empty((*preferred_activity.shape[:2], 0), dtype=float)
+        empty_opposite = np.empty((*opposite_activity.shape[:2], 0), dtype=float)
+        empty_max_off_state = np.empty((max_off_state_activity.shape[0], 0))
+        return PrincipalComponentActivity(
+            preferred_activity=empty_preferred,
+            opposite_activity=empty_opposite,
+            max_off_state_activity=empty_max_off_state,
+            components=np.empty((0, source_cell_count), dtype=float),
+            center=np.empty(source_cell_count, dtype=float),
+            explained_variance_ratio=np.empty(0, dtype=float),
+            source_cell_count=source_cell_count,
+        )
+
+    preferred_points = preferred_activity.reshape(-1, source_cell_count)
+    opposite_points = opposite_activity.reshape(-1, source_cell_count)
+    pooled_points = np.concatenate([preferred_points, opposite_points], axis=0)
+    center = np.mean(pooled_points, axis=0)
+    if not np.any(pooled_points != center):
+        components = np.eye(source_cell_count, dtype=float)[:component_count]
+        pooled_scores = np.zeros(
+            (pooled_points.shape[0], component_count),
+            dtype=float,
+        )
+        max_off_state_scores = (max_off_state_activity - center) @ components.T
+        explained_variance_ratio = np.zeros(component_count, dtype=float)
+        preferred_point_count = preferred_points.shape[0]
+        return PrincipalComponentActivity(
+            preferred_activity=pooled_scores[:preferred_point_count].reshape(
+                *preferred_activity.shape[:2],
+                component_count,
+            ),
+            opposite_activity=pooled_scores[preferred_point_count:].reshape(
+                *opposite_activity.shape[:2],
+                component_count,
+            ),
+            max_off_state_activity=max_off_state_scores,
+            components=components,
+            center=center,
+            explained_variance_ratio=explained_variance_ratio,
+            source_cell_count=source_cell_count,
+        )
+    pca = PCA(n_components=component_count, svd_solver="full")
+    pooled_scores = pca.fit_transform(pooled_points)
+    preferred_point_count = preferred_points.shape[0]
+    explained_variance_ratio = np.nan_to_num(
+        pca.explained_variance_ratio_,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+    return PrincipalComponentActivity(
+        preferred_activity=pooled_scores[:preferred_point_count].reshape(
+            *preferred_activity.shape[:2],
+            component_count,
+        ),
+        opposite_activity=pooled_scores[preferred_point_count:].reshape(
+            *opposite_activity.shape[:2],
+            component_count,
+        ),
+        max_off_state_activity=pca.transform(max_off_state_activity),
+        components=pca.components_.copy(),
+        center=pca.mean_.copy(),
+        explained_variance_ratio=explained_variance_ratio,
+        source_cell_count=source_cell_count,
+    )
+
+
+def principal_component_session_activity(
+    session_activity: SessionActivity,
+) -> SessionActivity:
+    """Return a plotting view backed by a session's PCA scores."""
+    projection = session_activity.principal_component_activity
+    if projection is None:
+        raise ValueError("Session activity does not contain a PCA projection.")
+    component_count = projection.preferred_activity.shape[2]
+    return replace(
+        session_activity,
+        cell_ids=np.arange(1, component_count + 1, dtype=np.int64),
+        cell_pev=projection.explained_variance_ratio * 100.0,
+        preferred_activity=projection.preferred_activity,
+        opposite_activity=projection.opposite_activity,
+        max_off_state_activity=projection.max_off_state_activity,
+        activity_space="principal_components",
+        activity_source_cell_count=projection.source_cell_count,
+    )
+
+
 def prepare_session_activity(
     state_result: dict[str, Any],
     selection_results: list[dict[str, Any]],
@@ -490,6 +645,14 @@ def prepare_session_activity(
         max_off_state_delay_mask
     ):
         raise RuntimeError("Maximum off-state activity extraction lost delay bins.")
+    principal_component_activity = None
+    if config.show_principal_components:
+        preferred_cell_count = int(group_cell_ids["preferred"].size)
+        principal_component_activity = compute_preferred_cell_principal_components(
+            all_preferred_activity[:, :, :preferred_cell_count],
+            all_opposite_activity[:, :, :preferred_cell_count],
+            max_off_state_all_activity[:, :preferred_cell_count],
+        )
     max_off_state_activity = max_off_state_all_activity[:, :cell_ids.size]
     preferred_activity = all_preferred_activity[:, :, :cell_ids.size]
     opposite_activity = all_opposite_activity[:, :, :cell_ids.size]
@@ -555,6 +718,7 @@ def prepare_session_activity(
         max_off_state_delay_bin_starts=delay_bin_starts[
             max_off_state_delay_mask
         ],
+        principal_component_activity=principal_component_activity,
     )
 
 
@@ -816,13 +980,68 @@ def fixed_width_bin_edges(values: np.ndarray, bin_width: float = 0.25) -> np.nda
     return lower + np.arange(bin_count + 1, dtype=float) * bin_width
 
 
+def _activity_dimension_axis_label(
+    session_activity: SessionActivity,
+    dimension_position: int,
+) -> str:
+    """Return the full axis label for a selected cell or principal component."""
+    dimension_id = int(session_activity.cell_ids[dimension_position])
+    dimension_percent = session_activity.cell_pev[dimension_position]
+    if session_activity.activity_space == "principal_components":
+        return (
+            f"PC{dimension_id} score\n"
+            f"(explained variance={dimension_percent:.2f}%)"
+        )
+    return (
+        f"Cell {dimension_id} normalized activity\n"
+        f"(delay PEV={dimension_percent:.2f}%)"
+    )
+
+
+def _activity_dimension_title(
+    session_activity: SessionActivity,
+    dimension_position: int,
+) -> str:
+    """Return a compact panel title for one plotted activity dimension."""
+    dimension_id = int(session_activity.cell_ids[dimension_position])
+    if session_activity.activity_space == "principal_components":
+        return f"PC{dimension_id}"
+    return f"Cell {dimension_id}"
+
+
+def _session_activity_figure_title(
+    session_activity: SessionActivity,
+    comparison_description: str,
+    marginal: bool = False,
+) -> str:
+    """Return a representation-aware session figure title."""
+    base = (
+        f"Session {session_activity.session}: preferred cue "
+        f"{cue_to_deg(session_activity.preferred_cue)}°"
+    )
+    if session_activity.activity_space == "principal_components":
+        marginal_label = " marginal" if marginal else ""
+        return (
+            f"{base} principal-component{marginal_label} activity\n"
+            f"(PCA of {session_activity.activity_source_cell_count} preferred cells; "
+            f"{comparison_description})"
+        )
+    if marginal:
+        return f"{base} marginal activity ({comparison_description})"
+    return f"{base} ({comparison_description})"
+
+
 def _placeholder_figure(session_activity: SessionActivity, plot_name: str):
     """Return a session figure explaining that no preferred cells are available."""
     fig, ax = plt.subplots(figsize=(6.5, 4), layout="constrained")
+    if session_activity.activity_space == "principal_components":
+        message = "No finite-PEV preferred cells available for PCA"
+    else:
+        message = "No finite-PEV cells preferred for this session cue"
     ax.text(
         0.5,
         0.5,
-        "No finite-PEV cells preferred for this session cue",
+        message,
         ha="center",
         va="center",
         transform=ax.transAxes,
@@ -864,11 +1083,8 @@ def _plot_single_cell_strip(ax, session_activity: SessionActivity, categories):
             _category_legend_label(label, points.shape[0], total_count)
         )
     ax.set_yticks(y_positions, y_labels)
-    ax.set_xlabel(
-        f"Cell {session_activity.cell_ids[0]} normalized activity\n"
-        f"(delay PEV={session_activity.cell_pev[0]:.2f}%)"
-    )
-    ax.set_title(f"Cell {session_activity.cell_ids[0]}")
+    ax.set_xlabel(_activity_dimension_axis_label(session_activity, 0))
+    ax.set_title(_activity_dimension_title(session_activity, 0))
     ax.spines[["top", "right"]].set_visible(False)
 
 
@@ -916,8 +1132,7 @@ def plot_session_activity(
             ("set_xlabel", "set_ylabel", "set_zlabel")
         ):
             getattr(ax, axis_name)(
-                f"Cell {session_activity.cell_ids[axis_idx]} normalized activity\n"
-                f"(delay PEV={session_activity.cell_pev[axis_idx]:.2f}%)"
+                _activity_dimension_axis_label(session_activity, axis_idx)
             )
         ax.legend(loc="best", frameon=False)
         ax.view_init(elev=24, azim=42)
@@ -934,23 +1149,18 @@ def plot_session_activity(
                 zorder=_category_zorder(color),
                 label=_category_legend_label(label, points.shape[0], total_count),
             )
-        ax.set_xlabel(
-            f"Cell {session_activity.cell_ids[0]} normalized activity\n"
-            f"(delay PEV={session_activity.cell_pev[0]:.2f}%)"
-        )
-        ax.set_ylabel(
-            f"Cell {session_activity.cell_ids[1]} normalized activity\n"
-            f"(delay PEV={session_activity.cell_pev[1]:.2f}%)"
-        )
+        ax.set_xlabel(_activity_dimension_axis_label(session_activity, 0))
+        ax.set_ylabel(_activity_dimension_axis_label(session_activity, 1))
         ax.legend(loc="best", frameon=False)
         ax.spines[["top", "right"]].set_visible(False)
     else:
         fig, ax = plt.subplots(figsize=(7, 4), layout="constrained")
         _plot_single_cell_strip(ax, session_activity, categories)
     ax.set_title(
-        f"Session {session_activity.session}: preferred cue "
-        f"{cue_to_deg(session_activity.preferred_cue)}° "
-        f"({'on/off states' if comparison == 'state' else 'all delay bins by cue'})"
+        _session_activity_figure_title(
+            session_activity,
+            "on/off states" if comparison == "state" else "all delay bins by cue",
+        )
     )
     return fig
 
@@ -987,10 +1197,15 @@ def plot_session_activity_pairwise(
     if not cell_pairs:
         fig, ax = plt.subplots(figsize=(7, 4), layout="constrained")
         _plot_single_cell_strip(ax, session_activity, categories)
+        dimension_description = (
+            "principal component"
+            if session_activity.activity_space == "principal_components"
+            else "preferred cell"
+        )
         fig.suptitle(
             f"Session {session_activity.session}: preferred cue "
             f"{cue_to_deg(session_activity.preferred_cue)}° "
-            "(one preferred cell; no pair available)"
+            f"(one {dimension_description}; no pair available)"
         )
         return fig
 
@@ -1014,26 +1229,27 @@ def plot_session_activity_pairwise(
                 zorder=_category_zorder(color),
                 label=_category_legend_label(label, points.shape[0], total_count),
             )
-        ax.set_xlabel(
-            f"Cell {session_activity.cell_ids[x_idx]} normalized activity\n"
-            f"(delay PEV={session_activity.cell_pev[x_idx]:.2f}%)"
-        )
-        ax.set_ylabel(
-            f"Cell {session_activity.cell_ids[y_idx]} normalized activity\n"
-            f"(delay PEV={session_activity.cell_pev[y_idx]:.2f}%)"
-        )
-        ax.set_title(
-            f"Cells {session_activity.cell_ids[x_idx]} and "
-            f"{session_activity.cell_ids[y_idx]}"
-        )
+        ax.set_xlabel(_activity_dimension_axis_label(session_activity, x_idx))
+        ax.set_ylabel(_activity_dimension_axis_label(session_activity, y_idx))
+        if session_activity.activity_space == "principal_components":
+            ax.set_title(
+                f"PC{session_activity.cell_ids[x_idx]} and "
+                f"PC{session_activity.cell_ids[y_idx]}"
+            )
+        else:
+            ax.set_title(
+                f"Cells {session_activity.cell_ids[x_idx]} and "
+                f"{session_activity.cell_ids[y_idx]}"
+            )
         ax.spines[["top", "right"]].set_visible(False)
         if pair_idx == 0:
             ax.legend(loc="best", frameon=False, fontsize="small")
 
     fig.suptitle(
-        f"Session {session_activity.session}: preferred cue "
-        f"{cue_to_deg(session_activity.preferred_cue)}° "
-        f"({'on/off states' if comparison == 'state' else 'all delay bins by cue'})"
+        _session_activity_figure_title(
+            session_activity,
+            "on/off states" if comparison == "state" else "all delay bins by cue",
+        )
     )
     return fig
 
@@ -1198,17 +1414,14 @@ def plot_session_activity_marginal_histograms(
     ecdf_axes = axes[1]
     legend_shown = False
     for cell_position in range(num_cells):
-        xlabel = (
-            f"Cell {session_activity.cell_ids[cell_position]} normalized activity\n"
-            f"(delay PEV={session_activity.cell_pev[cell_position]:.2f}%)"
-        )
+        xlabel = _activity_dimension_axis_label(session_activity, cell_position)
         _plot_marginal_histogram(
             histogram_axes[cell_position],
             categories,
             value_position=cell_position,
             bin_width=bin_width,
             xlabel="",
-            title=f"Cell {session_activity.cell_ids[cell_position]}",
+            title=_activity_dimension_title(session_activity, cell_position),
             show_legend=not legend_shown,
         )
         legend_shown = True
@@ -1269,9 +1482,11 @@ def plot_session_activity_marginal_histograms(
         )
 
     fig.suptitle(
-        f"Session {session_activity.session}: preferred cue "
-        f"{cue_to_deg(session_activity.preferred_cue)}° marginal activity "
-        f"({'on/off states' if comparison == 'state' else 'all delay bins by cue'})"
+        _session_activity_figure_title(
+            session_activity,
+            "on/off states" if comparison == "state" else "all delay bins by cue",
+            marginal=True,
+        )
     )
     return fig
 
@@ -1321,75 +1536,100 @@ def main(config: Config):
             config,
             session_seed=config.seed + session_idx,
         )
-        for comparison, filename_group in (("state", "states"), ("cue", "cues")):
-            fig = plot_session_activity(
-                prepared,
-                comparison=comparison,
-                compare_with_max_off_state=config.compare_with_max_off_state,
-                hide_opposite_cue_points=config.hide_opposite_cue_points,
-                hide_all_preferred_cue_points=config.hide_all_preferred_cue_points,
-                max_points_per_color_group=config.max_points_per_color_group,
-                max_points_per_max_off_state=(
-                    config.max_points_per_max_off_state
-                ),
-                point_seed=config.seed + session_idx,
+        plotting_views = [(prepared, "")]
+        if config.show_principal_components:
+            plotting_views.append(
+                (
+                    principal_component_session_activity(prepared),
+                    "principal_components_",
+                )
             )
-            save_figure_all_formats(
-                fig,
-                figure_dir
-                / f"activity_across_{filename_group}_{prepared.session}.png",
-                dpi=config.figure_dpi,
-            )
-            plt.close(fig)
+        for plotting_activity, filename_prefix in plotting_views:
+            for comparison, filename_group in (
+                ("state", "states"),
+                ("cue", "cues"),
+            ):
+                fig = plot_session_activity(
+                    plotting_activity,
+                    comparison=comparison,
+                    compare_with_max_off_state=config.compare_with_max_off_state,
+                    hide_opposite_cue_points=config.hide_opposite_cue_points,
+                    hide_all_preferred_cue_points=(
+                        config.hide_all_preferred_cue_points
+                    ),
+                    max_points_per_color_group=config.max_points_per_color_group,
+                    max_points_per_max_off_state=(
+                        config.max_points_per_max_off_state
+                    ),
+                    point_seed=config.seed + session_idx,
+                )
+                save_figure_all_formats(
+                    fig,
+                    figure_dir
+                    / (
+                        f"{filename_prefix}activity_across_{filename_group}_"
+                        f"{prepared.session}.png"
+                    ),
+                    dpi=config.figure_dpi,
+                )
+                plt.close(fig)
 
-            pairwise_fig = plot_session_activity_pairwise(
-                prepared,
-                comparison=comparison,
-                compare_with_max_off_state=config.compare_with_max_off_state,
-                hide_opposite_cue_points=config.hide_opposite_cue_points,
-                hide_all_preferred_cue_points=config.hide_all_preferred_cue_points,
-                max_points_per_color_group=config.max_points_per_color_group,
-                max_points_per_max_off_state=(
-                    config.max_points_per_max_off_state
-                ),
-                point_seed=config.seed + session_idx,
-            )
-            save_figure_all_formats(
-                pairwise_fig,
-                figure_dir
-                / (
-                    f"activity_across_{filename_group}_pairwise_"
-                    f"{prepared.session}.png"
-                ),
-                dpi=config.figure_dpi,
-            )
-            plt.close(pairwise_fig)
+                pairwise_fig = plot_session_activity_pairwise(
+                    plotting_activity,
+                    comparison=comparison,
+                    compare_with_max_off_state=config.compare_with_max_off_state,
+                    hide_opposite_cue_points=config.hide_opposite_cue_points,
+                    hide_all_preferred_cue_points=(
+                        config.hide_all_preferred_cue_points
+                    ),
+                    max_points_per_color_group=config.max_points_per_color_group,
+                    max_points_per_max_off_state=(
+                        config.max_points_per_max_off_state
+                    ),
+                    point_seed=config.seed + session_idx,
+                )
+                save_figure_all_formats(
+                    pairwise_fig,
+                    figure_dir
+                    / (
+                        f"{filename_prefix}activity_across_{filename_group}_"
+                        f"pairwise_{prepared.session}.png"
+                    ),
+                    dpi=config.figure_dpi,
+                )
+                plt.close(pairwise_fig)
 
-            marginal_fig = plot_session_activity_marginal_histograms(
-                prepared,
-                comparison=comparison,
-                compare_with_max_off_state=config.compare_with_max_off_state,
-                hide_opposite_cue_points=config.hide_opposite_cue_points,
-                hide_all_preferred_cue_points=config.hide_all_preferred_cue_points,
-                max_points_per_max_off_state=(
-                    config.max_points_per_max_off_state
-                ),
-                point_seed=config.seed + session_idx,
-                bin_width=config.marginal_histogram_bin_width,
-            )
-            save_figure_all_formats(
-                marginal_fig,
-                figure_dir
-                / (
-                    f"activity_across_{filename_group}_marginals_"
-                    f"{prepared.session}.png"
-                ),
-                dpi=config.figure_dpi,
-            )
-            plt.close(marginal_fig)
+                marginal_fig = plot_session_activity_marginal_histograms(
+                    plotting_activity,
+                    comparison=comparison,
+                    compare_with_max_off_state=config.compare_with_max_off_state,
+                    hide_opposite_cue_points=config.hide_opposite_cue_points,
+                    hide_all_preferred_cue_points=(
+                        config.hide_all_preferred_cue_points
+                    ),
+                    max_points_per_max_off_state=(
+                        config.max_points_per_max_off_state
+                    ),
+                    point_seed=config.seed + session_idx,
+                    bin_width=config.marginal_histogram_bin_width,
+                )
+                save_figure_all_formats(
+                    marginal_fig,
+                    figure_dir
+                    / (
+                        f"{filename_prefix}activity_across_{filename_group}_"
+                        f"marginals_{prepared.session}.png"
+                    ),
+                    dpi=config.figure_dpi,
+                )
+                plt.close(marginal_fig)
+        principal_component_summary = (
+            "with principal components " if config.show_principal_components else ""
+        )
         print(
-            f"Saved state and cue activity, pairwise, and marginal comparisons "
-            f"for session "
+            "Saved state and cue activity, pairwise, and marginal comparisons "
+            f"{principal_component_summary}"
+            "for session "
             f"{prepared.session} "
             f"({prepared.preferred_trial_ids.size} trials per cue; "
             f"{prepared.max_off_state_activity.shape[0]} maximum off-state bins)."

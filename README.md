@@ -94,6 +94,7 @@ uv run python scripts/compare_activity_across_states.py \
 --activity-bin-width-ms 50 \
 --seed 42 \
 --max-points-per-color-group 50 \
+--show-principal-components \
 --compare-with-max-off-state
 
 # 6. Regress CC-applied off-state duration on baseline, delay, and encoding activity.
@@ -126,7 +127,12 @@ uv run python scripts/predict_off_state_duration_using_cell_count.py \
   uncorrected comparison summaries, and uses decoder repeat 0.
 - The activity comparison generates separate figures for preferred-cue on/off
   states and for preferred- versus opposite-cue activity across all delay bins.
-  It uses 50 ms activity bins.
+  It uses 50 ms activity bins. `--show-principal-components` adds parallel
+  figures for the three highest-variance principal components of all
+  finite-PEV preferred cells. Each session's PCA basis is fitted to the pooled,
+  balanced preferred- and opposite-cue delay activity after per-bin/cell
+  normalization; the same basis projects both cue groups and the maximum
+  off-state points.
 - `--max-points-per-color-group 50` deterministically samples at most 50 points
   from each ordinary blue, orange, green, or gray group. It never affects the
   red maximum-off-state points.
