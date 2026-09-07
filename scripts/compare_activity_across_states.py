@@ -65,6 +65,8 @@ class Config:
     max_points_per_max_off_state: int | None = None
     # Use this fixed normalized-activity bin width for marginal histograms.
     marginal_histogram_bin_width: float = 0.25
+    # Horizontally separate adjacent histogram outlines by this bin-width fraction.
+    marginal_histogram_bin_offset_fraction: float = 0.2
 
 
 @dataclass
@@ -980,6 +982,27 @@ def fixed_width_bin_edges(values: np.ndarray, bin_width: float = 0.25) -> np.nda
     return lower + np.arange(bin_count + 1, dtype=float) * bin_width
 
 
+def centered_histogram_bin_offsets(
+    category_count: int,
+    bin_width: float,
+    offset_fraction: float = 0.2,
+) -> np.ndarray:
+    """Return symmetric display offsets for overlaid histogram outlines."""
+    if (
+        not isinstance(category_count, (int, np.integer))
+        or isinstance(category_count, (bool, np.bool_))
+        or category_count < 0
+    ):
+        raise ValueError("category_count must be a non-negative integer.")
+    if not np.isfinite(bin_width) or bin_width <= 0:
+        raise ValueError("bin_width must be finite and positive.")
+    if not np.isfinite(offset_fraction) or not 0 <= offset_fraction <= 0.5:
+        raise ValueError("offset_fraction must be between 0 and 0.5.")
+    centered_positions = np.arange(category_count, dtype=float)
+    centered_positions -= (category_count - 1) / 2
+    return centered_positions * offset_fraction * bin_width
+
+
 def _activity_dimension_axis_label(
     session_activity: SessionActivity,
     dimension_position: int,
@@ -1259,6 +1282,7 @@ def _plot_marginal_histogram(
     categories,
     value_position: int,
     bin_width: float,
+    bin_offset_fraction: float,
     xlabel: str,
     title: str,
     show_legend: bool,
@@ -1282,7 +1306,12 @@ def _plot_marginal_histogram(
         np.concatenate(nonempty_values),
         bin_width=bin_width,
     )
-    for points, color, label, total_count in categories:
+    bin_offsets = centered_histogram_bin_offsets(
+        len(categories),
+        bin_width,
+        offset_fraction=bin_offset_fraction,
+    )
+    for category_idx, (points, color, label, total_count) in enumerate(categories):
         legend_label = _category_legend_label(
             label,
             points.shape[0],
@@ -1298,11 +1327,14 @@ def _plot_marginal_histogram(
                 zorder=_category_zorder(color),
             )
             continue
-        ax.hist(
+        density, _ = np.histogram(
             points[:, value_position],
             bins=bin_edges,
             density=True,
-            histtype="step",
+        )
+        ax.stairs(
+            density,
+            bin_edges + bin_offsets[category_idx],
             linewidth=1.5,
             color=color,
             label=legend_label,
@@ -1372,6 +1404,7 @@ def plot_session_activity_marginal_histograms(
     max_points_per_max_off_state: int | None = None,
     point_seed: int = 42,
     bin_width: float = 0.25,
+    bin_offset_fraction: float = 0.2,
 ):
     """Plot selected-cell marginals plus three cell-population means."""
     num_cells = session_activity.cell_ids.size
@@ -1420,6 +1453,7 @@ def plot_session_activity_marginal_histograms(
             categories,
             value_position=cell_position,
             bin_width=bin_width,
+            bin_offset_fraction=bin_offset_fraction,
             xlabel="",
             title=_activity_dimension_title(session_activity, cell_position),
             show_legend=not legend_shown,
@@ -1469,6 +1503,7 @@ def plot_session_activity_marginal_histograms(
             group_categories,
             value_position=0,
             bin_width=bin_width,
+            bin_offset_fraction=bin_offset_fraction,
             xlabel="",
             title=group_title,
             show_legend=not legend_shown,
@@ -1514,6 +1549,13 @@ def main(config: Config):
     ):
         raise ValueError(
             "marginal_histogram_bin_width must be finite and positive."
+        )
+    if (
+        not np.isfinite(config.marginal_histogram_bin_offset_fraction)
+        or not 0 <= config.marginal_histogram_bin_offset_fraction <= 0.5
+    ):
+        raise ValueError(
+            "marginal_histogram_bin_offset_fraction must be between 0 and 0.5."
         )
 
     selection_results = _load_pickle(config.cache_dir / "cell_trial_selection.pkl")
@@ -1612,6 +1654,9 @@ def main(config: Config):
                     ),
                     point_seed=config.seed + session_idx,
                     bin_width=config.marginal_histogram_bin_width,
+                    bin_offset_fraction=(
+                        config.marginal_histogram_bin_offset_fraction
+                    ),
                 )
                 save_figure_all_formats(
                     marginal_fig,

@@ -11,6 +11,7 @@ from scripts.compare_activity_across_states import (
     balance_trial_groups,
     compute_binned_firing_rates,
     compute_preferred_cell_principal_components,
+    centered_histogram_bin_offsets,
     fixed_width_bin_edges,
     maximum_delay_off_state_mask,
     normalize_balanced_activity,
@@ -326,6 +327,15 @@ class FixedWidthBinEdgesTest(unittest.TestCase):
 
         np.testing.assert_allclose(edges, [-0.5, -0.25, 0.0, 0.25, 0.5])
         np.testing.assert_allclose(np.diff(edges), 0.25)
+
+    def test_centers_histogram_offsets_around_shared_bins(self):
+        offsets = centered_histogram_bin_offsets(
+            category_count=3,
+            bin_width=0.25,
+            offset_fraction=0.2,
+        )
+
+        np.testing.assert_allclose(offsets, [-0.05, 0.0, 0.05])
 
 
 class PairwisePlotTest(unittest.TestCase):
@@ -686,6 +696,11 @@ class PairwisePlotTest(unittest.TestCase):
                 for ax in histogram_axes
             )
         )
+        for ax in histogram_axes:
+            first_bin_edges = [
+                patch.get_path().vertices[0, 0] for patch in ax.patches
+            ]
+            np.testing.assert_allclose(np.diff(first_bin_edges), [0.05, 0.05])
         for ax in histogram_axes:
             self.assertEqual(len(ax.lines), 1)
             zero_line = ax.lines[0]
