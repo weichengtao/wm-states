@@ -355,6 +355,10 @@ def _predictions_and_r2(
         "conditional_rmse_ms": float(
             np.sqrt(np.mean((observed - conditional_prediction) ** 2))
         ),
+        "marginal_mae_ms": float(np.mean(np.abs(observed - fixed_prediction))),
+        "conditional_mae_ms": float(
+            np.mean(np.abs(observed - conditional_prediction))
+        ),
     }
     return row
 
@@ -444,6 +448,8 @@ def _comparison_row(
         "residual_variance": float(variance_metrics["residual_variance"]),
         "marginal_rmse_ms": float(variance_metrics["marginal_rmse_ms"]),
         "conditional_rmse_ms": float(variance_metrics["conditional_rmse_ms"]),
+        "marginal_mae_ms": float(variance_metrics["marginal_mae_ms"]),
+        "conditional_mae_ms": float(variance_metrics["conditional_mae_ms"]),
         "intercept": intercept_row["coefficient"],
         "intercept_p_value": intercept_row["p_value"],
         "n_significant_predictors": len(significant_predictors),
@@ -638,6 +644,8 @@ def _append_model_log(
         "residual_variance",
         "marginal_rmse_ms",
         "conditional_rmse_ms",
+        "marginal_mae_ms",
+        "conditional_mae_ms",
         "significant_predictors",
     ):
         handle.write(f"  {key}: {comparison_row[key]}\n")

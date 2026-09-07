@@ -3,7 +3,11 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from scripts.compare_mixed_effect_models import ModelSpec, _fit_model
+from scripts.compare_mixed_effect_models import (
+    ModelSpec,
+    _fit_model,
+    _predictions_and_r2,
+)
 from scripts.mixedlm_outcomes import TOTAL_OUTCOME
 from scripts.mixedlm_trial_holdout_cv import _test_predictions
 
@@ -50,6 +54,19 @@ class TestPredictionsTest(unittest.TestCase):
         )
         np.testing.assert_allclose(fixed, expected_fixed)
         np.testing.assert_allclose(conditional, expected_fixed + expected_offsets)
+
+        train_metrics = _predictions_and_r2(result, train)
+        observed = train[TOTAL_OUTCOME.column].to_numpy(dtype=float)
+        np.testing.assert_allclose(
+            train_metrics["marginal_mae_ms"],
+            np.mean(np.abs(observed - train_metrics["fixed_prediction"])),
+        )
+        np.testing.assert_allclose(
+            train_metrics["conditional_mae_ms"],
+            np.mean(
+                np.abs(observed - train_metrics["conditional_prediction"])
+            ),
+        )
 
 
 if __name__ == "__main__":

@@ -160,7 +160,25 @@ uv run python scripts/compare_mixed_effect_models.py \
 --cv-prediction-sample-per-model 1000 \
 --significance-alpha 0.05
 
-# 3. Scan active-cell thresholds from the 10th to 90th percentiles.
+# 3. Compare the full cell-count model with M0 and three drop-one models.
+uv run python scripts/nested_model_comparison_cell_counts.py \
+--cache-dir cache/run_034_full_session \
+--cv-shuffles 50 \
+--cv-holdout-fraction 0.2 \
+--cv-seed 42 \
+--cv-prediction-sample-per-model 1000 \
+--significance-alpha 0.05
+
+# 4. Add preferred-cell mean normalized activity period by period.
+uv run python scripts/nested_model_comparison_mean_norm_activity.py \
+--cache-dir cache/run_034_full_session \
+--cv-shuffles 50 \
+--cv-holdout-fraction 0.2 \
+--cv-seed 42 \
+--cv-prediction-sample-per-model 1000 \
+--significance-alpha 0.05
+
+# 5. Scan active-cell thresholds from the 10th to 90th percentiles.
 uv run python scripts/find_active_cell_criticality.py \
 --data-dir data/nature \
 --cache-dir cache/run_034_full_session \
@@ -172,7 +190,7 @@ uv run python scripts/find_active_cell_criticality.py \
 --history-alpha 0.2 \
 --significance-alpha 0.05
 
-# 4. Test interactions across periods for each cell group.
+# 6. Test interactions across periods for each cell group.
 uv run python scripts/test_interactions_across_periods.py \
 --cache-dir cache/run_034_full_session \
 --cv-shuffles 50 \
@@ -190,7 +208,8 @@ uv run python scripts/test_interactions_across_periods.py \
   estimated from training trials only.
 - `--active-threshold 0` defines an active cell as having activity above its
   training-trial mean. `--history-alpha 0.2` controls the exponential history
-  features and must match across preparation and model fitting.
+  features and must match across preparation and analyses that use those
+  features.
 - `--cv-prediction-sample-per-model 1000` caps stored plotting samples without
   changing the CV metrics. `--significance-alpha 0.05` sets the comparison
   threshold.
@@ -211,10 +230,14 @@ cache/run_034_full_session/mixedlm/
 └── outcomes/
     ├── total_off_state_duration/
     │   ├── model_family/
+    │   ├── nested_cell_count_comparison/
+    │   ├── nested_mean_norm_activity_comparison/
     │   ├── active_cell_criticality/
     │   └── period_interactions/
     └── maximum_off_state_duration/
         ├── model_family/
+        ├── nested_cell_count_comparison/
+        ├── nested_mean_norm_activity_comparison/
         ├── active_cell_criticality/
         └── period_interactions/
 ```

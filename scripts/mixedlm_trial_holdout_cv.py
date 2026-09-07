@@ -14,6 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.stats import chi2
 
 try:
     from scripts.compare_mixed_effect_models import (
@@ -21,6 +22,7 @@ try:
         SESSION,
         ModelSpec,
         _fit_model,
+        _predictions_and_r2,
     )
     from scripts.prepare_data_for_mixedlm import (
         CV_CACHE_SCHEMA_VERSION,
@@ -31,7 +33,13 @@ try:
     )
     from scripts.mixedlm_outcomes import ALL_OUTCOMES
 except ModuleNotFoundError:
-    from compare_mixed_effect_models import OUTCOME, SESSION, ModelSpec, _fit_model
+    from compare_mixed_effect_models import (
+        OUTCOME,
+        SESSION,
+        ModelSpec,
+        _fit_model,
+        _predictions_and_r2,
+    )
     from prepare_data_for_mixedlm import (
         CV_CACHE_SCHEMA_VERSION,
         GROUP_NAMES,
@@ -302,7 +310,7 @@ def _aggregate_metrics(repeat_metrics: pd.DataFrame) -> pd.DataFrame:
     metric_columns = [
         column
         for column in successful.columns
-        if column.startswith(("fixed_", "conditional_"))
+        if column.startswith(("train_", "fixed_", "conditional_"))
         and pd.api.types.is_numeric_dtype(successful[column])
     ]
     static_columns = [
@@ -503,6 +511,9 @@ def run_trial_holdout_cv(
                         result, warning_messages = _fit_model(
                             train, spec, config.max_iterations
                         )
+                        train_metrics = _predictions_and_r2(
+                            result, train, spec.outcome
+                        )
                         fixed, conditional = _test_predictions(result, test)
                         observed = test[spec.outcome].to_numpy(dtype=float)
                         sessions = test[SESSION].astype(str).to_numpy()
@@ -518,10 +529,36 @@ def run_trial_holdout_cv(
                             "train_log_likelihood": float(result.llf),
                             "train_aic": float(result.aic),
                             "train_bic": float(result.bic),
-                            "train_random_intercept_variance": float(
-                                np.asarray(result.cov_re, dtype=float)[0, 0]
+                            "train_n_fixed_effects": int(result.fe_params.size),
+                            "train_df_modelwc": int(result.df_modelwc),
+                            "train_fixed_effect_variance": float(
+                                train_metrics["fixed_effect_variance"]
                             ),
-                            "train_residual_variance": float(result.scale),
+                            "train_random_intercept_variance": float(
+                                train_metrics["random_intercept_variance"]
+                            ),
+                            "train_residual_variance": float(
+                                train_metrics["residual_variance"]
+                            ),
+                            "train_marginal_r2": float(
+                                train_metrics["marginal_r2"]
+                            ),
+                            "train_conditional_r2": float(
+                                train_metrics["conditional_r2"]
+                            ),
+                            "train_icc": float(train_metrics["icc"]),
+                            "train_marginal_rmse_ms": float(
+                                train_metrics["marginal_rmse_ms"]
+                            ),
+                            "train_conditional_rmse_ms": float(
+                                train_metrics["conditional_rmse_ms"]
+                            ),
+                            "train_marginal_mae_ms": float(
+                                train_metrics["marginal_mae_ms"]
+                            ),
+                            "train_conditional_mae_ms": float(
+                                train_metrics["conditional_mae_ms"]
+                            ),
                             "fixed_effect_coefficients": json.dumps(
                                 {
                                     str(term): float(value)
@@ -580,8 +617,49 @@ def run_trial_holdout_cv(
                     metric_rows.append(row)
 
         metrics = pd.DataFrame(metric_rows)
+        likelihood_lookup = metrics.set_index(["repeat", "model"])[
+            "train_log_likelihood"
+        ]
+        degrees_lookup = metrics.set_index(["repeat", "model"])[
+            "train_df_modelwc"
+        ]
+        likelihood_ratios: list[float] = []
+        likelihood_ratio_dfs: list[float] = []
+        likelihood_ratio_p_values: list[float] = []
+        for row in metrics.itertuples(index=False):
+            parent = str(row.parent_model)
+            if not parent or not bool(row.fit_success):
+                likelihood_ratios.append(np.nan)
+                likelihood_ratio_dfs.append(np.nan)
+                likelihood_ratio_p_values.append(np.nan)
+                continue
+            parent_llf = likelihood_lookup.get((int(row.repeat), parent), np.nan)
+            parent_df = degrees_lookup.get((int(row.repeat), parent), np.nan)
+            degrees_of_freedom = float(row.train_df_modelwc) - float(parent_df)
+            if not np.isfinite(parent_llf) or degrees_of_freedom <= 0:
+                likelihood_ratios.append(np.nan)
+                likelihood_ratio_dfs.append(np.nan)
+                likelihood_ratio_p_values.append(np.nan)
+                continue
+            likelihood_ratio = 2.0 * (
+                float(row.train_log_likelihood) - float(parent_llf)
+            )
+            likelihood_ratios.append(likelihood_ratio)
+            likelihood_ratio_dfs.append(degrees_of_freedom)
+            likelihood_ratio_p_values.append(
+                float(chi2.sf(max(likelihood_ratio, 0.0), degrees_of_freedom))
+            )
+        metrics["train_likelihood_ratio_vs_parent"] = likelihood_ratios
+        metrics["train_likelihood_ratio_df"] = likelihood_ratio_dfs
+        metrics["train_likelihood_ratio_p_value"] = likelihood_ratio_p_values
         for prediction_type in ("fixed", "conditional"):
-            for metric in ("rmse_ms", "mae_ms", "r2", "session_centered_r2"):
+            for metric in (
+                "rmse_ms",
+                "mae_ms",
+                "r2",
+                "session_centered_r2",
+                "pearson_r",
+            ):
                 value_column = f"{prediction_type}_{metric}"
                 delta_column = f"{value_column}_delta_vs_parent"
                 lookup = metrics.set_index(["repeat", "model"])[value_column]
