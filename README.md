@@ -67,16 +67,7 @@ uv run python scripts/decoding_confidence.py \
 --seed 42 \
 --max-sessions-to-run 25
 
-# 3. Inspect repeat-level accuracy and confidence distributions (optional).
-uv run python scripts/inspect_decoding_results.py \
---cache-dir cache/run_034_full_session \
---session 221024 \
---trial 0 1 \
---time-bin-start -200 1400 \
---with-null \
---compare-with-repeat-idx 0
-
-# 4. Identify and summarize on/off states.
+# 3. Identify and summarize on/off states.
 uv run python scripts/on_off_states.py \
 --cache-dir cache/run_034_full_session \
 --cc-method-on one_tailed \
@@ -85,6 +76,16 @@ uv run python scripts/on_off_states.py \
 --compare-with-cc-skipped-off \
 --use-decoding-estimates-from-subset-of-repeats \
 --list-of-repeats 0
+
+# 4. Inspect repeat-level accuracy, confidence, and state assignments (optional).
+uv run python scripts/inspect_decoding_results.py \
+--cache-dir cache/run_034_full_session \
+--session 221024 \
+--trial 0 1 \
+--time-bin-start -200 1400 \
+--with-null \
+--with-state \
+--compare-with-repeat-idx 0
 
 # 5. Compare top preferred-cell activity across on/off and opposite-cue states.
 uv run python scripts/compare_activity_across_states.py \
@@ -129,7 +130,7 @@ uv run python scripts/predict_off_state_duration_using_cell_count.py \
 
 Primary caches are written directly under `cache/run_034_full_session/`,
 including `cell_trial_selection.pkl`, `decoding_confidence.pkl`, and
-`on_off_states.pkl`. Step 4 must be rerun if an older `on_off_states.pkl` lacks
+`on_off_states.pkl`. Step 3 must be rerun if an older `on_off_states.pkl` lacks
 trial-level maximum off-state duration. Fixed-effects results from steps 6 and
 7 are grouped under `fixedlm/`.
 
