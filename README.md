@@ -75,7 +75,8 @@ uv run python scripts/on_off_states.py \
 --compare-with-cc-skipped-on \
 --compare-with-cc-skipped-off \
 --use-decoding-estimates-from-subset-of-repeats \
---list-of-repeats 0
+--list-of-repeats 0 \
+--cluster-size-threshold-off 1
 
 # 4. Inspect repeat-level accuracy, confidence, and state assignments (optional).
 uv run python scripts/inspect_decoding_results.py \
@@ -95,7 +96,8 @@ uv run python scripts/compare_activity_across_states.py \
 --seed 42 \
 --max-points-per-color-group 50 \
 --show-principal-components \
---compare-with-max-off-state
+--compare-with-max-off-state \
+--pev-weighted-average
 
 # 6. Regress CC-applied off-state duration on baseline, delay, and encoding activity.
 uv run python scripts/predict_off_state_duration_using_baseline_activity.py \
