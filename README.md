@@ -142,12 +142,19 @@ uv run python scripts/predict_off_state_duration_using_cell_count.py \
   `--max-points-per-max-off-state N` to subsample each state independently.
 - `--compare-with-delay` and `--compare-with-encoding` add delay- and
   encoding-activity regressions to the baseline regression.
+- Add `--pev-weighted-average` to steps 5 and 6 to weight preferred and
+  selective non-preferred cells by their cached `mean_pev_test` when computing
+  population mean activity. Stationary non-selective cells remain equally
+  weighted because their PEV estimates are noisy. The option does not affect
+  active-cell counts, individual-cell plots, or PCA.
 
 Primary caches are written directly under `cache/run_034_full_session/`,
 including `cell_trial_selection.pkl`, `decoding_confidence.pkl`, and
 `on_off_states.pkl`. Step 3 must be rerun if an older `on_off_states.pkl` lacks
 trial-level maximum off-state duration. Fixed-effects results from steps 6 and
-7 are grouped under `fixedlm/`.
+7 are grouped under `fixedlm/`. PEV-weighted results from steps 5 and 6 are
+written to a `pev_weighted/` subfolder inside the corresponding analysis
+directory, leaving equal-weight results unchanged.
 
 ## Mixed-effects pipeline
 
@@ -233,6 +240,18 @@ uv run python scripts/test_interactions_across_periods.py \
   thresholds and refits threshold-dependent models.
 - Both outcomes are analyzed unless `--outcome total` or `--outcome maximum`
   is supplied.
+- Activity means are equally weighted by default. For the PEV-weighted variant,
+  append `--pev-weighted-average` to preparation and to steps 2, 4, 5, and 6.
+  The flag must be used consistently so each analysis reads the matching
+  prepared table and CV cache. Preferred and selective non-preferred cells are
+  weighted by `mean_pev_test`; stationary non-selective cells remain equally
+  weighted. Active-cell fractions, cell counts, and their model terms are
+  unchanged, so the cell-count-only comparison in step 3 needs no flag.
+
+Equal-weight prepared data stays directly under `mixedlm/prepared/`.
+PEV-weighted preparation writes to `mixedlm/prepared/pev_weighted/`, and each
+weighted analysis writes to a `pev_weighted/` subfolder inside its usual output
+directory. Manifests and logs record the selected weighting policy.
 
 Prepared data and results use the following layout:
 

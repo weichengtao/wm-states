@@ -17,6 +17,7 @@ import pandas as pd
 from scipy.stats import chi2
 
 try:
+    from scripts.activity_weighting import weighting_mode, weighting_policy
     from scripts.compare_mixed_effect_models import (
         OUTCOME,
         SESSION,
@@ -33,6 +34,7 @@ try:
     )
     from scripts.mixedlm_outcomes import ALL_OUTCOMES
 except ModuleNotFoundError:
+    from activity_weighting import weighting_mode, weighting_policy
     from compare_mixed_effect_models import (
         OUTCOME,
         SESSION,
@@ -68,6 +70,7 @@ class TrialHoldoutConfig:
     max_iterations: int = 1000
     figure_dpi: int = 200
     prediction_sample_per_model: int = 1000
+    pev_weighted_average: bool = False
 
 
 def load_cv_cache(path: Path) -> dict[str, Any]:
@@ -190,6 +193,7 @@ def build_fold_frame(
     split: dict[str, Any],
     active_threshold: float,
     history_alpha: float,
+    pev_weighted_average: bool = False,
 ) -> pd.DataFrame:
     """Build train-normalized features for one split and one active cutoff."""
     test_by_session = split["test_trial_ids_by_session"]
@@ -214,13 +218,25 @@ def build_fold_frame(
 
         features: dict[str, np.ndarray] = {}
         raw_by_period = session_data["raw_firing_rates_hz"]
+        activity_weights = session_data.get("activity_weights", {})
+        if pev_weighted_average and (
+            not isinstance(activity_weights, dict)
+            or any(group_name not in activity_weights for group_name in GROUP_NAMES)
+        ):
+            raise ValueError(
+                f"Weighted CV cache has no activity weights for session {session}."
+            )
         for period_name in PERIODS:
             for group_name in GROUP_NAMES:
                 normalized = _normalize_from_training(
                     raw_by_period[period_name][group_name], train_positions
                 )
                 mean_activity, active_fraction = _group_features(
-                    normalized, active_threshold
+                    normalized,
+                    active_threshold,
+                    activity_weights.get(group_name)
+                    if pev_weighted_average
+                    else None,
                 )
                 mean_column = (
                     f"{period_name}_mean_normalized_activity_{group_name}"
@@ -464,6 +480,13 @@ def run_trial_holdout_cv(
         raise ValueError("All CV model requests must use the same outcome.")
     outcome = outcomes.pop()
     cache = load_cv_cache(cache_path)
+    cache_pev_weighted = bool(cache.get("pev_weighted_average", False))
+    if cache_pev_weighted != config.pev_weighted_average:
+        raise ValueError(
+            "Cross-validation cache weighting mode does not match the requested "
+            f"mode ({weighting_mode(config.pev_weighted_average)}). Regenerate "
+            "it with prepare_data_for_mixedlm.py."
+        )
     splits, split_source = _select_splits(cache, config)
     table_dir = output_dir / "tables"
     figure_dir = output_dir / "figures"
@@ -499,6 +522,10 @@ def run_trial_holdout_cv(
         log.write(f"Holdout fraction: {config.holdout_fraction}\n")
         log.write(f"Seed: {config.seed}\n")
         log.write(f"Split source: {split_source}\n")
+        log.write(
+            f"Activity weighting: {weighting_mode(config.pev_weighted_average)}; "
+            f"policy={weighting_policy(config.pev_weighted_average)}\n"
+        )
         log.write("REML: False; random effects: session intercept\n")
         log.write(
             "Cell-wise means/SDs are estimated from training model rows in each "
@@ -517,7 +544,11 @@ def run_trial_holdout_cv(
             )
             for threshold, threshold_requests in requests_by_threshold.items():
                 fold = build_fold_frame(
-                    cache, split, threshold, config.history_alpha
+                    cache,
+                    split,
+                    threshold,
+                    config.history_alpha,
+                    config.pev_weighted_average,
                 )
                 train = fold[~fold["cv_is_test"]].copy()
                 test = fold[fold["cv_is_test"]].copy()
@@ -746,6 +777,13 @@ def run_trial_holdout_cv(
                 "split_source": split_source,
                 "prediction_sample_per_model": config.prediction_sample_per_model,
                 "outcome": outcome,
+                "pev_weighted_average": config.pev_weighted_average,
+                "activity_weighting_mode": weighting_mode(
+                    config.pev_weighted_average
+                ),
+                "activity_weighting_policy": weighting_policy(
+                    config.pev_weighted_average
+                ),
             },
             handle,
             indent=2,

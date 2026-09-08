@@ -32,6 +32,11 @@ import tyro
 from scipy.stats import chi2
 
 try:
+    from scripts.activity_weighting import (
+        weighting_mode,
+        weighting_policy,
+        weighting_subdir,
+    )
     from scripts.mixedlm_outcomes import (
         OutcomeSelection,
         OutcomeSpec,
@@ -40,6 +45,7 @@ try:
         select_outcomes,
     )
 except ModuleNotFoundError:
+    from activity_weighting import weighting_mode, weighting_policy, weighting_subdir
     from mixedlm_outcomes import (
         OutcomeSelection,
         OutcomeSpec,
@@ -99,6 +105,8 @@ class Config:
     significance_alpha: float = 0.05
     max_iterations: int = 1000
     figure_dpi: int = 200
+    # Use the separately prepared hybrid PEV-weighted activity features.
+    pev_weighted_average: bool = False
 
 
 def _period_predictors(period_column_name: str) -> tuple[tuple[str, ...], ...]:
@@ -253,7 +261,14 @@ def _load_and_validate_data(config: Config, specs: list[ModelSpec]) -> pd.DataFr
     if Path(config.input_filename).name != config.input_filename:
         raise ValueError("input_filename must be a filename, not a path.")
 
-    input_path = config.cache_dir / config.input_subdir / config.input_filename
+    input_path = (
+        config.cache_dir
+        / weighting_subdir(
+            config.input_subdir,
+            getattr(config, "pev_weighted_average", False),
+        )
+        / config.input_filename
+    )
     if not input_path.exists():
         raise FileNotFoundError(f"Missing prepared data: {input_path}")
     frame = pd.read_pickle(input_path)
@@ -657,6 +672,10 @@ def _write_log_header(
     handle.write("Cross-validation: none\n")
     handle.write(f"Significance alpha: {config.significance_alpha}\n")
     handle.write(
+        f"Activity weighting: {weighting_mode(config.pev_weighted_average)}; "
+        f"policy={weighting_policy(config.pev_weighted_average)}\n"
+    )
+    handle.write(
         "Marginal R2 uses fixed-effect variance; conditional R2 adds the "
         "session random-intercept variance.\n"
     )
@@ -728,9 +747,16 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
 
     specs = _model_specs(outcome.column)
     frame = _load_and_validate_data(config, specs)
-    input_path = config.cache_dir / config.input_subdir / config.input_filename
-    output_dir = analysis_output_dir(
-        config.cache_dir, config.output_subdir, outcome, "model_family"
+    input_path = (
+        config.cache_dir
+        / weighting_subdir(config.input_subdir, config.pev_weighted_average)
+        / config.input_filename
+    )
+    output_dir = weighting_subdir(
+        analysis_output_dir(
+            config.cache_dir, config.output_subdir, outcome, "model_family"
+        ),
+        config.pev_weighted_average,
     )
     table_dir = output_dir / "tables"
     figure_dir = output_dir / "figures" / "marginal_effects"
@@ -822,7 +848,12 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
             for spec in specs
         ]
         run_trial_holdout_cv(
-            config.cache_dir / config.cv_input_subdir / config.cv_input_filename,
+            config.cache_dir
+            / weighting_subdir(
+                config.cv_input_subdir,
+                config.pev_weighted_average,
+            )
+            / config.cv_input_filename,
             requests,
             output_dir / "cross_validation",
             TrialHoldoutConfig(
@@ -835,6 +866,7 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
                 prediction_sample_per_model=(
                     config.cv_prediction_sample_per_model
                 ),
+                pev_weighted_average=config.pev_weighted_average,
             ),
         )
 

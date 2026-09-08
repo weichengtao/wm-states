@@ -23,6 +23,11 @@ import pandas as pd
 import tyro
 
 try:
+    from scripts.activity_weighting import (
+        weighting_mode,
+        weighting_policy,
+        weighting_subdir,
+    )
     from scripts.compare_mixed_effect_models import (
         OUTCOME,
         SESSION,
@@ -43,6 +48,7 @@ try:
         select_outcomes,
     )
 except ModuleNotFoundError:
+    from activity_weighting import weighting_mode, weighting_policy, weighting_subdir
     from compare_mixed_effect_models import (
         OUTCOME,
         SESSION,
@@ -96,6 +102,8 @@ class Config:
     significance_alpha: float = 0.05
     max_iterations: int = 1000
     figure_dpi: int = 200
+    # Use the separately prepared hybrid PEV-weighted activity features.
+    pev_weighted_average: bool = False
 
 
 def _model_specs(outcome: str = OUTCOME) -> list[ModelSpec]:
@@ -432,6 +440,10 @@ def _write_log_header(
     handle.write("Random effects: session random intercept only\n")
     handle.write(f"Significance alpha: {config.significance_alpha}\n")
     handle.write(
+        f"Activity weighting: {weighting_mode(config.pev_weighted_average)}; "
+        f"policy={weighting_policy(config.pev_weighted_average)}\n"
+    )
+    handle.write(
         "Marginal R2 uses fixed-effect variance; conditional R2 additionally "
         "includes session random-intercept variance. Positive R2 deltas and "
         "positive reduced-minus-full error improvements favor the added block.\n\n"
@@ -512,7 +524,9 @@ def _run_cross_validation(
         for index, spec in enumerate(specs)
     ]
     _, summary, _ = run_trial_holdout_cv(
-        config.cache_dir / config.cv_input_subdir / config.cv_input_filename,
+        config.cache_dir
+        / weighting_subdir(config.cv_input_subdir, config.pev_weighted_average)
+        / config.cv_input_filename,
         requests,
         cv_dir,
         TrialHoldoutConfig(
@@ -525,6 +539,7 @@ def _run_cross_validation(
             max_iterations=config.max_iterations,
             figure_dpi=config.figure_dpi,
             prediction_sample_per_model=config.cv_prediction_sample_per_model,
+            pev_weighted_average=config.pev_weighted_average,
         ),
     )
     _plot_cv_progression(
@@ -539,12 +554,19 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
     _validate_config(config)
     specs = _model_specs(outcome.column)
     frame = _load_and_validate_data(config, specs)
-    input_path = config.cache_dir / config.input_subdir / config.input_filename
-    output_dir = analysis_output_dir(
-        config.cache_dir,
-        config.output_subdir,
-        outcome,
-        "nested_mean_norm_activity_comparison",
+    input_path = (
+        config.cache_dir
+        / weighting_subdir(config.input_subdir, config.pev_weighted_average)
+        / config.input_filename
+    )
+    output_dir = weighting_subdir(
+        analysis_output_dir(
+            config.cache_dir,
+            config.output_subdir,
+            outcome,
+            "nested_mean_norm_activity_comparison",
+        ),
+        config.pev_weighted_average,
     )
     table_dir = output_dir / "tables"
     figure_dir = output_dir / "figures"
@@ -632,6 +654,13 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
                 "cv_shuffles": config.cv_shuffles,
                 "cv_holdout_fraction": config.cv_holdout_fraction,
                 "cv_seed": config.cv_seed,
+                "pev_weighted_average": config.pev_weighted_average,
+                "activity_weighting_mode": weighting_mode(
+                    config.pev_weighted_average
+                ),
+                "activity_weighting_policy": weighting_policy(
+                    config.pev_weighted_average
+                ),
             },
             handle,
             indent=2,

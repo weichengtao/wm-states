@@ -25,8 +25,22 @@ import tyro
 from scipy.io import loadmat
 
 try:
+    from scripts.activity_weighting import (
+        cell_group_activity_weights,
+        mean_cell_activity,
+        weighting_mode,
+        weighting_policy,
+        weighting_subdir,
+    )
     from scripts.mixedlm_outcomes import ALL_OUTCOMES
 except ModuleNotFoundError:
+    from activity_weighting import (
+        cell_group_activity_weights,
+        mean_cell_activity,
+        weighting_mode,
+        weighting_policy,
+        weighting_subdir,
+    )
     from mixedlm_outcomes import ALL_OUTCOMES
 
 
@@ -61,6 +75,8 @@ class Config:
     save_cv_cache: bool = True
     active_threshold: float = 0.0
     history_alpha: float = 0.2
+    # Use PEV weights for selective groups; stationary-nonselective stays equal.
+    pev_weighted_average: bool = False
 
 
 def _load_pickle(path: Path) -> Any:
@@ -166,13 +182,18 @@ def _normalize_cells(raw_rates: np.ndarray) -> np.ndarray:
 def _group_features(
     normalized_activity: np.ndarray,
     active_threshold: float,
+    activity_weights: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return group mean normalized activity and active-cell fraction."""
     num_trials, num_cells = normalized_activity.shape
     if num_cells == 0:
         zeros = np.zeros(num_trials, dtype=float)
         return zeros.copy(), zeros
-    mean_activity = np.mean(normalized_activity, axis=1)
+    mean_activity = mean_cell_activity(
+        normalized_activity,
+        activity_weights,
+        axis=1,
+    )
     active_fraction = np.mean(normalized_activity > active_threshold, axis=1)
     return mean_activity, active_fraction
 
@@ -295,6 +316,11 @@ def _prepare_session_rows(
         selection_results, session, spikes.shape[0]
     )
     groups = _cell_groups(selection, preferred_cue)
+    activity_weights = cell_group_activity_weights(
+        selection,
+        groups,
+        config.pev_weighted_average,
+    )
     counts = {
         f"{group_name}_cell_count": int(groups[group_name].size)
         for group_name in GROUP_NAMES
@@ -316,7 +342,9 @@ def _prepare_session_rows(
             raw_rates_by_period[period_name][group_name] = raw_rates
             normalized = _normalize_cells(raw_rates)
             mean_activity, active_fraction = _group_features(
-                normalized, config.active_threshold
+                normalized,
+                config.active_threshold,
+                activity_weights[group_name],
             )
 
             mean_column = (
@@ -362,6 +390,7 @@ def _prepare_session_rows(
         "maximum_off_state_duration_ms": maximum_off_state_durations,
         "cell_counts": counts,
         "raw_firing_rates_hz": raw_rates_by_period,
+        "activity_weights": activity_weights,
     }
     return rows, cv_session
 
@@ -459,7 +488,10 @@ def prepare_data(config: Config) -> pd.DataFrame:
     if not np.all(np.isfinite(frame[numeric_columns].to_numpy(dtype=float))):
         raise ValueError("The output contains non-finite numeric values.")
 
-    output_dir = config.cache_dir / config.output_subdir
+    output_dir = config.cache_dir / weighting_subdir(
+        config.output_subdir,
+        config.pev_weighted_average,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / config.output_filename
     frame.to_pickle(output_path)
@@ -471,6 +503,13 @@ def prepare_data(config: Config) -> pd.DataFrame:
             "group_names": GROUP_NAMES,
             "history_alpha": config.history_alpha,
             "default_active_threshold": config.active_threshold,
+            "pev_weighted_average": config.pev_weighted_average,
+            "activity_weighting_mode": weighting_mode(
+                config.pev_weighted_average
+            ),
+            "activity_weighting_policy": weighting_policy(
+                config.pev_weighted_average
+            ),
             "cv_shuffles": config.cv_shuffles,
             "cv_holdout_fraction": config.cv_holdout_fraction,
             "cv_seed": config.cv_seed,
@@ -482,7 +521,10 @@ def prepare_data(config: Config) -> pd.DataFrame:
                 config.cv_seed,
             ),
         }
-        cv_output_dir = config.cache_dir / config.cv_output_subdir
+        cv_output_dir = config.cache_dir / weighting_subdir(
+            config.cv_output_subdir,
+            config.pev_weighted_average,
+        )
         cv_output_dir.mkdir(parents=True, exist_ok=True)
         cv_output_path = cv_output_dir / config.cv_output_filename
         with cv_output_path.open("wb") as handle:
@@ -519,6 +561,11 @@ def prepare_data(config: Config) -> pd.DataFrame:
         "group_names": list(GROUP_NAMES),
         "history_alpha": config.history_alpha,
         "default_active_threshold": config.active_threshold,
+        "pev_weighted_average": config.pev_weighted_average,
+        "activity_weighting_mode": weighting_mode(config.pev_weighted_average),
+        "activity_weighting_policy": weighting_policy(
+            config.pev_weighted_average
+        ),
         "n_rows": len(frame),
         "n_sessions": int(frame["session"].nunique()),
         "cv": {

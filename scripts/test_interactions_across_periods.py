@@ -23,6 +23,11 @@ import pandas as pd
 import tyro
 
 try:
+    from scripts.activity_weighting import (
+        weighting_mode,
+        weighting_policy,
+        weighting_subdir,
+    )
     from scripts.compare_mixed_effect_models import (
         OUTCOME,
         SESSION,
@@ -39,6 +44,7 @@ try:
         select_outcomes,
     )
 except ModuleNotFoundError:
+    from activity_weighting import weighting_mode, weighting_policy, weighting_subdir
     from compare_mixed_effect_models import (
         OUTCOME,
         SESSION,
@@ -92,6 +98,8 @@ class Config:
     significance_alpha: float = 0.05
     max_iterations: int = 1000
     figure_dpi: int = 200
+    # Use the separately prepared hybrid PEV-weighted activity features.
+    pev_weighted_average: bool = False
 
 
 def _period_activity_columns(group_column_name: str) -> dict[str, str]:
@@ -229,7 +237,11 @@ def _load_data(config: Config, specs: list[ModelSpec]) -> tuple[pd.DataFrame, Pa
     _validate_relative_path(config.output_subdir, "output_subdir")
     if Path(config.input_filename).name != config.input_filename:
         raise ValueError("input_filename must be a filename, not a path.")
-    input_path = config.cache_dir / config.input_subdir / config.input_filename
+    input_path = (
+        config.cache_dir
+        / weighting_subdir(config.input_subdir, config.pev_weighted_average)
+        / config.input_filename
+    )
     if not input_path.exists():
         raise FileNotFoundError(f"Missing prepared data: {input_path}")
     frame = pd.read_pickle(input_path)
@@ -503,11 +515,14 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
 
     specs, metadata_by_model = _model_specs(outcome.column)
     frame, input_path = _load_data(config, specs)
-    output_dir = analysis_output_dir(
-        config.cache_dir,
-        config.output_subdir,
-        outcome,
-        "period_interactions",
+    output_dir = weighting_subdir(
+        analysis_output_dir(
+            config.cache_dir,
+            config.output_subdir,
+            outcome,
+            "period_interactions",
+        ),
+        config.pev_weighted_average,
     )
     table_dir = output_dir / "tables"
     figure_dir = output_dir / "figures"
@@ -526,6 +541,10 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
         log_handle.write(f"Input: {input_path}\n")
         log_handle.write(f"Outcome: {outcome.label} ({outcome.column})\n")
         log_handle.write(f"Rows: {len(frame)}; sessions: {frame[SESSION].nunique()}\n")
+        log_handle.write(
+            f"Activity weighting: {weighting_mode(config.pev_weighted_average)}; "
+            f"policy={weighting_policy(config.pev_weighted_average)}\n"
+        )
         log_handle.write(
             "REML: False; random effects: session intercept; CV: none\n"
         )
@@ -637,7 +656,12 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
                 )
             )
         run_trial_holdout_cv(
-            config.cache_dir / config.cv_input_subdir / config.cv_input_filename,
+            config.cache_dir
+            / weighting_subdir(
+                config.cv_input_subdir,
+                config.pev_weighted_average,
+            )
+            / config.cv_input_filename,
             requests,
             output_dir / "cross_validation",
             TrialHoldoutConfig(
@@ -650,6 +674,7 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
                 prediction_sample_per_model=(
                     config.cv_prediction_sample_per_model
                 ),
+                pev_weighted_average=config.pev_weighted_average,
             ),
         )
 

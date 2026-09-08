@@ -22,6 +22,11 @@ import tyro
 from scipy.stats import norm
 
 try:
+    from scripts.activity_weighting import (
+        weighting_mode,
+        weighting_policy,
+        weighting_subdir,
+    )
     from scripts.compare_mixed_effect_models import (
         ModelSpec,
         _comparison_row,
@@ -41,6 +46,7 @@ try:
         select_outcomes,
     )
 except ModuleNotFoundError:
+    from activity_weighting import weighting_mode, weighting_policy, weighting_subdir
     from compare_mixed_effect_models import (
         ModelSpec,
         _comparison_row,
@@ -84,6 +90,8 @@ class Config:
     significance_alpha: float = 0.05
     max_iterations: int = 1000
     figure_dpi: int = 200
+    # Use PEV weights for selective groups; stationary-nonselective stays equal.
+    pev_weighted_average: bool = False
 
 
 def _validate_config(config: Config) -> list[int]:
@@ -188,11 +196,17 @@ def _prepare_threshold_data(
             active_threshold=z_threshold,
             history_alpha=config.history_alpha,
             save_cv_cache=False,
+            pev_weighted_average=config.pev_weighted_average,
         )
         frames[percentile] = prepare_data(prepare_config)
         thresholds[percentile] = z_threshold
         paths[percentile] = (
-            config.cache_dir / threshold_subdir / prepare_config.output_filename
+            config.cache_dir
+            / weighting_subdir(
+                threshold_subdir,
+                config.pev_weighted_average,
+            )
+            / prepare_config.output_filename
         )
     return frames, thresholds, paths
 
@@ -477,11 +491,14 @@ def _run_outcome(
     z_thresholds: dict[int, float],
     prepared_paths: dict[int, Path],
 ) -> None:
-    output_dir = analysis_output_dir(
-        config.cache_dir,
-        config.output_subdir,
-        outcome,
-        "active_cell_criticality",
+    output_dir = weighting_subdir(
+        analysis_output_dir(
+            config.cache_dir,
+            config.output_subdir,
+            outcome,
+            "active_cell_criticality",
+        ),
+        config.pev_weighted_average,
     )
     table_dir = output_dir / "tables"
     figure_dir = output_dir / "figures"
@@ -507,6 +524,10 @@ def _run_outcome(
         log_handle.write("Active-cell threshold criticality scan\n")
         log_handle.write("=" * 88 + "\n")
         log_handle.write(f"Outcome: {outcome.label} ({outcome.column})\n")
+        log_handle.write(
+            f"Activity weighting: {weighting_mode(config.pev_weighted_average)}; "
+            f"policy={weighting_policy(config.pev_weighted_average)}\n"
+        )
         log_handle.write(f"Percentiles: {percentiles}\n")
         log_handle.write(
             "Z thresholds: "
@@ -677,7 +698,12 @@ def _run_outcome(
                     )
                 )
         _, cv_summary, _ = run_trial_holdout_cv(
-            config.cache_dir / config.cv_input_subdir / config.cv_input_filename,
+            config.cache_dir
+            / weighting_subdir(
+                config.cv_input_subdir,
+                config.pev_weighted_average,
+            )
+            / config.cv_input_filename,
             cv_requests,
             output_dir / "cross_validation",
             TrialHoldoutConfig(
@@ -690,6 +716,7 @@ def _run_outcome(
                 prediction_sample_per_model=(
                     config.cv_prediction_sample_per_model
                 ),
+                pev_weighted_average=config.pev_weighted_average,
             ),
         )
         cv_figure_dir = output_dir / "cross_validation" / "figures"
@@ -715,12 +742,10 @@ def main(config: Config) -> None:
             ],
         }
     )
-    threshold_path = (
-        config.cache_dir
-        / config.prepared_subdir
-        / "active_thresholds"
-        / "thresholds.csv"
-    )
+    threshold_path = config.cache_dir / weighting_subdir(
+        Path(config.prepared_subdir) / "active_thresholds",
+        config.pev_weighted_average,
+    ) / "thresholds.csv"
     threshold_path.parent.mkdir(parents=True, exist_ok=True)
     threshold_table.to_csv(threshold_path, index=False)
     for outcome in select_outcomes(config.outcome):

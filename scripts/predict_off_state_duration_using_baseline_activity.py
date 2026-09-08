@@ -13,9 +13,21 @@ from scipy.io import loadmat
 from scipy.stats import t as student_t
 
 try:
+    from scripts.activity_weighting import (
+        cell_group_activity_weights,
+        mean_cell_activity,
+        weighting_mode,
+        weighting_subdir,
+    )
     from scripts.decoding_confidence import compute_binned_rates
     from scripts.figure_exports import configure_figure_style, save_figure_png_only
 except ModuleNotFoundError:
+    from activity_weighting import (
+        cell_group_activity_weights,
+        mean_cell_activity,
+        weighting_mode,
+        weighting_subdir,
+    )
     from decoding_confidence import compute_binned_rates
     from figure_exports import configure_figure_style, save_figure_png_only
 
@@ -46,6 +58,8 @@ class Config:
     z_threshold_for_active_cell: float = -0.842
     compare_with_delay: bool = False
     compare_with_encoding: bool = False
+    # Use PEV weights for selective groups; stationary-nonselective stays equal.
+    pev_weighted_average: bool = False
 
 
 def _results_root(cache_dir: Path, output_subdir: str) -> Path:
@@ -110,38 +124,60 @@ def _standardize_cells(activity_rates, cell_indices):
     """Z-score usable cells across trials and return the normalized values."""
     cell_indices = np.asarray(cell_indices, dtype=np.int64)
     if cell_indices.size == 0:
-        return None, 0, 'no_cells'
+        return None, 0, 'no_cells', np.asarray([], dtype=np.int64)
 
     values = np.asarray(activity_rates[:, cell_indices], dtype=float)
     finite_cells = np.all(np.isfinite(values), axis=0)
     if not np.any(finite_cells):
-        return None, 0, 'no_finite_cells'
+        return None, 0, 'no_finite_cells', np.asarray([], dtype=np.int64)
+    finite_positions = np.flatnonzero(finite_cells)
     values = values[:, finite_cells]
     cell_mean = np.mean(values, axis=0)
     cell_std = np.std(values, axis=0)
     variable_cells = np.isfinite(cell_std) & (cell_std > 0)
     if not np.any(variable_cells):
         if np.allclose(values, 0.0):
-            return None, 0, 'zero_activity'
-        return None, 0, 'no_variable_cells'
+            return None, 0, 'zero_activity', np.asarray([], dtype=np.int64)
+        return None, 0, 'no_variable_cells', np.asarray([], dtype=np.int64)
 
     standardized = (values[:, variable_cells] - cell_mean[variable_cells]) / cell_std[
         variable_cells
     ]
-    return standardized, int(np.sum(variable_cells)), 'ok'
+    usable_positions = finite_positions[variable_cells]
+    return standardized, int(np.sum(variable_cells)), 'ok', usable_positions
 
 
-def _standardize_cells_then_average(activity_rates, cell_indices):
+def _standardize_cells_then_average(
+    activity_rates,
+    cell_indices,
+    activity_weights=None,
+):
     """Z-score each cell across trials, then average the usable cells."""
-    standardized, n_cells, status = _standardize_cells(activity_rates, cell_indices)
+    standardized, n_cells, status, usable_positions = _standardize_cells(
+        activity_rates,
+        cell_indices,
+    )
     if standardized is None:
         return np.zeros(activity_rates.shape[0], dtype=float), n_cells, status
-    return np.mean(standardized, axis=1), n_cells, status
+    usable_weights = None
+    if activity_weights is not None:
+        activity_weights = np.asarray(activity_weights, dtype=float).ravel()
+        if activity_weights.size != np.asarray(cell_indices).size:
+            raise ValueError("Cell activity and PEV weights must have matching sizes.")
+        usable_weights = activity_weights[usable_positions]
+    return (
+        mean_cell_activity(standardized, usable_weights, axis=1),
+        n_cells,
+        status,
+    )
 
 
 def _count_active_cells(activity_rates, cell_indices, z_threshold):
     """Count usable cells whose activity z-score exceeds the threshold."""
-    standardized, n_cells, status = _standardize_cells(activity_rates, cell_indices)
+    standardized, n_cells, status, _ = _standardize_cells(
+        activity_rates,
+        cell_indices,
+    )
     if standardized is None:
         return np.zeros(activity_rates.shape[0], dtype=float), n_cells, status
     active_counts = np.sum(standardized > z_threshold, axis=1, dtype=np.int64)
@@ -538,13 +574,15 @@ def _run_activity_regressions(
     selection_results = _load_pickle(config.cache_dir / 'cell_trial_selection.pkl')
     group_level_norm_applied = not config.skip_group_level_norm_before_fit
     results_root = _results_root(config.cache_dir, config.output_subdir)
-    output_dir = (
+    output_dir = weighting_subdir(
         results_root
-        / f'predict_off_state_duration_using_{activity_label}_activity'
+        / f'predict_off_state_duration_using_{activity_label}_activity',
+        config.pev_weighted_average,
     )
-    active_cell_count_output_dir = (
+    active_cell_count_output_dir = weighting_subdir(
         results_root
-        / f'predict_off_state_duration_using_{activity_label}_active_cell_count'
+        / f'predict_off_state_duration_using_{activity_label}_active_cell_count',
+        config.pev_weighted_average,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     active_cell_count_output_dir.mkdir(parents=True, exist_ok=True)
@@ -604,6 +642,11 @@ def _run_activity_regressions(
                 raise ValueError('Off-state and decoding trial_idx arrays do not match.')
             preferred_cue = int(decoding_result['cue'])
             groups = _cell_groups(selection_result, preferred_cue)
+            activity_weights = cell_group_activity_weights(
+                selection_result,
+                groups,
+                config.pev_weighted_average,
+            )
 
             activity_rates = compute_binned_rates(
                 spikes,
@@ -622,6 +665,7 @@ def _run_activity_regressions(
                 group_values, n_cells, status = _standardize_cells_then_average(
                     activity_trial_rates,
                     groups[group_name],
+                    activity_weights[group_name],
                 )
                 active_counts, active_n_cells, active_status = _count_active_cells(
                     activity_trial_rates,
@@ -699,6 +743,7 @@ def _run_activity_regressions(
                 row.update({
                     'description': (
                         f'ok; rank={rank}; '
+                        f'activity_weighting={weighting_mode(config.pev_weighted_average)}; '
                         f'group_level_norm={"applied" if group_level_norm_applied else "skipped"}; '
                         'dv=raw_ms; '
                         + ', '.join(group_status)

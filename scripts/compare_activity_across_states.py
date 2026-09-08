@@ -29,8 +29,18 @@ from scipy.io import loadmat
 from sklearn.decomposition import PCA
 
 try:
+    from scripts.activity_weighting import (
+        cell_group_activity_weights,
+        mean_cell_activity,
+        weighting_subdir,
+    )
     from scripts.figure_exports import configure_figure_style, save_figure_all_formats
 except ModuleNotFoundError:
+    from activity_weighting import (
+        cell_group_activity_weights,
+        mean_cell_activity,
+        weighting_subdir,
+    )
     from figure_exports import configure_figure_style, save_figure_all_formats
 
 
@@ -67,6 +77,8 @@ class Config:
     marginal_histogram_bin_width: float = 0.25
     # Horizontally separate adjacent histogram outlines by this bin-width fraction.
     marginal_histogram_bin_offset_fraction: float = 0.2
+    # Use PEV weights for selective means; stationary-nonselective stays equal.
+    pev_weighted_average: bool = False
 
 
 @dataclass
@@ -584,6 +596,11 @@ def prepare_session_activity(
         preferred_cue,
     )
     group_cell_ids = session_cell_groups(selection, preferred_cue)
+    group_activity_weights = cell_group_activity_weights(
+        selection,
+        group_cell_ids,
+        config.pev_weighted_average,
+    )
     analysis_cell_ids = np.concatenate(
         [group_cell_ids[group_name] for group_name, _ in POPULATION_GROUPS]
     )
@@ -667,12 +684,14 @@ def prepare_session_activity(
         preferred_group_mean = None
         opposite_group_mean = None
         if group_count:
-            preferred_group_mean = np.mean(
+            preferred_group_mean = mean_cell_activity(
                 all_preferred_activity[:, :, group_slice],
+                group_activity_weights[group_name],
                 axis=2,
             )
-            opposite_group_mean = np.mean(
+            opposite_group_mean = mean_cell_activity(
                 all_opposite_activity[:, :, group_slice],
+                group_activity_weights[group_name],
                 axis=2,
             )
         population_mean_activities[group_name] = (
@@ -682,8 +701,9 @@ def prepare_session_activity(
         )
         max_off_state_group_mean = None
         if group_count:
-            max_off_state_group_mean = np.mean(
+            max_off_state_group_mean = mean_cell_activity(
                 max_off_state_all_activity[:, group_slice],
+                group_activity_weights[group_name],
                 axis=1,
             )
         max_off_state_population_mean_activities[group_name] = (
@@ -1569,7 +1589,10 @@ def main(config: Config):
     if len(set(sessions)) != len(sessions):
         raise ValueError("The on/off-state cache contains duplicate session entries.")
 
-    figure_dir = config.cache_dir / output_subdir
+    figure_dir = weighting_subdir(
+        config.cache_dir / output_subdir,
+        config.pev_weighted_average,
+    )
     figure_dir.mkdir(parents=True, exist_ok=True)
     for session_idx, state_result in enumerate(state_results):
         prepared = prepare_session_activity(
