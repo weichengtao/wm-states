@@ -1,0 +1,28 @@
+# One session ID per line.
+# Blank lines and lines beginning with # are ignored.
+# Remove or comment out a session to skip it during decoding.
+210921
+210927
+210929
+211001
+211006
+211007
+211008
+211011
+211013
+211015
+221017
+221019
+221020
+221021
+221024
+221025
+221026
+221027
+240208
+240209
+240214
+240215
+240216
+240221
+240222

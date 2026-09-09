@@ -1228,6 +1228,51 @@ def total_unique_trials(partitions):
         covered[p['trial_start']:p['trial_end']] = True
     return int(covered.sum())
 
+
+def load_session_list(path: Path) -> list[str]:
+    """Load unique session IDs from non-empty, uncommented lines."""
+    if not path.is_file():
+        raise FileNotFoundError(f'Missing session list file: {path}')
+
+    sessions = []
+    seen = set()
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f:
+            session = line.strip()
+            if not session or session.startswith('#') or session in seen:
+                continue
+            sessions.append(session)
+            seen.add(session)
+    return sessions
+
+
+def filter_sessions_by_list(good_sessions, known_sessions, requested_sessions):
+    """Keep requested eligible sessions and report unknown/ineligible IDs."""
+    known_session_ids = {str(session) for session in known_sessions}
+    eligible_session_ids = {str(session) for session in good_sessions}
+    requested_session_ids = set(requested_sessions)
+    warnings = []
+
+    for session in requested_sessions:
+        if session not in known_session_ids:
+            warnings.append(
+                f'Session {session} is not present in cell_trial_selection.pkl; '
+                'skipping.'
+            )
+        elif session not in eligible_session_ids:
+            warnings.append(
+                f'Session {session} is not eligible for decoding under the '
+                'current thresholds; skipping.'
+            )
+
+    filtered_sessions = {
+        session: info
+        for session, info in good_sessions.items()
+        if str(session) in requested_session_ids
+    }
+    return filtered_sessions, warnings
+
+
 @dataclass
 class Config:
     """CLI configuration for decoding confidence analysis."""
@@ -1258,6 +1303,7 @@ class Config:
     n_decode_shuffle: int = 0 # number of label shuffles for null distribution of decoding confidence (0 to skip)
     plot_only: bool = False # if True, only generate plots from cached decoding results
     plot_actual_trial_id: bool = False # if True, y-axis shows actual trial ids instead of 1 to N
+    session_list_file: Path | None = None # optional file with one session ID per uncommented line
     max_sessions_to_run: int | None = None # max number of good sessions to process (None to run all)
 
 def main(config: Config):
@@ -1437,6 +1483,14 @@ def main(config: Config):
     with open(selection_pkl, 'rb') as f:
         selection_outs = pickle.load(f)
 
+    requested_sessions = None
+    if config.session_list_file is not None:
+        requested_sessions = load_session_list(config.session_list_file)
+        print(
+            f'Loaded {len(requested_sessions)} requested session(s) from '
+            f'{config.session_list_file}'
+        )
+
     # Filter partitions to those with enough cells per group.
     good_partitions = []
     for out in selection_outs:
@@ -1476,6 +1530,18 @@ def main(config: Config):
                 'partitions': parts,
                 'no_holdout_partitions': no_holdout_parts,
             }
+
+    if requested_sessions is not None:
+        known_sessions = {
+            out['session'] for out in selection_outs if 'session' in out
+        }
+        good_sessions, session_filter_warnings = filter_sessions_by_list(
+            good_sessions,
+            known_sessions,
+            requested_sessions,
+        )
+        for warning in session_filter_warnings:
+            print(f'Warning: {warning}')
 
     if not good_sessions:
         return

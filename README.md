@@ -52,6 +52,7 @@ uv run python scripts/cell_trial_selection.py \
 uv run python scripts/decoding_confidence.py \
 --data-dir data/nature \
 --cache-dir cache/run_034_full_session \
+--session-list-file configs/decoding_sessions.txt \
 --t-decode-window 50 \
 --min-cell-per-group 1 \
 --n-repeats-for-model-fit 1 \
@@ -132,6 +133,15 @@ uv run python scripts/predict_off_state_duration_using_cell_count.py \
   `--grid-search-for-c` is omitted. The 100 label shuffles estimate null
   confidence. Per-fit grid search can substantially increase decoding runtime,
   especially when many null shuffles are requested.
+- Step 2 uses `configs/decoding_sessions.txt`, which lists all dataset sessions
+  as an editable session-filter example. Keep one session ID per line and
+  remove or comment out IDs to restrict decoding; blank lines and lines
+  beginning with `#` are ignored. Unknown IDs produce a warning, as do listed
+  sessions that do not pass the current decoding thresholds.
+  `--max-sessions-to-run` is applied after this filter. A filtered run
+  checkpoints only the selected sessions to `decoding_confidence.pkl`; use a
+  separate pipeline cache directory with its own matching selection cache to
+  preserve an existing all-session decoding cache.
 - `--n-repeats-for-model-fit 1` produces only repeat 0. The cue-preserved
   training-set shuffle intentionally leaves repeat 0 unchanged, so it has no
   effect unless the repeat count is increased.

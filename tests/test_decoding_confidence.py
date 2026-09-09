@@ -9,6 +9,69 @@ import numpy as np
 from scripts import decoding_confidence
 
 
+class SessionListFilterTest(unittest.TestCase):
+    def test_loads_unique_uncommented_session_ids(self):
+        with TemporaryDirectory() as temporary_directory:
+            session_list = Path(temporary_directory) / 'sessions.txt'
+            session_list.write_text(
+                '\n'.join([
+                    '# Disabled session',
+                    '  221024  ',
+                    '',
+                    '   # 221025',
+                    '221026',
+                    '221024',
+                ]),
+                encoding='utf-8',
+            )
+
+            sessions = decoding_confidence.load_session_list(session_list)
+
+        self.assertEqual(sessions, ['221024', '221026'])
+
+    def test_missing_session_list_raises_clear_error(self):
+        missing_path = Path('missing-session-list.txt')
+        with self.assertRaisesRegex(
+            FileNotFoundError,
+            'Missing session list file: missing-session-list.txt',
+        ):
+            decoding_confidence.load_session_list(missing_path)
+
+    def test_filters_membership_without_changing_eligible_order(self):
+        good_sessions = {
+            '221024': {'preferred_cue': 1},
+            '221025': {'preferred_cue': 2},
+            '221026': {'preferred_cue': 3},
+        }
+
+        filtered, warnings = decoding_confidence.filter_sessions_by_list(
+            good_sessions,
+            known_sessions={'221024', '221025', '221026'},
+            requested_sessions=['221026', '221024'],
+        )
+
+        self.assertEqual(list(filtered), ['221024', '221026'])
+        self.assertEqual(warnings, [])
+
+    def test_warns_for_unknown_and_known_but_ineligible_sessions(self):
+        filtered, warnings = decoding_confidence.filter_sessions_by_list(
+            {'221024': {'preferred_cue': 1}},
+            known_sessions={'221024', '221025'},
+            requested_sessions=['unknown', '221025'],
+        )
+
+        self.assertEqual(filtered, {})
+        self.assertEqual(len(warnings), 2)
+        self.assertIn(
+            'Session unknown is not present in cell_trial_selection.pkl',
+            warnings[0],
+        )
+        self.assertIn(
+            'Session 221025 is not eligible for decoding',
+            warnings[1],
+        )
+
+
 class CacheCheckpointTest(unittest.TestCase):
     def test_atomic_save_replaces_only_with_complete_pickle(self):
         class Unpickleable:
