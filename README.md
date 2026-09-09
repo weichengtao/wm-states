@@ -64,6 +64,7 @@ uv run python scripts/decoding_confidence.py \
 --logistic-calibration-method SIGMOID \
 --logistic-calibration-cv 5 \
 --classifier-c 1 \
+--grid-search-for-c \
 --seed 42 \
 --max-sessions-to-run 25
 
@@ -119,9 +120,18 @@ uv run python scripts/predict_off_state_duration_using_cell_count.py \
   `--temp-dep-r-threshold 2`, effectively disable those exclusion gates;
   presence ratio, baseline temporal dependence, and PEV remain constrained by
   the values shown.
-- The decoder uses stationary cells and logistic regression with `C=1`.
-  `SIGMOID` requests nested five-fold calibration without using the held-out
-  decoding trial. The 100 label shuffles estimate null confidence.
+- The decoder uses stationary cells and logistic regression. With
+  `--grid-search-for-c`, every empirical repeat/bin and null shuffle/bin fit
+  independently selects from `C=(1, 0.1, 0.01)` using balanced accuracy and
+  exactly five source-trial-grouped folds. The search receives the same
+  balanced or imbalanced prepared training set used by that fit; for null fits,
+  it runs after the labels have been permuted. The selected `C` is then held
+  fixed for the final fit and the subsequent `SIGMOID` or `ISOTONIC`
+  calibration, without using the held-out decoding trial. `--classifier-c 1`
+  is retained in the example as the fixed value used only when
+  `--grid-search-for-c` is omitted. The 100 label shuffles estimate null
+  confidence. Per-fit grid search can substantially increase decoding runtime,
+  especially when many null shuffles are requested.
 - `--n-repeats-for-model-fit 1` produces only repeat 0. The cue-preserved
   training-set shuffle intentionally leaves repeat 0 unchanged, so it has no
   effect unless the repeat count is increased.
@@ -157,6 +167,18 @@ trial-level maximum off-state duration. Fixed-effects results from steps 6 and
 7 are grouped under `fixedlm/`. PEV-weighted results from steps 5 and 6 are
 written to a `pev_weighted/` subfolder inside the corresponding analysis
 directory, leaving equal-weight results unchanged.
+
+Each session in `decoding_confidence.pkl` records the exact regularization used
+for each confidence estimate. `decoding_classifier_c_repeats` has shape
+`(trial, repeat, bin)`, matching `decoding_confidence_repeats`, and
+`decoding_classifier_c_null` has shape `(trial, bin, shuffle)`, matching
+`decoding_confidence_null`. The decoding figure directory contains empirical
+and, when null decoding is enabled, null heatmaps and line plots of
+`log10(C)` alongside the confidence figures. The heatmaps average in log space
+across repeats or null shuffles; line plots show those trial summaries and their
+session mean. Plot-only mode regenerates these C figures from the cached
+tensors; older caches without the C tensors still regenerate confidence figures
+but require decoding to be rerun before C figures can be produced.
 
 ## Mixed-effects pipeline
 

@@ -14,7 +14,11 @@ from joblib import Parallel, delayed
 from scipy.io import loadmat
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
+from sklearn.model_selection import (
+    GridSearchCV,
+    StratifiedGroupKFold,
+    StratifiedKFold,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -26,6 +30,11 @@ except ModuleNotFoundError:
 
 matplotlib.use('Agg')
 configure_figure_style(matplotlib)
+
+
+CLASSIFIER_C_GRID = (1.0, 0.1, 0.01)
+CLASSIFIER_C_GRID_SEARCH_CV = 5
+CLASSIFIER_C_GRID_SEARCH_SCORING = 'balanced_accuracy'
 
 
 class CellsUsedForDecoder(str, Enum):
@@ -275,35 +284,40 @@ def decoder_training_sample_groups(num_training_trials, num_training_samples):
     )
 
 
-def make_logistic_calibration_cv_splits(
+def make_grouped_stratified_cv_splits(
     labels,
     sample_groups,
     requested_cv_folds: int,
     seed: int,
+    *,
+    purpose: str,
+    allow_fold_reduction: bool,
 ):
-    """Build deterministic, class-stratified calibration folds by trial.
+    """Build deterministic, class-stratified folds grouped by source trial.
 
-    The effective fold count is reduced when the requested value exceeds the
-    number of source trials represented in the smallest class. Every returned
-    train and validation fold contains both classes, and no source trial can
-    appear on both sides of a split.
+    Every returned train and validation fold contains both classes, and no
+    source trial can appear on both sides of a split. Fold reduction is useful
+    for calibration, while classifier-C selection deliberately requires the
+    configured five-fold design.
     """
     labels = np.asarray(labels)
     sample_groups = np.asarray(sample_groups)
     if labels.ndim != 1:
-        raise ValueError('Calibration labels must be one-dimensional.')
+        raise ValueError(f'{purpose} labels must be one-dimensional.')
     if sample_groups.shape != labels.shape:
-        raise ValueError('Calibration groups must contain one value per sample.')
+        raise ValueError(f'{purpose} groups must contain one value per sample.')
     if requested_cv_folds < 2:
-        raise ValueError('logistic_calibration_cv must be at least 2.')
+        raise ValueError(f'{purpose} CV must use at least two folds.')
 
     classes = np.unique(labels)
     if classes.size != 2:
         raise ValueError(
-            'Logistic calibration requires exactly two classes in the training set.'
+            f'{purpose} requires exactly two classes in the training set.'
         )
     unique_groups = np.unique(sample_groups)
-    labels_by_group = [np.unique(labels[sample_groups == group]) for group in unique_groups]
+    labels_by_group = [
+        np.unique(labels[sample_groups == group]) for group in unique_groups
+    ]
     groups_are_class_homogeneous = all(
         group_labels.size == 1 for group_labels in labels_by_group
     )
@@ -320,17 +334,30 @@ def make_logistic_calibration_cv_splits(
             np.unique(sample_groups[labels == class_label]).size
             for class_label in classes
         ]
-    max_folds = min(int(requested_cv_folds), min(groups_per_class))
+    requested_cv_folds = int(requested_cv_folds)
+    max_folds = min(requested_cv_folds, min(groups_per_class))
     if max_folds < 2:
         raise ValueError(
-            'Logistic calibration requires at least two source trials from '
+            f'{purpose} requires at least two source-trial groups containing '
             'each class.'
         )
+    if not allow_fold_reduction and max_folds < requested_cv_folds:
+        raise ValueError(
+            f'{purpose} requires {requested_cv_folds} source-trial groups '
+            f'containing each class, but at most {max_folds} folds are feasible.'
+        )
+
+    fold_counts = (
+        range(max_folds, 1, -1)
+        if allow_fold_reduction
+        else (requested_cv_folds,)
+    )
 
     dummy_features = np.zeros((labels.size, 1), dtype=np.float32)
     if groups_are_class_homogeneous:
+        n_splits = max_folds if allow_fold_reduction else requested_cv_folds
         splitter = StratifiedKFold(
-            n_splits=max_folds,
+            n_splits=n_splits,
             shuffle=True,
             random_state=int(seed),
         )
@@ -345,9 +372,9 @@ def make_logistic_calibration_cv_splits(
                 np.flatnonzero(np.isin(sample_groups, train_groups)),
                 np.flatnonzero(np.isin(sample_groups, validation_groups)),
             ))
-        return splits, max_folds
+        return splits, n_splits
 
-    for n_splits in range(max_folds, 1, -1):
+    for n_splits in fold_counts:
         # A few deterministic alternatives make grouped stratification robust
         # when shuffled null labels produce mixed-label trial groups.
         for split_attempt in range(10):
@@ -376,9 +403,105 @@ def make_logistic_calibration_cv_splits(
                 return splits, n_splits
 
     raise ValueError(
-        'Could not construct grouped logistic-calibration folds with both '
-        'classes in every train and validation split.'
+        f'Could not construct {purpose.lower()} folds with both classes in '
+        'every train and validation split while keeping source trials grouped.'
     )
+
+
+def make_logistic_calibration_cv_splits(
+    labels,
+    sample_groups,
+    requested_cv_folds: int,
+    seed: int,
+):
+    """Build deterministic grouped folds for logistic calibration."""
+    return make_grouped_stratified_cv_splits(
+        labels,
+        sample_groups,
+        requested_cv_folds,
+        seed,
+        purpose='Logistic calibration',
+        allow_fold_reduction=True,
+    )
+
+
+def create_base_decoder(
+    classifier_c: float,
+    decoder_model: DecoderModel,
+    svm_kernel: SVMKernel,
+    seed: int,
+    *,
+    svm_probability: bool = True,
+):
+    """Create the scaled, uncalibrated classifier used by one decoder fit."""
+    decoder_model = DecoderModel(decoder_model)
+    svm_kernel = SVMKernel(svm_kernel)
+    if decoder_model is DecoderModel.SVM:
+        classifier = SVC(
+            kernel=svm_kernel.value,
+            C=float(classifier_c),
+            probability=svm_probability,
+            random_state=seed,
+        )
+    elif decoder_model is DecoderModel.LOGISTIC_REGRESSION:
+        classifier = LogisticRegression(
+            solver='liblinear',
+            C=float(classifier_c),
+            max_iter=1000,
+            random_state=seed,
+        )
+    else:
+        raise ValueError(f'Unsupported decoder model: {decoder_model}')
+    return Pipeline([
+        ('scaler', StandardScaler()),
+        ('classifier', classifier),
+    ])
+
+
+def select_classifier_c(
+    X_train,
+    y_train,
+    sample_groups,
+    decoder_model: DecoderModel,
+    svm_kernel: SVMKernel,
+    seed: int,
+    *,
+    fit_context: str = 'Decoder',
+) -> float:
+    """Select C on one decoder's fully prepared outer-training set."""
+    try:
+        search_cv, _ = make_grouped_stratified_cv_splits(
+            y_train,
+            sample_groups,
+            CLASSIFIER_C_GRID_SEARCH_CV,
+            seed,
+            purpose='Classifier C grid search',
+            allow_fold_reduction=False,
+        )
+    except ValueError as exc:
+        raise ValueError(f'{fit_context}: {exc}') from exc
+
+    # Balanced accuracy depends only on class predictions. Avoid SVC's costly
+    # internal probability fitting during candidate evaluation; the final
+    # selected-C model still enables predict_proba below.
+    search_estimator = create_base_decoder(
+        CLASSIFIER_C_GRID[0],
+        decoder_model,
+        svm_kernel,
+        seed,
+        svm_probability=False,
+    )
+    search = GridSearchCV(
+        estimator=search_estimator,
+        param_grid={'classifier__C': list(CLASSIFIER_C_GRID)},
+        scoring=CLASSIFIER_C_GRID_SEARCH_SCORING,
+        n_jobs=1,
+        refit=False,
+        cv=search_cv,
+        error_score='raise',
+    )
+    search.fit(X_train, y_train)
+    return float(search.best_params_['classifier__C'])
 
 
 def decode_one_trial(
@@ -399,6 +522,7 @@ def decode_one_trial(
         LogisticCalibrationMethod.NONE
     ),
     logistic_calibration_cv: int = 5,
+    grid_search_for_c: bool = False,
 ):
     """Decode a single test trial across all bins with optional shuffles.
 
@@ -410,6 +534,10 @@ def decode_one_trial(
     set, so changing repeat behavior does not change the null estimates. When
     delay pooling is enabled, a decoder tested at a bin starting in [500, 1400]
     is trained on every delay bin from each selected training trial.
+    When grid_search_for_c is enabled, each empirical or null decoder searches
+    C independently after its balancing, feature shuffling, pooling, and label
+    shuffling steps. The returned C arrays align with the empirical-repeat and
+    null confidence arrays.
     """
     if n_repeats_for_model_fit < 1:
         raise ValueError('n_repeats_for_model_fit must be at least 1.')
@@ -460,12 +588,22 @@ def decode_one_trial(
             if n_shuffle <= 0
             else np.full((num_bins, n_shuffle), np.nan, dtype=np.float32)
         )
+        repeat_classifier_c = np.full(
+            (n_repeats_for_model_fit, num_bins), np.nan, dtype=np.float64
+        )
+        null_classifier_c = (
+            None
+            if n_shuffle <= 0
+            else np.full((num_bins, n_shuffle), np.nan, dtype=np.float64)
+        )
         return (
             repeat_conf,
             repeat_predicted_labels,
             repeat_accuracy,
             null_conf,
             (),
+            repeat_classifier_c,
+            null_classifier_c,
         )
 
     train_balanced_repeats = []
@@ -492,32 +630,22 @@ def decode_one_trial(
     repeat_accuracy = np.empty(
         (n_repeats_for_model_fit, num_bins), dtype=np.float32
     )
+    repeat_classifier_c = np.empty(
+        (n_repeats_for_model_fit, num_bins), dtype=np.float64
+    )
 
     effective_calibration_cv_folds: set[int] = set()
 
-    def create_model(y_train, sample_groups):
+    def create_model(selected_classifier_c, y_train, sample_groups):
+        base_estimator = create_base_decoder(
+            selected_classifier_c,
+            decoder_model,
+            svm_kernel,
+            seed,
+        )
         if decoder_model is DecoderModel.SVM:
-            classifier = SVC(
-                kernel=svm_kernel.value,
-                C=classifier_c,
-                probability=True,
-                random_state=seed,
-            )
-            return Pipeline([
-                ("scaler", StandardScaler()),
-                ("classifier", classifier),
-            ])
+            return base_estimator
         elif decoder_model is DecoderModel.LOGISTIC_REGRESSION:
-            classifier = LogisticRegression(
-                solver='liblinear',
-                C=classifier_c,
-                max_iter=1000,
-                random_state=seed,
-            )
-            base_estimator = Pipeline([
-                ("scaler", StandardScaler()),
-                ("classifier", classifier),
-            ])
             if logistic_calibration_method is LogisticCalibrationMethod.NONE:
                 return base_estimator
             calibration_cv, effective_cv_folds = (
@@ -587,7 +715,22 @@ def decode_one_trial(
                 repeat_binned_rates.shape[0],
                 X_train.shape[0],
             )
-            model = create_model(y_train, sample_groups)
+            selected_classifier_c = classifier_c
+            if grid_search_for_c:
+                selected_classifier_c = select_classifier_c(
+                    X_train,
+                    y_train,
+                    sample_groups,
+                    decoder_model,
+                    svm_kernel,
+                    seed,
+                    fit_context=(
+                        f'Empirical decoder test_idx={test_idx}, '
+                        f'repeat={repeat_idx}, bin={b}'
+                    ),
+                )
+            repeat_classifier_c[repeat_idx, b] = selected_classifier_c
+            model = create_model(selected_classifier_c, y_train, sample_groups)
             model.fit(X_train, y_train)
             proba = model.predict_proba(X_test)[0]
             class_index = int(np.flatnonzero(model.classes_ == 1)[0])
@@ -600,8 +743,10 @@ def decode_one_trial(
                 )
 
     null_conf = None
+    null_classifier_c = None
     if n_shuffle > 0:
         null_conf = np.empty((num_bins, n_shuffle), dtype=np.float32)
+        null_classifier_c = np.empty((num_bins, n_shuffle), dtype=np.float64)
         # Keep the shuffle path independent from model-fit repeats. Its first
         # balanced training set matches the pre-repeat implementation.
         shuffle_rng = np.random.default_rng(seed + int(test_idx))
@@ -660,7 +805,26 @@ def decode_one_trial(
             # Shuffle labels to estimate a null confidence distribution.
             for s in range(n_shuffle):
                 y_shuf = shuffle_rng.permutation(y_train)
-                model = create_model(y_shuf, sample_groups)
+                selected_classifier_c = classifier_c
+                if grid_search_for_c:
+                    selected_classifier_c = select_classifier_c(
+                        X_train,
+                        y_shuf,
+                        sample_groups,
+                        decoder_model,
+                        svm_kernel,
+                        seed,
+                        fit_context=(
+                            f'Null decoder test_idx={test_idx}, bin={b}, '
+                            f'shuffle={s}'
+                        ),
+                    )
+                null_classifier_c[b, s] = selected_classifier_c
+                model = create_model(
+                    selected_classifier_c,
+                    y_shuf,
+                    sample_groups,
+                )
                 model.fit(X_train, y_shuf)
                 proba = model.predict_proba(X_test)[0]
                 class_index = int(np.flatnonzero(model.classes_ == 1)[0])
@@ -672,6 +836,8 @@ def decode_one_trial(
         repeat_accuracy,
         null_conf,
         tuple(sorted(effective_calibration_cv_folds)),
+        repeat_classifier_c,
+        null_classifier_c,
     )
 
 def plot_decoding_heatmap(
@@ -792,6 +958,266 @@ def plot_decoding_confidence_lineplot(
     save_figure_all_formats(fig, fig_dir / f'{session}_{pref_cue}_lineplot.png', dpi=300)
     plt.close(fig)
 
+
+def log10_classifier_c(classifier_c):
+    values = np.asarray(classifier_c, dtype=np.float64)
+    invalid = (~np.isnan(values)) & ((~np.isfinite(values)) | (values <= 0))
+    if np.any(invalid):
+        raise ValueError('Classifier C values must be positive and finite or NaN.')
+    transformed = np.full(values.shape, np.nan, dtype=np.float64)
+    valid = np.isfinite(values)
+    transformed[valid] = np.log10(values[valid])
+    return transformed
+
+
+def mean_finite(values, axis: int):
+    """Average finite values without emitting warnings for empty slices."""
+    values = np.asarray(values, dtype=np.float64)
+    valid = np.isfinite(values)
+    counts = np.sum(valid, axis=axis)
+    totals = np.sum(np.where(valid, values, 0.0), axis=axis)
+    return np.divide(
+        totals,
+        counts,
+        out=np.full(totals.shape, np.nan, dtype=np.float64),
+        where=counts > 0,
+    )
+
+
+def mean_log10_classifier_c(classifier_c, axis: int):
+    """Average selected C values in log10 space without all-NaN warnings."""
+    return mean_finite(log10_classifier_c(classifier_c), axis=axis)
+
+
+def classifier_c_plot_limits(log10_c, grid_search_for_c: bool):
+    """Return stable log10(C) plot limits and candidate ticks."""
+    if grid_search_for_c:
+        candidate_ticks = np.sort(log10_classifier_c(CLASSIFIER_C_GRID))
+        return float(candidate_ticks[0]), float(candidate_ticks[-1]), candidate_ticks
+
+    finite_values = np.asarray(log10_c, dtype=np.float64)
+    finite_values = finite_values[np.isfinite(finite_values)]
+    if finite_values.size == 0:
+        return -0.5, 0.5, None
+    lower = float(np.min(finite_values))
+    upper = float(np.max(finite_values))
+    if np.isclose(lower, upper):
+        lower -= 0.5
+        upper += 0.5
+    return lower, upper, None
+
+
+def plot_classifier_c_heatmap(
+    fig_dir,
+    session,
+    pref_cue,
+    cue_angle,
+    trial_idx_pref,
+    bin_starts,
+    mean_log10_c,
+    plot_actual_trial_id,
+    num_cells,
+    grid_search_for_c,
+    *,
+    label,
+    filename_suffix,
+):
+    """Save a trial-by-time heatmap of mean selected log10(C)."""
+    mean_log10_c = np.asarray(mean_log10_c, dtype=np.float64)
+    vmin, vmax, candidate_ticks = classifier_c_plot_limits(
+        mean_log10_c,
+        grid_search_for_c,
+    )
+    colorbar_options = {'label': r'$\log_{10}(C)$'}
+    if candidate_ticks is not None:
+        colorbar_options['ticks'] = candidate_ticks
+
+    fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+    sns.heatmap(
+        mean_log10_c,
+        ax=ax,
+        vmin=vmin,
+        vmax=vmax,
+        cmap='viridis',
+        cbar_kws=colorbar_options,
+    )
+    xticks = [i for i, t_val in enumerate(bin_starts) if t_val % 200 == 0]
+    ax.set_xticks([x + 0.5 for x in xticks])
+    ax.set_xticklabels([str(bin_starts[x]) for x in xticks], rotation=0)
+    ytick_positions = np.arange(9, trial_idx_pref.size, 10)
+    ax.set_yticks(ytick_positions + 0.5)
+    if plot_actual_trial_id:
+        ytick_labels = [str(trial_idx_pref[i]) for i in ytick_positions]
+    else:
+        ytick_labels = [str(i + 1) for i in ytick_positions]
+    ax.set_yticklabels(ytick_labels, rotation=0)
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel('Trial')
+    ax.set_title(
+        f'{session} ({cue_angle}$\\degree$), {num_cells} cells, '
+        f'{trial_idx_pref.size} trials\n{label}'
+    )
+    save_figure_all_formats(
+        fig,
+        fig_dir / f'{session}_{pref_cue}_{filename_suffix}.png',
+        dpi=300,
+    )
+    plt.close(fig)
+
+
+def plot_classifier_c_lineplot(
+    fig_dir,
+    session,
+    pref_cue,
+    cue_angle,
+    trial_idx_pref,
+    bin_starts,
+    mean_log10_c,
+    num_cells,
+    grid_search_for_c,
+    *,
+    label,
+    filename_suffix,
+):
+    """Save trial and session summaries of mean selected log10(C)."""
+    mean_log10_c = np.asarray(mean_log10_c, dtype=np.float64)
+    vmin, vmax, candidate_ticks = classifier_c_plot_limits(
+        mean_log10_c,
+        grid_search_for_c,
+    )
+    fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+    for trial_log10_c in mean_log10_c:
+        ax.plot(bin_starts, trial_log10_c, color='darkgray', alpha=0.1)
+    session_mean_log10_c = mean_finite(mean_log10_c, axis=0)
+    ax.plot(
+        bin_starts,
+        session_mean_log10_c,
+        color='tab:orange',
+        alpha=0.8,
+        label='Session mean',
+    )
+    ax.axvline(0, color='black', linewidth=1)
+    if bin_starts.size:
+        ax.set_xlim(float(bin_starts[0]), float(bin_starts[-1]))
+    ax.set_ylim(vmin, vmax)
+    if candidate_ticks is not None:
+        ax.set_yticks(candidate_ticks)
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel(r'$\log_{10}(C)$')
+    ax.legend(loc='best', frameon=False)
+    ax.set_title(
+        f'{session} ({cue_angle}$\\degree$), {num_cells} cells, '
+        f'{trial_idx_pref.size} trials\n{label}'
+    )
+    save_figure_all_formats(
+        fig,
+        fig_dir / f'{session}_{pref_cue}_{filename_suffix}_lineplot.png',
+        dpi=300,
+    )
+    plt.close(fig)
+
+
+def plot_decoding_classifier_c(
+    fig_dir,
+    session,
+    pref_cue,
+    cue_angle,
+    trial_idx_pref,
+    bin_starts,
+    classifier_c_repeats,
+    classifier_c_null,
+    plot_actual_trial_id,
+    num_cells,
+    grid_search_for_c,
+):
+    """Save empirical and optional null selected-C heatmaps and line plots."""
+    trial_idx_pref = np.asarray(trial_idx_pref, dtype=np.int64)
+    bin_starts = np.asarray(bin_starts)
+    classifier_c_repeats = np.asarray(classifier_c_repeats, dtype=np.float64)
+    if classifier_c_repeats.ndim != 3:
+        raise ValueError(
+            'classifier_c_repeats must have shape (trial, repeat, bin).'
+        )
+    if (
+        classifier_c_repeats.shape[0] != trial_idx_pref.size
+        or classifier_c_repeats.shape[2] != bin_starts.size
+    ):
+        raise ValueError(
+            'classifier_c_repeats must match the trial and bin dimensions.'
+        )
+    empirical_mean_log10_c = mean_log10_classifier_c(
+        classifier_c_repeats,
+        axis=1,
+    )
+    plot_classifier_c_heatmap(
+        fig_dir,
+        session,
+        pref_cue,
+        cue_angle,
+        trial_idx_pref,
+        bin_starts,
+        empirical_mean_log10_c,
+        plot_actual_trial_id,
+        num_cells,
+        grid_search_for_c,
+        label='Empirical selected $\\log_{10}(C)$ (mean over repeats)',
+        filename_suffix='classifier_c',
+    )
+    plot_classifier_c_lineplot(
+        fig_dir,
+        session,
+        pref_cue,
+        cue_angle,
+        trial_idx_pref,
+        bin_starts,
+        empirical_mean_log10_c,
+        num_cells,
+        grid_search_for_c,
+        label='Empirical selected $\\log_{10}(C)$ (mean over repeats)',
+        filename_suffix='classifier_c',
+    )
+
+    if classifier_c_null is None:
+        return
+    classifier_c_null = np.asarray(classifier_c_null, dtype=np.float64)
+    if classifier_c_null.ndim != 3:
+        raise ValueError('classifier_c_null must have shape (trial, bin, shuffle).')
+    if (
+        classifier_c_null.shape[0] != trial_idx_pref.size
+        or classifier_c_null.shape[1] != bin_starts.size
+    ):
+        raise ValueError('classifier_c_null must match the trial and bin dimensions.')
+    if classifier_c_null.shape[2] == 0:
+        return
+    null_mean_log10_c = mean_log10_classifier_c(classifier_c_null, axis=2)
+    plot_classifier_c_heatmap(
+        fig_dir,
+        session,
+        pref_cue,
+        cue_angle,
+        trial_idx_pref,
+        bin_starts,
+        null_mean_log10_c,
+        plot_actual_trial_id,
+        num_cells,
+        grid_search_for_c,
+        label='Null selected $\\log_{10}(C)$ (mean over shuffles)',
+        filename_suffix='classifier_c_null',
+    )
+    plot_classifier_c_lineplot(
+        fig_dir,
+        session,
+        pref_cue,
+        cue_angle,
+        trial_idx_pref,
+        bin_starts,
+        null_mean_log10_c,
+        num_cells,
+        grid_search_for_c,
+        label='Null selected $\\log_{10}(C)$ (mean over shuffles)',
+        filename_suffix='classifier_c_null',
+    )
+
 def total_unique_trials(partitions):
     """Count unique trials covered by a list of partitions."""
     if not partitions:
@@ -815,7 +1241,8 @@ class Config:
     decoder_model: DecoderModel = DecoderModel.SVM # classifier used by the decoder
     svm_kernel: SVMKernel = SVMKernel.RBF # SVM kernel used by the decoder
     balance_decoder_training_trials: bool = True # balance preferred/opposite training trials
-    classifier_c: float = 0.1 # regularization parameter shared by SVM and logistic regression
+    classifier_c: float = 0.1 # fixed C used by either classifier when grid search is disabled
+    grid_search_for_c: bool = False # select C independently for every decoder fit using grouped CV
     logistic_calibration_method: LogisticCalibrationMethod = LogisticCalibrationMethod.NONE # optional CV-based logistic probability calibration
     logistic_calibration_cv: int = 5 # requested inner CV folds for logistic calibration
     min_cell_per_group: int = 12 # a good partition has at least one group with this many cells
@@ -843,7 +1270,10 @@ def main(config: Config):
     probability=True; logistic regression can optionally use nested, CV-based
     sigmoid or isotonic probability calibration. Calibration folds contain only
     outer training trials and keep pooled delay-bin samples grouped by trial.
-    Both classifiers use classifier_c as their regularization parameter.
+    Both classifiers use classifier_c as their regularization parameter unless
+    grid_search_for_c selects C independently for every prepared decoder fit.
+    The search uses five source-trial-grouped folds and balanced accuracy over
+    C=(1, 0.1, 0.01), before optional logistic probability calibration.
     For each eligible session, it keeps correct trials from the preferred cue
     and its opposite, bins spike rates over sliding time windows, and decodes
     each preferred-cue trial in parallel to produce a time-by-trial confidence map.
@@ -976,6 +1406,30 @@ def main(config: Config):
                 decode_test_labels,
                 int(res.get('num_cells', 0)),
             )
+            cached_classifier_c_repeats = res.get(
+                'decoding_classifier_c_repeats'
+            )
+            if cached_classifier_c_repeats is None:
+                print(
+                    f'Warning: cached result for '
+                    f'{res.get("session", "unknown_session")} does not contain '
+                    'decoder C values; skipping C plots. Rerun decoding '
+                    'without --plot-only to create them.'
+                )
+            else:
+                plot_decoding_classifier_c(
+                    fig_dir,
+                    res.get('session', 'unknown_session'),
+                    res.get('cue', 0),
+                    res.get('cue_deg', 0),
+                    trial_idx_pref,
+                    bin_starts,
+                    cached_classifier_c_repeats,
+                    res.get('decoding_classifier_c_null'),
+                    plot_actual_trial_id,
+                    int(res.get('num_cells', 0)),
+                    bool(res.get('grid_search_for_c', False)),
+                )
         return
     
     if not selection_pkl.exists():
@@ -1103,7 +1557,9 @@ def main(config: Config):
             f'decode_shuffles={n_decode_shuffle}, '
             f'cue_preserved_trial_idx_shuffles='
             f'{config.n_cue_preserved_trial_idx_shuffle}, '
-            f'C={classifier_c}, '
+            f'grid_search_for_c={config.grid_search_for_c}, '
+            f'C='
+            f'{CLASSIFIER_C_GRID if config.grid_search_for_c else classifier_c}, '
             f'{selected_trial_idx.size} trials '
             f'({test_sel_indices.size} test trials)'
         )
@@ -1134,6 +1590,8 @@ def main(config: Config):
                 repeat_accuracy,
                 null_conf,
                 effective_calibration_cv_folds,
+                repeat_classifier_c,
+                null_classifier_c,
             ) = decode_one_trial(
                 idx_test,
                 binned_rates,
@@ -1145,6 +1603,7 @@ def main(config: Config):
                 svm_kernel,
                 n_repeats_for_model_fit,
                 n_decode_shuffle,
+                grid_search_for_c=config.grid_search_for_c,
                 cue_preserved_train_set_shuffle=(
                     config.cue_preserved_train_set_shuffle
                 ),
@@ -1164,6 +1623,8 @@ def main(config: Config):
                 repeat_accuracy,
                 null_conf,
                 effective_calibration_cv_folds,
+                repeat_classifier_c,
+                null_classifier_c,
                 int(cell_idx.size),
             )
 
@@ -1201,6 +1662,8 @@ def main(config: Config):
             trial_idx_pref = []
             predicted_labels_list = []
             accuracy_list = []
+            classifier_c_repeats_list = []
+            classifier_c_null_list = []
             test_labels_pref = []
             num_cells_per_trial: list[int] = []
             effective_calibration_cv_folds: set[int] = set()
@@ -1213,6 +1676,8 @@ def main(config: Config):
                 repeat_accuracy,
                 null_conf,
                 trial_effective_calibration_cv_folds,
+                repeat_classifier_c,
+                null_classifier_c,
                 n_cell,
             ) in decoded:
                 if status == 'warn_no_partitions':
@@ -1224,9 +1689,12 @@ def main(config: Config):
                 conf_list.append(repeat_conf)
                 predicted_labels_list.append(repeat_predicted_labels)
                 accuracy_list.append(repeat_accuracy)
+                classifier_c_repeats_list.append(repeat_classifier_c)
                 test_labels_pref.append(test_label)
                 if null_conf is not None:
                     null_list.append(null_conf)
+                if null_classifier_c is not None:
+                    classifier_c_null_list.append(null_classifier_c)
                 trial_idx_pref.append(trial_abs)
                 num_cells_per_trial.append(n_cell)
                 effective_calibration_cv_folds.update(
@@ -1239,7 +1707,16 @@ def main(config: Config):
                 'confidence': np.stack(conf_list, axis=0),
                 'predicted_labels': np.stack(predicted_labels_list, axis=0),
                 'accuracy_per_trial': np.stack(accuracy_list, axis=0),
+                'classifier_c_repeats': np.stack(
+                    classifier_c_repeats_list,
+                    axis=0,
+                ),
                 'null': np.stack(null_list, axis=0) if null_list else None,
+                'classifier_c_null': (
+                    np.stack(classifier_c_null_list, axis=0)
+                    if classifier_c_null_list
+                    else None
+                ),
                 'trial_idx': np.asarray(trial_idx_pref, dtype=np.int64),
                 'test_labels': np.asarray(test_labels_pref, dtype=np.int8),
                 'num_cells_per_trial': num_cells_per_trial,
@@ -1280,6 +1757,10 @@ def main(config: Config):
             [batch['confidence'] for batch in decoded_batches],
             axis=1,
         )
+        decode_classifier_c_repeats = np.concatenate(
+            [batch['classifier_c_repeats'] for batch in decoded_batches],
+            axis=1,
+        )
         decode_predicted_labels = np.concatenate(
             [batch['predicted_labels'] for batch in decoded_batches],
             axis=1,
@@ -1294,16 +1775,35 @@ def main(config: Config):
         )
         decode_accuracy = np.nanmean(decode_accuracy_repeats, axis=0)
         decode_confidence_null = None
+        decode_classifier_c_null = None
         if n_decode_shuffle > 0:
             null_batches = [batch['null'] for batch in decoded_batches]
+            classifier_c_null_batches = [
+                batch['classifier_c_null'] for batch in decoded_batches
+            ]
             if all(null_batch is not None for null_batch in null_batches):
                 # Each cue-preserved shuffle contributes its null samples to
                 # the existing shuffle axis.
                 decode_confidence_null = np.concatenate(null_batches, axis=2)
+                if not all(
+                    null_classifier_c is not None
+                    for null_classifier_c in classifier_c_null_batches
+                ):
+                    raise RuntimeError(
+                        'Missing classifier C values for decoded null confidence.'
+                    )
+                decode_classifier_c_null = np.concatenate(
+                    classifier_c_null_batches,
+                    axis=2,
+                )
             else:
                 decode_confidence_null = np.empty(
                     (0, len(bin_starts), n_decode_shuffle),
                     dtype=np.float32,
+                )
+                decode_classifier_c_null = np.empty(
+                    (0, len(bin_starts), n_decode_shuffle),
+                    dtype=np.float64,
                 )
 
         cue_angle = int(cue_to_deg(pref_cue))
@@ -1315,6 +1815,7 @@ def main(config: Config):
             'time_bins': bin_starts,
             'decoding_confidence': decode_confidence,
             'decoding_confidence_repeats': decode_confidence_repeats,
+            'decoding_classifier_c_repeats': decode_classifier_c_repeats,
             'decoding_predicted_labels': decode_predicted_labels,
             'decoding_accuracy': decode_accuracy,
             'decoding_accuracy_repeats': decode_accuracy_repeats,
@@ -1327,6 +1828,13 @@ def main(config: Config):
                 config.train_delay_decoder_using_all_delay_time_bins
             ),
             'n_decode_shuffle': int(n_decode_shuffle),
+            'grid_search_for_c': bool(config.grid_search_for_c),
+            'configured_classifier_c': classifier_c,
+            'classifier_c_grid': CLASSIFIER_C_GRID,
+            'classifier_c_grid_search_cv_folds': CLASSIFIER_C_GRID_SEARCH_CV,
+            'classifier_c_grid_search_scoring': (
+                CLASSIFIER_C_GRID_SEARCH_SCORING
+            ),
             'n_cue_preserved_trial_idx_shuffle': int(
                 config.n_cue_preserved_trial_idx_shuffle
             ),
@@ -1340,6 +1848,7 @@ def main(config: Config):
             ),
             'decoding_test_labels': decode_test_labels,
             'decoding_confidence_null': decode_confidence_null,
+            'decoding_classifier_c_null': decode_classifier_c_null,
             'num_cells': int(max(num_cells_per_trial)),
             'num_cells_per_trial': num_cells_per_trial,
             'num_trials': int(len(trial_idx_pref)),
@@ -1373,6 +1882,19 @@ def main(config: Config):
             decode_accuracy_repeats,
             decode_test_labels,
             int(max(num_cells_per_trial)),
+        )
+        plot_decoding_classifier_c(
+            fig_dir,
+            session,
+            pref_cue,
+            cue_angle,
+            np.asarray(trial_idx_pref, dtype=np.int64),
+            bin_starts,
+            decode_classifier_c_repeats,
+            decode_classifier_c_null,
+            plot_actual_trial_id,
+            int(max(num_cells_per_trial)),
+            config.grid_search_for_c,
         )
 
 if __name__ == "__main__":
