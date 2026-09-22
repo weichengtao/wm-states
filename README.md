@@ -69,7 +69,18 @@ uv run python scripts/decoding_confidence.py \
 --seed 42 \
 --max-sessions-to-run 25
 
-# 3. Identify and summarize on/off states.
+# 3. Evaluate observed and shuffled null confidence.
+uv run python scripts/eval_confidence.py \
+--cache-dir cache/run_034_full_session
+
+# Compare evaluated runs (optional; run step 3 for each cache directory first).
+uv run python scripts/eval_confidence_across_runs.py \
+--cache-dirs cache/run_034_full_session cache/run_032_full_session cache/run_037_full_session cache/run_038_full_session \
+--run-aliases "fixed c = 1; w/ calib." "fixed c = 1; w/o calib." "optimal c; w/ calib." "optimal c; w/o calib." \
+--line-colors "tab:blue" "tab:orange"  "tab:green"  "tab:red" \
+--null-shading percentiles
+
+# 4. Identify and summarize on/off states.
 uv run python scripts/on_off_states.py \
 --cache-dir cache/run_034_full_session \
 --cc-method-on one_tailed \
@@ -80,7 +91,7 @@ uv run python scripts/on_off_states.py \
 --list-of-repeats 0 \
 --cluster-size-threshold-off 1
 
-# 4. Inspect repeat-level accuracy, confidence, and state assignments (optional).
+# 5. Inspect repeat-level accuracy, confidence, and state assignments (optional).
 uv run python scripts/inspect_decoding_results.py \
 --cache-dir cache/run_034_full_session \
 --session 221024 \
@@ -90,7 +101,7 @@ uv run python scripts/inspect_decoding_results.py \
 --with-state \
 --compare-with-repeat-idx 0
 
-# 5. Compare top preferred-cell activity across states and cue groups.
+# 6. Compare top preferred-cell activity across states and cue groups.
 uv run python scripts/compare_activity_across_states.py \
 --data-dir data/nature \
 --cache-dir cache/run_034_full_session \
@@ -101,14 +112,14 @@ uv run python scripts/compare_activity_across_states.py \
 --compare-with-max-off-state \
 --pev-weighted-average
 
-# 6. Regress CC-applied off-state duration on baseline, delay, and encoding activity.
+# 7. Regress CC-applied off-state duration on baseline, delay, and encoding activity.
 uv run python scripts/predict_off_state_duration_using_baseline_activity.py \
 --data-dir data/nature \
 --cache-dir cache/run_034_full_session \
 --compare-with-delay \
 --compare-with-encoding
 
-# 7. Regress CC-applied off-state duration on session cell counts.
+# 8. Regress CC-applied off-state duration on session cell counts.
 uv run python scripts/predict_off_state_duration_using_cell_count.py \
 --data-dir data/nature \
 --cache-dir cache/run_034_full_session
@@ -145,6 +156,19 @@ uv run python scripts/predict_off_state_duration_using_cell_count.py \
 - `--n-repeats-for-model-fit 1` produces only repeat 0. The cue-preserved
   training-set shuffle intentionally leaves repeat 0 unchanged, so it has no
   effect unless the repeat count is increased.
+- Step 3 evaluates observed repeat 0 and every null shuffle without refitting.
+  Scores cover preferred-cue test trials. Accuracy uses cached observed
+  predictions (or a 0.5 probability threshold if unavailable); null accuracy
+  uses the same threshold. Missing values emit warnings and are excluded,
+  with valid counts stored per metric.
+- Cross-run comparison accepts two or more `--cache-dirs` and plots common
+  sessions. `--run-aliases` supplies legend names in the same order; otherwise
+  folder names are used. Each figure has Brier score, log loss, accuracy, and
+  decoding confidence rows, observed/null columns, and one legend.
+- `--null-shading percentiles` (default) shows the 2.5th–97.5th percentile range
+  across shuffle scores. Use `confidence_intervals` for a pointwise 95%
+  t-interval of the null mean or `none` for no shading. Bands require at least
+  two valid shuffles per bin; the mean line is unchanged.
 - On/off-state detection uses one-tailed cluster correction, also generates
   uncorrected comparison summaries, and uses decoder repeat 0.
 - The activity comparison generates separate figures for preferred-cue on/off
@@ -164,18 +188,19 @@ uv run python scripts/predict_off_state_duration_using_cell_count.py \
   `--max-points-per-max-off-state N` to subsample each state independently.
 - `--compare-with-delay` and `--compare-with-encoding` add delay- and
   encoding-activity regressions to the baseline regression.
-- Add `--pev-weighted-average` to steps 5 and 6 to weight preferred and
+- Add `--pev-weighted-average` to steps 6 and 7 to weight preferred and
   selective non-preferred cells by their cached `mean_pev_test` when computing
   population mean activity. Stationary non-selective cells remain equally
   weighted because their PEV estimates are noisy. The option does not affect
   active-cell counts, individual-cell plots, or PCA.
 
 Primary caches are written directly under `cache/run_034_full_session/`,
-including `cell_trial_selection.pkl`, `decoding_confidence.pkl`, and
-`on_off_states.pkl`. Step 3 must be rerun if an older `on_off_states.pkl` lacks
-trial-level maximum off-state duration. Fixed-effects results from steps 6 and
-7 are grouped under `fixedlm/`. PEV-weighted results from steps 5 and 6 are
-written to a `pev_weighted/` subfolder inside the corresponding analysis
+including `cell_trial_selection.pkl`, `decoding_confidence.pkl`,
+`eval_confidence.pkl`, and `on_off_states.pkl`. Step 4 must be rerun if an older
+`on_off_states.pkl` lacks trial-level maximum off-state duration.
+Fixed-effects results from steps 7 and 8 are grouped under `fixedlm/`.
+PEV-weighted results from steps 6 and 7 are written to a `pev_weighted/`
+subfolder inside the corresponding analysis
 directory, leaving equal-weight results unchanged.
 
 Each session in `decoding_confidence.pkl` records the exact regularization used
@@ -189,6 +214,13 @@ across repeats or null shuffles; line plots show those trial summaries and their
 session mean. Plot-only mode regenerates these C figures from the cached
 tensors; older caches without the C tensors still regenerate confidence figures
 but require decoding to be rerun before C figures can be produced.
+
+Step 3 writes `eval_confidence.csv` (session summaries) and
+`eval_confidence.pkl` (observed/null scores by time bin and individual shuffle).
+Rerun it to refresh older evaluation caches. Cross-run PNGs are saved in every
+supplied run cache under
+`eval_confidence_across_runs/<run_a>_vs_<run_b>[_vs_<run_c>...]/<session>_confidence_scores.png`.
+Rerunning a comparison replaces its figures.
 
 ## Mixed-effects pipeline
 
