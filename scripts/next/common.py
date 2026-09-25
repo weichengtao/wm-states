@@ -1,5 +1,5 @@
 """Shared session validation, binning, provenance and bounded parallelism."""
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from enum import Enum
 import hashlib
 import json
@@ -83,7 +83,8 @@ def json_value(value):
 
 
 def fingerprint(config, paths=(), *, exclude=()):
-    settings = {k: v for k, v in asdict(config).items() if k not in exclude}
+    settings = asdict(config) if is_dataclass(config) else dict(config)
+    settings = {k: v for k, v in settings.items() if k not in exclude}
     digest = hashlib.sha256(json.dumps(settings, sort_keys=True, default=json_value).encode())
     # Include code so checkpoints cannot outlive a changed implementation.
     for path in sorted(Path(__file__).parent.glob('*.py')):
@@ -95,6 +96,46 @@ def fingerprint(config, paths=(), *, exclude=()):
             for block in iter(lambda: stream.read(1024 * 1024), b''):
                 digest.update(block)
     return digest.hexdigest()
+
+
+def decoding_fingerprint(config, selection_path, data_path):
+    """Use the same provenance rules for decoder resume and downstream checks."""
+    return fingerprint(config, [selection_path, data_path], exclude=(
+        'n_jobs', 'par_verbose', 'resume', 'plot_only', 'save_figures',
+        'plot_actual_trial_id', 'session_list_file', 'max_sessions_to_run',
+    ))
+
+
+def validate_state_provenance(state_results, cache_dir, data_dir):
+    """Reject stale state/decoding/selection/data combinations before analysis."""
+    from scripts.next import cache_io
+
+    cache_dir, data_dir = Path(cache_dir), Path(data_dir)
+    decoding_path = cache_dir / 'decoding_confidence.pkl'
+    rerun = 'Rerun decode, evaluate, and states with the current selection cache and data before downstream analyses.'
+    if not decoding_path.exists():
+        raise ValueError(f'Missing decoding cache for provenance validation. {rerun}')
+    decoded = cache_io.read(decoding_path)
+    by_session = {str(result['session']): result for result in decoded}
+    if len(by_session) != len(decoded):
+        raise ValueError(f'Duplicate sessions in decoding cache. {rerun}')
+    for state in state_results:
+        session = str(state['session'])
+        result = by_session.get(session)
+        if result is None:
+            raise ValueError(f'Session {session}: no matching decoding result. {rerun}')
+        key = result.get('fingerprint')
+        if not key or state.get('decoding_fingerprint') != key:
+            raise ValueError(f'Session {session}: state/decoding fingerprint mismatch or missing provenance. {rerun}')
+        for field in ('cue', 'trial_idx', 'time_bins'):
+            if field not in state or field not in result or not np.array_equal(state[field], result[field]):
+                raise ValueError(f'Session {session}: state/decoding {field} mismatch. {rerun}')
+        if not isinstance(result.get('config'), dict) or not result['config']:
+            raise ValueError(f'Session {session}: missing decoding settings for provenance validation. {rerun}')
+        current = decoding_fingerprint(result['config'], cache_dir / 'cell_trial_selection.pkl',
+                                       data_dir / f'{session}.mat')
+        if current != key:
+            raise ValueError(f'Session {session}: decoding cache is stale for the current selection, data, or code. {rerun}')
 
 
 def session_files(data_dir, session_list_file=None, max_sessions_to_run=None):

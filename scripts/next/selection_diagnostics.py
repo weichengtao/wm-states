@@ -24,10 +24,13 @@ def save_diagnostics(rows, files, config):
         mask = frame.session == path.stem
         if not mask.any():
             continue
-        spikes, times, _, _ = load_session(path)
+        spikes, times, _, correct = load_session(path)
         baseline = spikes[:, (times >= -400) & (times < 0)].sum(axis=1)
         delay = spikes[:, (times >= 500) & (times < 1400)].sum(axis=1)
-        presence = (spikes[:, (times >= -400) & (times < 1400)].sum(axis=1) > 0).mean(axis=0)
+        presence_mask = (times >= -400) & (times < 1400)
+        presence = np.full(spikes.shape[2], np.nan)
+        if correct.any() and presence_mask.any():
+            presence = (spikes[correct][:, presence_mask].sum(axis=1) > 0).mean(axis=0)
         correlations = [spearmanr(np.arange(len(baseline)), baseline[:, c]).statistic
                         if np.ptp(baseline[:, c]) else np.nan for c in range(spikes.shape[2])]
         frame.loc[mask, 'presence_ratio'] = presence

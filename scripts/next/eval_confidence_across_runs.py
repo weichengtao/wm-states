@@ -9,8 +9,8 @@ if __package__ in (None, ""):
 
 
 from scripts.next import cache_io as pickle
-from scripts.next.common import full_session_selection
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -89,6 +89,25 @@ def load_runs(cache_dirs):
         omitted = [session for session in run if session not in common]
         if omitted:
             print(f'{name}: omitting sessions absent from another run: {", ".join(omitted)}')
+    for session in common:
+        reference = runs[0][session]
+        for name, run in zip(names[1:], runs[1:]):
+            result = run[session]
+            differences = []
+            if reference.get('cue') is None or result.get('cue') is None:
+                differences.append('cue metadata is missing')
+            elif reference['cue'] != result['cue']:
+                differences.append(f'preferred cues differ ({reference["cue"]} vs {result["cue"]})')
+            if reference.get('trial_idx') is None or result.get('trial_idx') is None:
+                differences.append('trial ID metadata is missing')
+            elif not np.array_equal(np.sort(reference['trial_idx']), np.sort(result['trial_idx'])):
+                differences.append('trial IDs differ')
+            if differences:
+                warnings.warn(
+                    f'Session {session}, runs {names[0]} and {name}: {"; ".join(differences)}. '
+                    'Continuing comparison, but scores may describe different trial populations.',
+                    UserWarning, stacklevel=2,
+                )
     return names, runs, common
 
 

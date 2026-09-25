@@ -21,7 +21,7 @@ if __package__ in (None, ""):
 
 
 from scripts.next import cache_io as pickle
-from scripts.next.common import full_session_selection
+from scripts.next.common import full_session_selection, validate_state_provenance
 from dataclasses import dataclass, field, replace
 from itertools import combinations
 from pathlib import Path
@@ -1569,6 +1569,7 @@ def main(config: Config):
     sessions = [str(result.get("session", "unknown_session")) for result in state_results]
     if len(set(sessions)) != len(sessions):
         raise ValueError("The on/off-state cache contains duplicate session entries.")
+    validate_state_provenance(state_results, config.cache_dir, config.data_dir)
 
     figure_dir = weighting_subdir(
         config.cache_dir / output_subdir,

@@ -1,6 +1,51 @@
-# Refactor validation
+# Next pipeline validation
 
 ## Latest validation — 2026-09-26
+
+The cache-consistency and diagnostics follow-up passed **200 tests** in
+**4.599 seconds**: **83 next tests** and **117 historical tests**.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python -m unittest discover -s tests -v
+```
+
+Fifteen new regression tests cover:
+
+- Correct-trial presence ratios with the same half-open screening window,
+  including cells that fire only on incorrect trials.
+- Valid cache provenance with serialized decoder settings and changed worker
+  count; rejection of changed selection, source data, decoder settings, stale
+  or missing fingerprints, missing settings, missing or duplicate decoder
+  sessions, and mismatched state cues or trial/time axes.
+- Both downstream entry points rejecting stale states before analysis.
+- Cross-run warnings for different cues or trial sets and missing metadata,
+  while allowing comparison to proceed. Reordered identical trial sets do not
+  warn.
+
+The full eleven-stage smoke pipeline completed in `cache/test_run_041_next`:
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python scripts/next/pipeline.py \
+  --settings configs/next/smoke_pipeline.json \
+  --data-dir data/example --cache-dir cache/test_run_041_next \
+  --stages all --n-jobs 2
+```
+
+All eleven manifest entries are `complete` (118.399 seconds summed stage time).
+Sessions 210921, 211015, 221020, and 221024 produced 236 mixed-effects rows;
+all 214 CV fits converged with no fit errors. Valid provenance passed in
+activity comparison, preparation, and criticality's threshold preparation.
+Observed/null probabilities, observed predictions, trial IDs, time bins,
+on/off-state masks, and total/maximum off-state durations match
+`test_run_040_next` exactly for all four sessions. The smoke preset uses three
+null estimates and one mixed-effects holdout; this is an integration check,
+not a production-scale validation or controlled performance benchmark.
+
+The MkDocs strict build also passed. See the
+[cache provenance requirements](../next/configuration.md#resume-and-rerun)
+before using caches from an earlier code revision.
+
+## Earlier eleven-stage validation — 2026-09-26
 
 Validated with the repository's Python **3.12.12** environment. This section
 records the current eleven-stage pipeline; the historical records below refer
@@ -25,7 +70,7 @@ to earlier versions, including the two removed fixed-effects analyses.
 MPLCONFIGDIR=/tmp/wm-states-mpl .venv/bin/python -m unittest discover -s tests -v
 ```
 
-All **185 tests passed** in 3.861 seconds: **68 new tests** and **117 historical
+All **185 tests passed** in 4.138 seconds: **68 new tests** and **117 historical
 tests**. Four tests specific to the removed regressions were deleted and three
 runner regression tests were added, accounting for the change from 186 tests.
 
@@ -33,7 +78,7 @@ runner regression tests were added, accounting for the change from 186 tests.
   Tests verify execution order, manifest status, and decode null-shuffle counts.
 - Removed `baseline` and `cell-count` stages are rejected by the CLI and JSON
   settings before writing outputs, even when a different stage is requested.
-- All **16 remaining CLI help entry points** passed. README analysis commands
+- All **15 remaining CLI help entry points** passed. README analysis commands
   parse, local links resolve, and the five standalone stage configurations match
   the documented one-command run.
 - Both presets resolve in all/mixed modes. The runner uses explicit stage groups
@@ -94,6 +139,41 @@ at most 30 fitting iterations. These timings describe one local run, not a
 controlled performance benchmark. The full 100-null-shuffle/50-holdout production
 analysis was not run. CV convergence counts do not assert convergence of every
 non-CV fit.
+
+## Documentation site — 2026-09-26
+
+The validation record moved to `docs/validation/next.md`, and pipeline guides
+were organized under `docs/next`. The README links to these guides.
+
+- MkDocs 1.6.1 and Material for MkDocs 9.7.7 are locked in the optional
+  `docs` dependency group. Existing analysis-package versions are unchanged.
+- `uv run --group docs --locked mkdocs build --strict` builds all eleven
+  documentation pages successfully, with internal link and anchor validation.
+- `uv lock --check --offline` passes.
+- All local Markdown links resolve. Twenty analysis command examples parse,
+  runner examples resolve through dry runs, and the five standalone stage
+  configurations match the documented default pipeline.
+- The local preview renders the Material theme. Browser verification confirms
+  search results for checkpoints and navigation to the configuration guide.
+
+This documentation update did not rerun the scientific analysis or the unit
+suite; the analysis results above remain the last completed validation run.
+
+## Population ISI removal — 2026-09-26
+
+Population ISI was removed from `scripts/next` entirely. It is no longer an
+optional analysis. The outputs guide no longer lists it, and the migration guide
+records its removal. Historical validation notes are retained as historical only.
+
+- The removed `scripts.next.population_isi` module cannot be imported.
+- No implementation, preset, or test under the next directories references it.
+- All 185 tests pass, including 68 new-pipeline tests and 117 historical tests.
+- All 15 remaining CLI help entry points pass. Both presets resolve all eleven
+  runner stages; population ISI was never part of that stage registry.
+- The documentation site builds successfully with `mkdocs build --strict`.
+
+The eleven-stage scientific integration was not rerun for this removal; the
+`test_run_040_next` results above remain the last completed integration run.
 
 ## Historical validation records
 
@@ -168,7 +248,8 @@ Additional successful checks:
 
 - Inspection with observed confidence, null ranges, and state masks.
 - Full-session rejection diagnostics and histograms in `test_run_037_next`.
-- Population ISI analysis with two trial shuffles.
+- Population ISI analysis with two trial shuffles (historical check; this analysis
+  has since been removed from `scripts/next`).
 - A fixed-C, uncalibrated, zero-null run in `test_run_039_next`, followed by cross-run
   comparison against `test_run_038_next`, including missing-null handling.
 

@@ -23,7 +23,7 @@ if __package__ in (None, ""):
 
 import json
 from scripts.next import cache_io as pickle
-from scripts.next.common import full_session_selection
+from scripts.next.common import full_session_selection, validate_state_provenance
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -445,6 +445,7 @@ def prepare_data(config: Config) -> pd.DataFrame:
         off_state_results, list
     ):
         raise TypeError("Both input cache files must contain lists of results.")
+    validate_state_provenance(off_state_results, config.cache_dir, config.data_dir)
 
     seen_sessions: set[str] = set()
     rows: list[dict[str, Any]] = []

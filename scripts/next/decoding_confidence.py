@@ -19,7 +19,7 @@ from sklearn.calibration import CalibratedClassifierCV
 from threadpoolctl import threadpool_limits
 
 from scripts.next import cache_io
-from scripts.next.common import compute_binned_rates, fingerprint, json_value, load_session, session_files, worker_context
+from scripts.next.common import compute_binned_rates, decoding_fingerprint, json_value, load_session, session_files, worker_context
 from scripts.next.decoder_models import (
     CellsUsedForDecoder, DecoderModel, SVMKernel, LogisticCalibrationMethod,
     create_base_decoder, decoder_cells_for_session, preferred_cue_from_cells,
@@ -232,10 +232,8 @@ def main(config: Config):
         raise ValueError('No sessions passed decoding selection thresholds.')
     results = []
     checkpoint_dir = config.cache_dir / 'checkpoints' / 'decoding'
-    excluded = ('n_jobs', 'par_verbose', 'resume', 'plot_only', 'save_figures',
-                'plot_actual_trial_id', 'session_list_file', 'max_sessions_to_run')
     for file in eligible:
-        key = fingerprint(config, [selection_path, file], exclude=excluded)
+        key = decoding_fingerprint(config, selection_path, file)
         checkpoint = checkpoint_dir / f'{file.stem}.pkl'
         cached = cache_io.read(checkpoint) if config.resume and checkpoint.exists() else None
         if cached is not None and cached['fingerprint'] == key:
