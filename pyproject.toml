@@ -19,6 +19,7 @@ dependencies = [
   "scipy",
   "seaborn",
   "statsmodels>=0.14.6",
+  "threadpoolctl",
   "tqdm",
   "tyro",
 ]

@@ -1,0 +1,819 @@
+
+# Use one module namespace for direct CLI and package execution.
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    __package__ = "scripts.next"
+
+from scripts.next import cache_io as pickle
+from scripts.next.common import full_session_selection
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import tyro
+from scipy.ndimage import label
+
+from scripts.next.figure_exports import configure_figure_style, save_figure_all_formats
+
+matplotlib.use('Agg')
+configure_figure_style(matplotlib)
+
+def show_spines(ax, lw=1, color='black'):
+    for _, spine in ax.spines.items():
+        spine.set_visible(True)
+        spine.set_linewidth(lw)
+        spine.set_color(color)
+
+def add_off_cluster_cutoff_lines(ax, cutoffs):
+    cutoffs = np.asarray(cutoffs, dtype=float)
+    cutoffs = cutoffs[np.isfinite(cutoffs)]
+    for cutoff_idx, cutoff in enumerate(cutoffs):
+        cutoff_label = (
+            'Off-state CC cutoff'
+            if cutoffs.size == 1
+            else f'Off-state CC cutoff {cutoff_idx + 1}'
+        )
+        ax.axvline(
+            cutoff,
+            color='black',
+            linestyle='--',
+            linewidth=1.5,
+            label=cutoff_label,
+        )
+    if cutoffs.size:
+        ax.relim()
+        ax.autoscale_view()
+
+def cue_to_deg(cue):
+    '''
+    {
+        1: -135,
+        2: -90,
+        3: -45,
+        4: 0,
+        5: 45,
+        6: 90,
+        7: 135,
+        8: 180,
+    }
+    '''
+    cue = np.asarray(cue)
+    cue = (cue - 1) % 8 + 1
+    return (cue - 1) * 45 - 135
+
+def get_off_candidate_mask(z_map, z_threshold: float = 1.645, method: str = 'one_tailed'):
+    '''
+    Get off-state candidate mask from z_map using specified method.
+    method:
+        'two_tailed': find clusters where z-scores falling in between -z_threshold and z_threshold
+        'one_tailed': find clusters where z-scores below z_threshold
+    '''
+    if method == 'two_tailed':
+        off_candidate_mask = np.abs(z_map) <= z_threshold
+    elif method == 'one_tailed':
+        off_candidate_mask = z_map <= z_threshold
+    else:
+        raise ValueError(f'Unknown method: {method}')
+    return off_candidate_mask
+
+
+def infer_time_bin_step(bin_starts):
+    """Return the uniform time-bin step in milliseconds."""
+    bin_starts = np.asarray(bin_starts, dtype=float)
+    if bin_starts.size < 2:
+        raise ValueError('At least two time bins are required to infer t_decode_step.')
+    steps = np.diff(bin_starts)
+    if not np.all(np.isfinite(steps)) or not np.all(steps > 0):
+        raise ValueError('time_bins must be finite and strictly increasing.')
+    if not np.allclose(steps, steps[0]):
+        raise ValueError('time_bins must have a uniform t_decode_step.')
+    return float(steps[0])
+
+
+def off_state_duration_per_trial(
+    off_state_mask,
+    bin_starts,
+    t_decode_step,
+    delay_start,
+    delay_end,
+):
+    """Count delay-period off-state bins and multiply by ``t_decode_step``."""
+    bin_starts = np.asarray(bin_starts, dtype=float)
+    delay_bins = (bin_starts >= delay_start) & (bin_starts <= delay_end)
+    return (
+        np.asarray(off_state_mask[:, delay_bins], dtype=float).sum(axis=1)
+        * t_decode_step
+    )
+
+
+def max_off_state_duration_per_trial(
+    off_state_mask,
+    bin_starts,
+    t_decode_step,
+    delay_start,
+    delay_end,
+):
+    """Return the longest contiguous delay-period off-state run per trial."""
+    bin_starts = np.asarray(bin_starts, dtype=float)
+    delay_bins = (bin_starts >= delay_start) & (bin_starts <= delay_end)
+    delay_mask = np.asarray(off_state_mask[:, delay_bins], dtype=bool)
+    max_bin_counts = np.zeros(delay_mask.shape[0], dtype=float)
+
+    for trial_idx, trial_mask in enumerate(delay_mask):
+        padded_mask = np.pad(trial_mask, (1, 1), constant_values=False)
+        transitions = np.diff(padded_mask.astype(np.int8))
+        run_starts = np.flatnonzero(transitions == 1)
+        run_ends = np.flatnonzero(transitions == -1)
+        if run_starts.size:
+            max_bin_counts[trial_idx] = np.max(run_ends - run_starts)
+
+    return max_bin_counts * t_decode_step
+
+
+def state_durations(
+    state_mask,
+    state_ids,
+    state_labeled,
+    bin_starts,
+    t_decode_step,
+    delay_start,
+    delay_end,
+):
+    """Return cluster durations as delay-bin counts times ``t_decode_step``."""
+    if state_mask is None or not state_ids.size or state_labeled is None:
+        return np.array([], dtype=float)
+
+    bin_starts = np.asarray(bin_starts, dtype=float)
+    delay_bins = (bin_starts >= delay_start) & (bin_starts <= delay_end)
+    if not np.any(delay_bins):
+        return np.array([], dtype=float)
+
+    max_label = int(np.max(state_labeled))
+    bin_counts = np.bincount(
+        state_labeled[:, delay_bins].ravel(),
+        minlength=max_label + 1,
+    )
+    durations = bin_counts[np.asarray(state_ids, dtype=int)] * t_decode_step
+    return durations[durations > 0]
+
+
+def state_mask_for_cache(state_mask, expected_shape):
+    """Return a boolean state mask with stable trial-by-bin dimensions."""
+    expected_shape = tuple(expected_shape)
+    if state_mask is None:
+        return np.zeros(expected_shape, dtype=np.bool_)
+    state_mask = np.asarray(state_mask, dtype=np.bool_)
+    if state_mask.shape != expected_shape:
+        raise ValueError(
+            f'State mask shape {state_mask.shape} does not match expected '
+            f'trial-by-bin shape {expected_shape}.'
+        )
+    return state_mask
+
+
+@dataclass
+class Config:
+    cache_dir: Path = Path('cache/next_run') # directory for cached results and figures
+    z_threshold_on: float = 1.645
+    z_threshold_off: float = 0.842
+    cp_method_off: Literal['two_tailed', 'one_tailed'] = 'one_tailed'
+    cluster_size_threshold_off: int = 5
+    cc_method_on: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'
+    cc_method_off: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'
+    cc_alpha_on: float = 0.05
+    cc_alpha_off: float = 0.05
+    compare_with_cc_skipped_on: bool = False
+    compare_with_cc_skipped_off: bool = False
+    on_duration_xmax: float = 1000.0
+    off_duration_xmax: float = 1000.0
+
+    def __post_init__(self):
+        if not 0 < self.cc_alpha_on < 1 or not 0 < self.cc_alpha_off < 1:
+            raise ValueError('Cluster-correction alpha must be in (0, 1).')
+        if self.cluster_size_threshold_off < 1:
+            raise ValueError('cluster_size_threshold_off must be positive.')
+        if not np.isfinite(self.z_threshold_on) or not np.isfinite(self.z_threshold_off) or self.z_threshold_on < 0 or self.z_threshold_off < 0:
+            raise ValueError('State z thresholds must be finite and nonnegative.')
+
+def main(config: Config):
+    cache_dir = config.cache_dir
+    z_threshold_on = config.z_threshold_on
+    z_threshold_off = config.z_threshold_off
+    cp_method_off = config.cp_method_off
+    cluster_size_threshold_off = config.cluster_size_threshold_off
+    cc_method_on = config.cc_method_on
+    cc_method_off = config.cc_method_off
+    cc_alpha_on = config.cc_alpha_on
+    cc_alpha_off = config.cc_alpha_off
+    compare_with_cc_skipped_on = config.compare_with_cc_skipped_on
+    compare_with_cc_skipped_off = config.compare_with_cc_skipped_off
+    on_duration_xmax = max(100.0, config.on_duration_xmax)
+    off_duration_xmax = max(100.0, config.off_duration_xmax)
+
+    # for cluster identification
+    CONNECTIVITY_STRUCTURE = np.zeros((3, 3), dtype=int)
+    CONNECTIVITY_STRUCTURE[1, :] = 1
+
+    # load decoding confidence cache
+    with open(cache_dir / 'decoding_confidence.pkl', 'rb') as f:
+        outs = pickle.load(f)
+
+    # prepare figure dir for this analysis
+    fig_dir = cache_dir / 'on_off_states'
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    state_results = []
+
+    # loop through outs and get decoding confidence and null distribution
+    for out_dict in outs:
+        decoding_confidence = np.asarray(out_dict['decoding_confidence']) # (trial, bin)
+        decoding_confidence_null = out_dict.get('decoding_confidence_null', None) # (trial, bin, shuffle)
+        if decoding_confidence.ndim != 2 or not np.all(np.isfinite(decoding_confidence)):
+            raise ValueError('States require finite observed confidence (trial, bin).')
+        if decoding_confidence_null is None or decoding_confidence_null.shape[:2] != decoding_confidence.shape or decoding_confidence_null.ndim != 3 or decoding_confidence_null.shape[2] < 2 or not np.all(np.isfinite(decoding_confidence_null)):
+            raise ValueError('States require at least two finite null estimates per trial/bin.')
+        session = out_dict.get('session', 'unknown_session')
+        cue = out_dict.get('cue', 'unknown_cue')
+        bin_starts = np.asarray(out_dict.get('time_bins', None))
+        if bin_starts.shape != (decoding_confidence.shape[1],):
+            raise ValueError('Time bins must match the confidence bin axis.')
+
+        # define delay period
+        delay_start = 500 # first bin start
+        delay_end = 1400 # last bin start
+
+        if decoding_confidence is not None:
+            t_decode_step = infer_time_bin_step(bin_starts)
+            # prepare placeholders
+            on_state_mask = None
+            on_state_ids = np.array([], dtype=int)
+            on_state_labeled = None
+            off_state_mask = None
+            off_state_ids = np.array([], dtype=int)
+            off_state_labeled = None
+            null_cluster_masses = None
+            candidate_ids = np.array([], dtype=int)
+            off_cluster_masses = None
+            off_cluster_mass_cutoffs = np.array([], dtype=float)
+            on_state_mask_cc_skipped = None
+            on_state_ids_cc_skipped = np.array([], dtype=int)
+            on_state_labeled_cc_skipped = None
+            off_state_mask_cc_skipped = None
+            off_state_ids_cc_skipped = np.array([], dtype=int)
+            off_state_labeled_cc_skipped = None
+
+            if decoding_confidence_null is not None and decoding_confidence_null.shape[2] > 0:
+                # get on-state mask using cluster mass approach
+                # 1. convert decoding_confidence to z-score using null distribution mean and std
+                # 2. find clusters where z-scores exceed z_threshold_on and compute their cluster masses (sum of z-scores of a cluster)
+                # 3. repeat 1 - 2 for each shuffle in null distribution of decoding to get null distribution of max cluster masses
+                # 4. apply the requested cluster-based correction
+                # 5. create on-state mask
+
+                # 1: convert to z-score
+                null_mean = np.mean(decoding_confidence_null, axis=2)
+                null_std = np.std(decoding_confidence_null, axis=2)
+                safe_std = null_std.copy()
+                safe_std[safe_std == 0] = np.nan
+                z_map = (decoding_confidence - null_mean) / safe_std
+                valid_null = np.isfinite(safe_std)
+                z_map = np.where(valid_null, z_map, 0.0)
+
+                # Standardized shuffled maps are needed by either non-skipped
+                # cluster-based correction.  Compute them once for reuse below.
+                z_null = None
+                if cc_method_on != 'skipped' or cc_method_off != 'skipped':
+                    z_null = (decoding_confidence_null - null_mean[:, :, None]) / safe_std[:, :, None]
+                    z_null = np.nan_to_num(z_null)
+
+                # 2. get on-state candidate clusters and compute their cluster masses
+                on_candidate_mask = z_map > z_threshold_on
+                # the on_state_labeled is a 2d array with same shape as z_map
+                # each cluster is labeled with an integer starting from 1; background is labeled as 0
+                on_state_labeled, _ = label(on_candidate_mask, structure=CONNECTIVITY_STRUCTURE)
+                # compute cluster masses for each labeled on-state cluster (on_cluster_masses[i] is the mass of cluster i)
+                on_cluster_masses = np.bincount(on_state_labeled.ravel(), weights=z_map.ravel())
+                # if there is no cluster, ensure on_cluster_masses has at least one element (0 for background)
+                if on_cluster_masses.size == 0:
+                    on_cluster_masses = np.zeros(1, dtype=float)
+                # set background mass to 0 (on_cluster_masses[0] corresponds to background)
+                on_cluster_masses[0] = 0.0
+
+                if cc_method_on == 'skipped':
+                    # Skip cluster-based correction but retain all thresholded clusters.
+                    on_state_ids = np.flatnonzero(on_cluster_masses > 0)
+                else:
+                    # 3. get null distribution of max cluster masses (one per shuffle)
+                    null_max_masses = np.zeros(decoding_confidence_null.shape[2], dtype=float)
+                    for shuffle_idx in range(decoding_confidence_null.shape[2]):
+                        z_null_slice = z_null[:, :, shuffle_idx]
+                        supra_null = z_null_slice > z_threshold_on
+                        labeled_null, num_null_clusters = label(supra_null, structure=CONNECTIVITY_STRUCTURE)
+                        if num_null_clusters:
+                            null_masses = np.bincount(labeled_null.ravel(), weights=z_null_slice.ravel())
+                            if null_masses.size > 1:
+                                null_max_masses[shuffle_idx] = null_masses[1:].max()
+
+                    # 4. determine the cluster-mass cutoff based on the requested tail
+                    if cc_method_on == 'one_tailed':
+                        cutoff_percentile = 100 * (1 - cc_alpha_on)
+                    else:  # two_tailed
+                        cutoff_percentile = 100 * (1 - cc_alpha_on / 2)
+                    cluster_cutoff = np.percentile(null_max_masses, cutoff_percentile) if null_max_masses.size else np.inf
+                    on_state_ids = np.where(on_cluster_masses > cluster_cutoff)[0]
+
+                # 5. create on-state mask
+                if on_state_ids.size:
+                    on_state_mask = np.isin(on_state_labeled, on_state_ids)
+
+                # get off-state mask using cluster mass approach
+                # 1. convert decoding_confidence to z-score using null distribution mean and std
+                # 2. find off-state candidate clusters using the requested candidate-point method
+                # 3. keep clusters with size >= cluster_size_threshold_off as off-state candidates
+                # 4. compute cluster masses for all off-state candidate clusters
+                # 5. repeat 1 - 3 for each shuffle in null distribution of decoding to get null distribution of cluster masses
+                # 6. apply the requested cluster-based correction
+                # 7. create off-state mask
+
+                # 1: z_map already computed above
+
+                # 2 - 3: get off-state candidate clusters with size thresholding
+                off_candidate_mask = valid_null & get_off_candidate_mask(z_map, z_threshold_off, method=cp_method_off)
+                off_state_labeled, num_off_clusters = label(off_candidate_mask, structure=CONNECTIVITY_STRUCTURE)
+                if num_off_clusters:
+                    off_cluster_sizes = np.bincount(off_state_labeled.ravel())
+                    if off_cluster_sizes.size == 0:
+                        off_cluster_sizes = np.zeros(1, dtype=int)
+                    off_cluster_sizes[0] = 0
+                    candidate_ids = np.where(off_cluster_sizes >= cluster_size_threshold_off)[0]
+                    if candidate_ids.size:
+                        # 4. compute cluster masses for all labeled off-state clusters (not just candidate clusters)
+                        off_cluster_masses = np.bincount(off_state_labeled.ravel(), weights=z_map.ravel())
+                        if off_cluster_masses.size == 0:
+                            off_cluster_masses = np.zeros(1, dtype=float)
+                        if cc_method_off == 'skipped':
+                            # Skip cluster-based correction but retain size-qualified candidates.
+                            keep_ids = candidate_ids.tolist()
+                        else:
+                            # 5. get null distribution of off-state cluster masses (n valid clusters per shuffle)
+                            null_cluster_masses = []
+                            for shuffle_idx in range(decoding_confidence_null.shape[2]):
+                                z_null_slice = z_null[:, :, shuffle_idx]
+                                off_null_mask = valid_null & get_off_candidate_mask(z_null_slice, z_threshold_off, method=cp_method_off)
+                                labeled_null, num_null_clusters = label(off_null_mask, structure=CONNECTIVITY_STRUCTURE)
+                                if num_null_clusters:
+                                    null_sizes = np.bincount(labeled_null.ravel())
+                                    if null_sizes.size == 0:
+                                        null_sizes = np.zeros(1, dtype=int)
+                                    null_sizes[0] = 0
+                                    valid_null_ids = np.where(null_sizes >= cluster_size_threshold_off)[0]
+                                    if valid_null_ids.size:
+                                        # compute cluster masses for valid null clusters
+                                        masses = np.bincount(labeled_null.ravel(), weights=z_null_slice.ravel())
+                                        if masses.size == 0:
+                                            masses = np.zeros(1, dtype=float)
+                                        null_cluster_masses.append(masses[valid_null_ids])
+                            if null_cluster_masses:
+                                null_cluster_masses = np.concatenate(null_cluster_masses)
+                            else:
+                                null_cluster_masses = np.zeros(1, dtype=float)
+                            null_cluster_masses = null_cluster_masses[np.isfinite(null_cluster_masses)]
+                            if null_cluster_masses.size == 0:
+                                null_cluster_masses = np.zeros(1, dtype=float)
+                            # 6. keep off-state candidates according to the requested correction tail
+                            if cc_method_off == 'one_tailed':
+                                upper_mass_cutoff = np.percentile(null_cluster_masses, 100 * (1 - cc_alpha_off))
+                                off_cluster_mass_cutoffs = np.array([upper_mass_cutoff])
+                                keep_ids = [cid for cid in candidate_ids if off_cluster_masses[cid] <= upper_mass_cutoff]
+                            else:  # two_tailed
+                                lower_mass_cutoff = np.percentile(null_cluster_masses, 100 * (cc_alpha_off / 2))
+                                upper_mass_cutoff = np.percentile(null_cluster_masses, 100 * (1 - cc_alpha_off / 2))
+                                off_cluster_mass_cutoffs = np.array([lower_mass_cutoff, upper_mass_cutoff])
+                                keep_ids = [
+                                    cid for cid in candidate_ids
+                                    if lower_mass_cutoff <= off_cluster_masses[cid] <= upper_mass_cutoff
+                                ]
+                        # 7. create off-state mask
+                        if keep_ids:
+                            off_state_ids = np.array(keep_ids, dtype=int)
+                            off_state_mask = np.isin(off_state_labeled, off_state_ids)
+
+                # Reuse the same candidate clusters with correction skipped for
+                # optional duration-histogram comparisons. This changes only
+                # the relevant cluster-correction step.
+                if compare_with_cc_skipped_on and cc_method_on != 'skipped':
+                    on_state_labeled_cc_skipped = on_state_labeled
+                    on_state_ids_cc_skipped = np.flatnonzero(on_cluster_masses > 0)
+                    if on_state_ids_cc_skipped.size:
+                        on_state_mask_cc_skipped = np.isin(
+                            on_state_labeled_cc_skipped,
+                            on_state_ids_cc_skipped,
+                        )
+
+                if compare_with_cc_skipped_off and cc_method_off != 'skipped':
+                    off_state_labeled_cc_skipped = off_state_labeled
+                    off_state_ids_cc_skipped = candidate_ids.copy()
+                    if off_state_ids_cc_skipped.size:
+                        off_state_mask_cc_skipped = np.isin(
+                            off_state_labeled_cc_skipped,
+                            off_state_ids_cc_skipped,
+                        )
+
+            # save decoding confidence heatmap
+            fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+            sns.heatmap(decoding_confidence, vmin=0.5, vmax=1.0, ax=ax)
+            show_spines(ax)
+            plt.xlabel('Time (ms)')
+            plt.ylabel('Trial')
+            plt.title(f'Decoding Confidence\nSession: {session}, Cue: {cue_to_deg(cue)}°')
+            # set xticks and xticklabels; rotate to horizontal
+            xticks = np.arange(0, len(bin_starts), 20) # every 200ms
+            xticklabels = bin_starts[xticks]
+            plt.xticks(xticks, xticklabels, rotation=0)
+            # set yticks and yticklabels
+            yticks = np.arange(10, decoding_confidence.shape[0], 10) # every 10 trials starting from trial 10
+            yticklabels = yticks
+            plt.yticks(yticks, yticklabels)
+            # set limits and invert y axis
+            plt.xlim(0, len(bin_starts)) # ensure all time bins are shown
+            plt.ylim(decoding_confidence.shape[0], 0) # ensure all trials are shown
+            # save figure to fig_dir with session and cue in filename
+            save_figure_all_formats(fig, fig_dir / f'decoding_confidence_{session}_{cue}.png', dpi=300)
+            plt.close(fig)
+
+            # save on-state mask if exists
+            if on_state_mask is not None:
+                fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+                sns.heatmap(on_state_mask.astype(float), vmin=0, vmax=1, ax=ax)
+                show_spines(ax)
+                plt.xlabel('Time (ms)')
+                plt.ylabel('Trial')
+                plt.title(f'On-State Mask\nSession: {session}, Cue: {cue_to_deg(cue)}°')
+                # set xticks and xticklabels; rotate to horizontal
+                xticks = np.arange(0, len(bin_starts), 20) # every 200ms
+                xticklabels = bin_starts[xticks]
+                plt.xticks(xticks, xticklabels, rotation=0)
+                # set yticks and yticklabels
+                yticks = np.arange(10, decoding_confidence.shape[0], 10) # every 10 trials starting from trial 10
+                yticklabels = yticks
+                plt.yticks(yticks, yticklabels)
+                # set limits and invert y axis
+                plt.xlim(0, len(bin_starts)) # ensure all time bins are shown
+                plt.ylim(decoding_confidence.shape[0], 0) # ensure all trials are shown
+                # save figure to fig_dir with session and cue in filename
+                save_figure_all_formats(fig, fig_dir / f'on_state_mask_{session}_{cue}.png', dpi=300)
+                plt.close(fig)
+
+            # save off-state mask if exists
+            if off_state_mask is not None and off_state_ids.size:
+                fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+                sns.heatmap(off_state_mask.astype(float), vmin=0, vmax=1, ax=ax)
+                show_spines(ax)
+                plt.xlabel('Time (ms)')
+                plt.ylabel('Trial')
+                plt.title(f'Off-State Mask\nSession: {session}, Cue: {cue_to_deg(cue)}°')
+                xticks = np.arange(0, len(bin_starts), 20)
+                xticklabels = bin_starts[xticks]
+                plt.xticks(xticks, xticklabels, rotation=0)
+                yticks = np.arange(10, decoding_confidence.shape[0], 10)
+                yticklabels = yticks
+                plt.yticks(yticks, yticklabels)
+                plt.xlim(0, len(bin_starts))
+                plt.ylim(decoding_confidence.shape[0], 0)
+                save_figure_all_formats(fig, fig_dir / f'off_state_mask_{session}_{cue}.png', dpi=300)
+                plt.close(fig)
+
+            # save on off state duration histograms
+            # params for duration histograms
+            bin_size = 50
+            on_bins = np.arange(0, on_duration_xmax + bin_size, bin_size) # for on-state plot
+            off_bins = np.arange(0, off_duration_xmax + bin_size, bin_size) # for off-state plot
+            on_xlim = (0, on_duration_xmax)
+            off_xlim = (0, off_duration_xmax)
+
+            compare_on = compare_with_cc_skipped_on and cc_method_on != 'skipped'
+            on_durations = state_durations(
+                on_state_mask,
+                on_state_ids,
+                on_state_labeled,
+                bin_starts,
+                t_decode_step,
+                delay_start,
+                delay_end,
+            )
+            on_durations_cc_skipped = state_durations(
+                on_state_mask_cc_skipped if compare_on else None,
+                on_state_ids_cc_skipped,
+                on_state_labeled_cc_skipped,
+                bin_starts,
+                t_decode_step,
+                delay_start,
+                delay_end,
+            )
+            if on_durations.size or on_durations_cc_skipped.size:
+                fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+                if compare_on:
+                    if on_durations_cc_skipped.size:
+                        sns.histplot(
+                            on_durations_cc_skipped,
+                            bins=on_bins,
+                            ax=ax,
+                            color='tab:orange',
+                            label='CC skipped',
+                        )
+                    if on_durations.size:
+                        sns.histplot(
+                            on_durations,
+                            bins=on_bins,
+                            ax=ax,
+                            color='tab:blue',
+                            label='CC applied',
+                        )
+                    if on_durations.size and on_durations_cc_skipped.size:
+                        ax.legend(frameon=False)
+                else:
+                    sns.histplot(on_durations, bins=on_bins, ax=ax)
+                show_spines(ax)
+                plt.xlabel('Duration (ms)')
+                plt.ylabel('Count')
+                plt.title(f'On-State Duration\nSession: {session}, Cue: {cue_to_deg(cue)}°')
+                plt.xlim(*on_xlim)
+                save_figure_all_formats(fig, fig_dir / f'on_state_duration_{session}_{cue}.png', dpi=300)
+                plt.close(fig)
+
+            compare_off = compare_with_cc_skipped_off and cc_method_off != 'skipped'
+            off_durations = state_durations(
+                off_state_mask,
+                off_state_ids,
+                off_state_labeled,
+                bin_starts,
+                t_decode_step,
+                delay_start,
+                delay_end,
+            )
+            off_durations_cc_skipped = state_durations(
+                off_state_mask_cc_skipped if compare_off else None,
+                off_state_ids_cc_skipped,
+                off_state_labeled_cc_skipped,
+                bin_starts,
+                t_decode_step,
+                delay_start,
+                delay_end,
+            )
+            off_duration_per_trial = np.zeros(
+                decoding_confidence.shape[0], dtype=float
+            )
+            max_off_duration_per_trial = np.zeros(
+                decoding_confidence.shape[0], dtype=float
+            )
+            if off_state_mask is not None:
+                off_duration_per_trial = off_state_duration_per_trial(
+                    off_state_mask,
+                    bin_starts,
+                    t_decode_step,
+                    delay_start,
+                    delay_end,
+                )
+                max_off_duration_per_trial = max_off_state_duration_per_trial(
+                    off_state_mask,
+                    bin_starts,
+                    t_decode_step,
+                    delay_start,
+                    delay_end,
+                )
+
+            off_duration_per_trial_cc_skipped = np.array([], dtype=float)
+            max_off_duration_per_trial_cc_skipped = np.array([], dtype=float)
+            if compare_off:
+                off_duration_per_trial_cc_skipped = np.zeros(
+                    decoding_confidence.shape[0], dtype=float
+                )
+                max_off_duration_per_trial_cc_skipped = np.zeros(
+                    decoding_confidence.shape[0], dtype=float
+                )
+                if off_state_mask_cc_skipped is not None:
+                    off_duration_per_trial_cc_skipped = (
+                        off_state_duration_per_trial(
+                            off_state_mask_cc_skipped,
+                            bin_starts,
+                            t_decode_step,
+                            delay_start,
+                            delay_end,
+                        )
+                    )
+                    max_off_duration_per_trial_cc_skipped = (
+                        max_off_state_duration_per_trial(
+                            off_state_mask_cc_skipped,
+                            bin_starts,
+                            t_decode_step,
+                            delay_start,
+                            delay_end,
+                        )
+                    )
+            if off_durations.size or off_durations_cc_skipped.size:
+                fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+                if compare_off:
+                    if off_durations.size:
+                        sns.histplot(
+                            off_durations,
+                            bins=off_bins,
+                            ax=ax,
+                            color='tab:blue',
+                            label='CC applied',
+                        )
+                    if off_durations_cc_skipped.size:
+                        sns.histplot(
+                            off_durations_cc_skipped,
+                            bins=off_bins,
+                            ax=ax,
+                            element='step',
+                            fill=False,
+                            linewidth=2,
+                            color='tab:orange',
+                            label='CC skipped',
+                        )
+                    if off_durations.size and off_durations_cc_skipped.size:
+                        ax.legend(frameon=False)
+                else:
+                    sns.histplot(off_durations, bins=off_bins, ax=ax)
+                show_spines(ax)
+                plt.xlabel('Duration (ms)')
+                plt.ylabel('Count')
+                plt.title(f'Off-State Duration\nSession: {session}, Cue: {cue_to_deg(cue)}°')
+                plt.xlim(*off_xlim)
+                save_figure_all_formats(fig, fig_dir / f'off_state_duration_{session}_{cue}.png', dpi=300)
+                plt.close(fig)
+
+            # Unlike the state-level histogram, this includes one value for
+            # every trial, including trials with zero delay-period duration.
+            fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+            if compare_off:
+                sns.histplot(
+                    off_duration_per_trial,
+                    bins=off_bins,
+                    ax=ax,
+                    color='tab:blue',
+                    label='CC applied',
+                )
+                sns.histplot(
+                    off_duration_per_trial_cc_skipped,
+                    bins=off_bins,
+                    ax=ax,
+                    element='step',
+                    fill=False,
+                    linewidth=2,
+                    color='tab:orange',
+                    label='CC skipped',
+                )
+                ax.legend(frameon=False)
+            else:
+                sns.histplot(off_duration_per_trial, bins=off_bins, ax=ax)
+            show_spines(ax)
+            plt.xlabel('Total duration per trial (ms)')
+            plt.ylabel('Count')
+            plt.title(
+                f'Trial-Level Off-State Duration\n'
+                f'Session: {session}, Cue: {cue_to_deg(cue)}°'
+            )
+            plt.xlim(*off_xlim)
+            save_figure_all_formats(
+                fig,
+                fig_dir / f'off_state_duration_per_trial_{session}_{cue}.png',
+                dpi=300,
+            )
+            plt.close(fig)
+
+            # This also includes one value per trial. For trials with multiple
+            # off-states, only the longest contiguous delay-period run is used.
+            fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+            if compare_off:
+                sns.histplot(
+                    max_off_duration_per_trial,
+                    bins=off_bins,
+                    ax=ax,
+                    color='tab:blue',
+                    label='CC applied',
+                )
+                sns.histplot(
+                    max_off_duration_per_trial_cc_skipped,
+                    bins=off_bins,
+                    ax=ax,
+                    element='step',
+                    fill=False,
+                    linewidth=2,
+                    color='tab:orange',
+                    label='CC skipped',
+                )
+                ax.legend(frameon=False)
+            else:
+                sns.histplot(max_off_duration_per_trial, bins=off_bins, ax=ax)
+            show_spines(ax)
+            plt.xlabel('Maximum duration per trial (ms)')
+            plt.ylabel('Count')
+            plt.title(
+                f'Trial-Level Maximum Off-State Duration\n'
+                f'Session: {session}, Cue: {cue_to_deg(cue)}°'
+            )
+            plt.xlim(*off_xlim)
+            save_figure_all_formats(
+                fig,
+                fig_dir / f'max_off_state_duration_per_trial_{session}_{cue}.png',
+                dpi=300,
+            )
+            plt.close(fig)
+
+            # save histgram of off-state null cluster masses
+            if isinstance(null_cluster_masses, np.ndarray) and null_cluster_masses.size:
+                masses = null_cluster_masses[np.isfinite(null_cluster_masses)]
+                if masses.size:
+                    bins_mass = np.histogram_bin_edges(masses, bins='auto')
+                    fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+                    sns.histplot(masses, bins=bins_mass, ax=ax)
+                    add_off_cluster_cutoff_lines(ax, off_cluster_mass_cutoffs)
+                    show_spines(ax)
+                    plt.xlabel('Cluster Mass')
+                    plt.ylabel('Count')
+                    plt.title(f'Off-State Null Cluster Masses\nSession: {session}, Cue: {cue_to_deg(cue)}°')
+                    if off_cluster_mass_cutoffs.size:
+                        ax.legend()
+                    save_figure_all_formats(fig, fig_dir / f'off_state_null_cluster_masses_{session}_{cue}.png', dpi=300)
+                    plt.close(fig)
+
+            # save histgram of off-state candidate cluster masses
+            if isinstance(off_cluster_masses, np.ndarray) and off_cluster_masses.size:
+                masses = off_cluster_masses[np.isfinite(off_cluster_masses)]
+                # masses is a 1D array with length equal to number of labeled off-state clusters
+                # it includes masses of all off-state clusters including those not passing size threshold
+                # we want to plot the distribution of masses of all off-state candidate clusters that passed size threshold
+                # so we filter masses with candidate_ids
+                if candidate_ids.size:
+                    masses = masses[candidate_ids]
+                if masses.size:
+                    delay_masses = np.array([], dtype=float)
+                    if candidate_ids.size and off_state_labeled is not None:
+                        off_rows, off_cols = np.nonzero(off_state_labeled)
+                        if off_rows.size:
+                            off_labels = off_state_labeled[off_rows, off_cols]
+                            max_label = off_labels.max()
+                            min_col = np.full(max_label + 1, off_state_labeled.shape[1], dtype=int)
+                            max_col = np.zeros(max_label + 1, dtype=int)
+                            np.minimum.at(min_col, off_labels, off_cols)
+                            np.maximum.at(max_col, off_labels, off_cols)
+                            candidate_start_idx = min_col[candidate_ids]
+                            candidate_end_idx = max_col[candidate_ids]
+                            start_ms = bin_starts[candidate_start_idx]
+                            end_ms = bin_starts[candidate_end_idx]
+                            overlap = (end_ms >= delay_start) & (start_ms <= delay_end)
+                            if np.any(overlap):
+                                delay_masses = masses[overlap]
+                    bins_mass = np.histogram_bin_edges(masses, bins='auto')
+                    fig, ax = plt.subplots(1, 1, figsize=(5, 4), layout='constrained')
+                    sns.histplot(masses, bins=bins_mass, ax=ax)
+                    add_off_cluster_cutoff_lines(ax, off_cluster_mass_cutoffs)
+                    if delay_masses.size:
+                        ax.hist(delay_masses, bins=bins_mass, histtype='step', linewidth=2, color='C1', label='Delay')
+                    if delay_masses.size or off_cluster_mass_cutoffs.size:
+                        ax.legend()
+                    show_spines(ax)
+                    plt.xlabel('Cluster Mass')
+                    plt.ylabel('Count')
+                    plt.title(f'Off-State Candidate Cluster Masses\nSession: {session}, Cue: {cue_to_deg(cue)}°')
+                    save_figure_all_formats(fig, fig_dir / f'off_state_candidate_cluster_masses_{session}_{cue}.png', dpi=300)
+                    plt.close(fig)
+
+            state_results.append({
+                'session': session,
+                'cue': cue,
+                'trial_idx': np.asarray(out_dict.get('trial_idx', []), dtype=np.int64),
+                'time_bins': np.asarray(bin_starts, dtype=float),
+                'on_state_mask': state_mask_for_cache(
+                    on_state_mask,
+                    decoding_confidence.shape,
+                ),
+                'off_state_mask': state_mask_for_cache(
+                    off_state_mask,
+                    decoding_confidence.shape,
+                ),
+                'off_state_duration_per_trial': off_duration_per_trial,
+                'max_off_state_duration_per_trial': max_off_duration_per_trial,
+                'off_state_duration_per_state': np.asarray(off_durations, dtype=float),
+                'off_state_duration_correction': 'skipped' if cc_method_off == 'skipped' else 'applied',
+                'off_state_duration_delay_start': delay_start,
+                'off_state_duration_delay_end': delay_end,
+                't_decode_step': t_decode_step,
+                'decoding_fingerprint': out_dict.get('fingerprint'),
+                'z_threshold_on': z_threshold_on,
+                'z_threshold_off': z_threshold_off,
+            })
+
+    with open(cache_dir / 'on_off_states.pkl', 'ab') as f:
+        pickle.dump(state_results, f)
+
+if __name__ == '__main__':
+    config = tyro.cli(Config)
+    main(config)

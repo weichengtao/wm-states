@@ -477,6 +477,7 @@ dependencies = [
     { name = "scipy" },
     { name = "seaborn" },
     { name = "statsmodels" },
+    { name = "threadpoolctl" },
     { name = "tqdm" },
     { name = "tyro" },
 ]
@@ -493,6 +494,7 @@ requires-dist = [
     { name = "scipy" },
     { name = "seaborn" },
     { name = "statsmodels", specifier = ">=0.14.6" },
+    { name = "threadpoolctl" },
     { name = "tqdm" },
     { name = "tyro" },
 ]

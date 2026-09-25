@@ -1,0 +1,584 @@
+"""Prepare trial-level predictors and off-state outcomes for MixedLM analyses.
+
+The output contains one row for every preferred-cue trial that has at least one
+earlier preferred-cue trial in the same session.  Cell activity is normalized
+cell by cell, within session and period, across all cached preferred-cue trials.
+No normalization is applied to cell counts, active fractions, EMA histories, or
+off-state durations.
+
+A second, separately saved cache contains raw cell-by-trial firing rates and
+reproducible within-session trial holdouts.  Cross-validation code uses this
+cache to estimate normalization statistics from training trials only.
+"""
+
+from __future__ import annotations
+
+# Use one module namespace for direct CLI and package execution.
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    __package__ = "scripts.next"
+
+
+import json
+from scripts.next import cache_io as pickle
+from scripts.next.common import full_session_selection
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+import tyro
+from scipy.io import loadmat
+
+from scripts.next.activity_weighting import (
+    cell_group_activity_weights,
+    mean_cell_activity,
+    weighting_mode,
+    weighting_policy,
+    weighting_subdir,
+)
+from scripts.next.mixedlm_outcomes import ALL_OUTCOMES
+
+
+PERIODS = {
+    "baseline": (-400, 0),
+    "encoding": (100, 300),
+    "pre_delay": (300, 500),
+    "delay": (500, 1400),
+}
+
+GROUP_NAMES = (
+    "preferred",
+    "selective_nonpreferred",
+    "stationary_nonselective",
+)
+CV_CACHE_SCHEMA_VERSION = 2
+
+
+@dataclass
+class Config:
+    """Input locations and feature-extraction settings."""
+
+    data_dir: Path = Path("data/nature")
+    cache_dir: Path = Path("cache/next_run")
+    output_subdir: str = "mixedlm/prepared"
+    output_filename: str = "trial_table.pkl"
+    cv_output_subdir: str = "mixedlm/prepared"
+    cv_output_filename: str = "cv_feature_cache.pkl"
+    cv_shuffles: int = 50
+    cv_holdout_fraction: float = 0.2
+    cv_seed: int = 42
+    save_cv_cache: bool = True
+    active_threshold: float = 0.0
+    history_alpha: float = 0.2
+    # Use PEV weights for selective groups; stationary-nonselective stays equal.
+    pev_weighted_average: bool = False
+
+
+def _load_pickle(path: Path) -> Any:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing cache file: {path}")
+    with path.open("rb") as handle:
+        return pickle.load(handle)
+
+
+def _find_full_session_selection(selection_results, session, num_trials):
+    return full_session_selection(selection_results, session, num_trials)
+
+
+def _cell_groups(
+    selection_result: dict[str, Any],
+    preferred_cue: int,
+) -> dict[str, np.ndarray]:
+    properties = selection_result["cell_properties"]
+    selective_cells = np.asarray(properties["cell_idx"], dtype=np.int64).ravel()
+    preferred_cues = np.asarray(properties["mean_pref_test"]).ravel()
+    if selective_cells.shape != preferred_cues.shape:
+        raise ValueError("cell_idx and mean_pref_test must have matching shapes.")
+
+    stationary_cells = np.asarray(
+        selection_result["cell_idx_stationary"], dtype=np.int64
+    ).ravel()
+    return {
+        "preferred": selective_cells[preferred_cues == preferred_cue],
+        "selective_nonpreferred": selective_cells[
+            preferred_cues != preferred_cue
+        ],
+        "stationary_nonselective": stationary_cells[
+            ~np.isin(stationary_cells, selective_cells)
+        ],
+    }
+
+
+def _period_firing_rates(
+    spikes: np.ndarray,
+    trial_ids: np.ndarray,
+    times_ms: np.ndarray,
+    cell_ids: np.ndarray,
+    start_ms: int,
+    end_ms: int,
+) -> np.ndarray:
+    """Return firing rates with shape (target trial, cell) for [start, end)."""
+    time_mask = (times_ms >= start_ms) & (times_ms < end_ms)
+    if not np.any(time_mask):
+        raise ValueError(f"No samples found in period [{start_ms}, {end_ms}) ms.")
+    if cell_ids.size == 0:
+        return np.empty((trial_ids.size, 0), dtype=float)
+
+    time_ids = np.flatnonzero(time_mask)
+    duration_seconds = (end_ms - start_ms) / 1000.0
+    rates = (
+        spikes[np.ix_(trial_ids, time_ids, cell_ids)].sum(axis=1)
+        / duration_seconds
+    )
+    rates = np.asarray(rates, dtype=float)
+    if not np.all(np.isfinite(rates)):
+        raise ValueError("Raw firing rates contain non-finite values.")
+    return rates
+
+
+def _normalize_cells(raw_rates: np.ndarray) -> np.ndarray:
+    """Normalize each cell across trials, mapping zero mean/std cells to zero."""
+    raw_rates = np.asarray(raw_rates, dtype=float)
+    normalized = np.zeros_like(raw_rates, dtype=float)
+    if raw_rates.shape[1] == 0:
+        return normalized
+
+    cell_means = np.mean(raw_rates, axis=0)
+    cell_stds = np.std(raw_rates, axis=0, ddof=0)
+    usable = (
+        np.isfinite(cell_means)
+        & np.isfinite(cell_stds)
+        & (cell_means != 0)
+        & (cell_stds != 0)
+    )
+    normalized[:, usable] = (
+        raw_rates[:, usable] - cell_means[usable]
+    ) / cell_stds[usable]
+    return normalized
+
+
+def _group_features(
+    normalized_activity: np.ndarray,
+    active_threshold: float,
+    activity_weights: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return group mean normalized activity and active-cell fraction."""
+    num_trials, num_cells = normalized_activity.shape
+    if num_cells == 0:
+        zeros = np.zeros(num_trials, dtype=float)
+        return zeros.copy(), zeros
+    mean_activity = mean_cell_activity(
+        normalized_activity,
+        activity_weights,
+        axis=1,
+    )
+    active_fraction = np.mean(normalized_activity > active_threshold, axis=1)
+    return mean_activity, active_fraction
+
+
+def _causal_history_ema(values: np.ndarray, alpha: float) -> np.ndarray:
+    """Return the EMA before each trial; the first trial has no history."""
+    values = np.asarray(values, dtype=float)
+    history = np.full(values.shape, np.nan, dtype=float)
+    if values.size == 0:
+        return history
+
+    state = float(values[0])
+    for trial_position in range(1, values.size):
+        history[trial_position] = state
+        state = alpha * float(values[trial_position]) + (1.0 - alpha) * state
+    return history
+
+
+def _validate_off_state_result(
+    state_result: dict[str, Any],
+    session: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if state_result.get("off_state_duration_correction") != "applied":
+        raise ValueError(
+            f"Session {session} does not contain CC-applied off-state durations."
+        )
+    if (
+        int(state_result.get("off_state_duration_delay_start", -1)) != 500
+        or int(state_result.get("off_state_duration_delay_end", -1)) != 1400
+    ):
+        raise ValueError(
+            f"Session {session} has unexpected off-state delay metadata."
+        )
+    missing_outcomes = [
+        outcome.cache_key
+        for outcome in ALL_OUTCOMES
+        if outcome.cache_key not in state_result
+    ]
+    if missing_outcomes:
+        raise ValueError(
+            f"Session {session} is missing off-state outcomes {missing_outcomes}; "
+            "rerun on_off_states.py."
+        )
+
+    trial_ids = np.asarray(state_result["trial_idx"], dtype=np.int64).ravel()
+    total_durations = np.asarray(
+        state_result["off_state_duration_per_trial"], dtype=float
+    ).ravel()
+    maximum_durations = np.asarray(
+        state_result["max_off_state_duration_per_trial"], dtype=float
+    ).ravel()
+    if trial_ids.shape != total_durations.shape:
+        raise ValueError(
+            f"Off-state trial IDs and total durations do not align for session "
+            f"{session}."
+        )
+    if trial_ids.shape != maximum_durations.shape:
+        raise ValueError(
+            f"Off-state trial IDs and maximum durations do not align for session "
+            f"{session}."
+        )
+    if trial_ids.size < 2:
+        raise ValueError(
+            f"Session {session} needs at least two preferred-cue trials for history."
+        )
+    if not np.all(np.isfinite(total_durations)) or not np.all(
+        np.isfinite(maximum_durations)
+    ):
+        raise ValueError(f"Off-state durations are non-finite for session {session}.")
+    if np.any(total_durations < 0) or np.any(maximum_durations < 0):
+        raise ValueError(f"Off-state durations are negative for session {session}.")
+    if np.any(maximum_durations > total_durations):
+        raise ValueError(
+            f"Maximum off-state duration exceeds total duration for session {session}."
+        )
+
+    order = np.argsort(trial_ids, kind="stable")
+    trial_ids = trial_ids[order]
+    total_durations = total_durations[order]
+    maximum_durations = maximum_durations[order]
+    if np.any(np.diff(trial_ids) <= 0):
+        raise ValueError(
+            f"Preferred-cue trial IDs are not unique for session {session}."
+        )
+    return trial_ids, total_durations, maximum_durations
+
+
+def _prepare_session_rows(
+    state_result: dict[str, Any],
+    selection_results: list[dict[str, Any]],
+    config: Config,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    session = str(state_result.get("session", "unknown_session"))
+    trial_ids, total_off_state_durations, maximum_off_state_durations = (
+        _validate_off_state_result(state_result, session)
+    )
+    preferred_cue = int(state_result["cue"])
+
+    data_path = config.data_dir / f"{session}.mat"
+    if not data_path.exists():
+        raise FileNotFoundError(f"Missing session data: {data_path}")
+    data = loadmat(
+        data_path,
+        variable_names=["spks", "tc", "cueAngIdx", "isCorr"],
+    )
+    spikes = np.asarray(data["spks"])
+    times_ms = np.asarray(data["tc"], dtype=float).ravel()
+    cue_labels = np.asarray(data["cueAngIdx"], dtype=np.int64).ravel()
+    correct_trials = np.asarray(data["isCorr"]).ravel().astype(bool)
+    if spikes.ndim != 3 or spikes.shape[1] != times_ms.size:
+        raise ValueError(f"Unexpected spike/time shape for session {session}.")
+    if np.any(trial_ids < 0) or np.any(trial_ids >= spikes.shape[0]):
+        raise ValueError(f"Trial IDs are out of range for session {session}.")
+    if not np.all(cue_labels[trial_ids] == preferred_cue):
+        raise ValueError(f"Cached trials do not all use the preferred cue in {session}.")
+    if not np.all(correct_trials[trial_ids]):
+        raise ValueError(f"Cached trials are not all correct in session {session}.")
+
+    selection = _find_full_session_selection(
+        selection_results, session, spikes.shape[0]
+    )
+    groups = _cell_groups(selection, preferred_cue)
+    activity_weights = cell_group_activity_weights(
+        selection,
+        groups,
+        config.pev_weighted_average,
+    )
+    counts = {
+        f"{group_name}_cell_count": int(groups[group_name].size)
+        for group_name in GROUP_NAMES
+    }
+
+    trial_features: dict[str, np.ndarray] = {}
+    raw_rates_by_period: dict[str, dict[str, np.ndarray]] = {}
+    for period_name, (start_ms, end_ms) in PERIODS.items():
+        raw_rates_by_period[period_name] = {}
+        for group_name in GROUP_NAMES:
+            raw_rates = _period_firing_rates(
+                spikes,
+                trial_ids,
+                times_ms,
+                groups[group_name],
+                start_ms,
+                end_ms,
+            )
+            raw_rates_by_period[period_name][group_name] = raw_rates
+            normalized = _normalize_cells(raw_rates)
+            mean_activity, active_fraction = _group_features(
+                normalized,
+                config.active_threshold,
+                activity_weights[group_name],
+            )
+
+            mean_column = (
+                f"{period_name}_mean_normalized_activity_{group_name}"
+            )
+            fraction_column = f"{period_name}_active_fraction_{group_name}"
+            trial_features[mean_column] = mean_activity
+            trial_features[fraction_column] = active_fraction
+            trial_features[f"history_ema_{mean_column}"] = _causal_history_ema(
+                mean_activity, config.history_alpha
+            )
+            trial_features[f"history_ema_{fraction_column}"] = (
+                _causal_history_ema(active_fraction, config.history_alpha)
+            )
+
+    rows: list[dict[str, Any]] = []
+    # Position zero supplies the initial history state and is not saved.
+    for trial_position in range(1, trial_ids.size):
+        row: dict[str, Any] = {
+            "session": session,
+            "trial_id": int(trial_ids[trial_position]),
+            "preferred_cue": preferred_cue,
+            "total_off_state_duration_ms": float(
+                total_off_state_durations[trial_position]
+            ),
+            "maximum_off_state_duration_ms": float(
+                maximum_off_state_durations[trial_position]
+            ),
+            **counts,
+        }
+        row.update(
+            {
+                column: float(values[trial_position])
+                for column, values in trial_features.items()
+            }
+        )
+        rows.append(row)
+    cv_session = {
+        "session": session,
+        "preferred_cue": preferred_cue,
+        "trial_ids": trial_ids,
+        "total_off_state_duration_ms": total_off_state_durations,
+        "maximum_off_state_duration_ms": maximum_off_state_durations,
+        "cell_counts": counts,
+        "raw_firing_rates_hz": raw_rates_by_period,
+        "activity_weights": activity_weights,
+    }
+    return rows, cv_session
+
+
+def _make_cv_splits(
+    sessions: list[dict[str, Any]],
+    n_shuffles: int,
+    holdout_fraction: float,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Create reproducible trial holdouts separately within every session."""
+    rng = np.random.default_rng(seed)
+    splits: list[dict[str, Any]] = []
+    for repeat in range(n_shuffles):
+        test_trials_by_session: dict[str, np.ndarray] = {}
+        for session_data in sessions:
+            session = str(session_data["session"])
+            # The first preferred-cue trial initializes history and is never a
+            # model row, so only positions 1..N-1 are eligible for holdout.
+            eligible = np.asarray(session_data["trial_ids"], dtype=np.int64)[1:]
+            if eligible.size < 2:
+                raise ValueError(
+                    f"Session {session} needs at least two model-eligible trials "
+                    "for trial-holdout cross-validation."
+                )
+            n_test = int(np.ceil(holdout_fraction * eligible.size))
+            n_test = min(max(n_test, 1), eligible.size - 1)
+            test_trials_by_session[session] = np.sort(
+                rng.choice(eligible, size=n_test, replace=False)
+            )
+        splits.append(
+            {
+                "repeat": repeat,
+                "test_trial_ids_by_session": test_trials_by_session,
+            }
+        )
+    return splits
+
+
+def prepare_data(config: Config) -> pd.DataFrame:
+    """Build and save the complete trial-level DataFrame."""
+    if not np.isfinite(config.active_threshold):
+        raise ValueError("active_threshold must be finite.")
+    if not np.isfinite(config.history_alpha) or not 0 < config.history_alpha <= 1:
+        raise ValueError("history_alpha must be finite and in (0, 1].")
+    path_fields = [(config.output_subdir, "output_subdir")]
+    if config.save_cv_cache:
+        path_fields.append((config.cv_output_subdir, "cv_output_subdir"))
+    for value, name in path_fields:
+        path = Path(value)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"{name} must stay within cache_dir.")
+    if Path(config.output_filename).name != config.output_filename:
+        raise ValueError("output_filename must be a filename, not a path.")
+    if config.save_cv_cache and (
+        Path(config.cv_output_filename).name != config.cv_output_filename
+    ):
+        raise ValueError("cv_output_filename must be a filename, not a path.")
+    if config.save_cv_cache and config.cv_shuffles < 1:
+        raise ValueError("cv_shuffles must be positive.")
+    invalid_holdout_fraction = not np.isfinite(
+        config.cv_holdout_fraction
+    ) or not (0 < config.cv_holdout_fraction < 1)
+    if config.save_cv_cache and invalid_holdout_fraction:
+        raise ValueError("cv_holdout_fraction must be in (0, 1).")
+
+    selection_results = _load_pickle(config.cache_dir / "cell_trial_selection.pkl")
+    off_state_results = _load_pickle(config.cache_dir / "on_off_states.pkl")
+    if not isinstance(selection_results, list) or not isinstance(
+        off_state_results, list
+    ):
+        raise TypeError("Both input cache files must contain lists of results.")
+
+    seen_sessions: set[str] = set()
+    rows: list[dict[str, Any]] = []
+    cv_sessions: list[dict[str, Any]] = []
+    for state_result in off_state_results:
+        session = str(state_result.get("session", "unknown_session"))
+        if session in seen_sessions:
+            raise ValueError(f"Duplicate on/off-state entry for session {session}.")
+        seen_sessions.add(session)
+        session_rows, cv_session = _prepare_session_rows(
+            state_result, selection_results, config
+        )
+        rows.extend(session_rows)
+        if config.save_cv_cache:
+            cv_sessions.append(cv_session)
+
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        raise ValueError("No rows were produced.")
+    if frame.duplicated(["session", "trial_id"]).any():
+        raise ValueError("The output contains duplicate session/trial IDs.")
+    numeric_columns = frame.columns.difference(["session"])
+    if not np.all(np.isfinite(frame[numeric_columns].to_numpy(dtype=float))):
+        raise ValueError("The output contains non-finite numeric values.")
+
+    output_dir = config.cache_dir / weighting_subdir(
+        config.output_subdir,
+        config.pev_weighted_average,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / config.output_filename
+    frame.to_pickle(output_path)
+    cv_output_path: Path | None = None
+    if config.save_cv_cache:
+        cv_cache = {
+            "schema_version": CV_CACHE_SCHEMA_VERSION,
+            "periods_ms": PERIODS,
+            "group_names": GROUP_NAMES,
+            "history_alpha": config.history_alpha,
+            "default_active_threshold": config.active_threshold,
+            "pev_weighted_average": config.pev_weighted_average,
+            "activity_weighting_mode": weighting_mode(
+                config.pev_weighted_average
+            ),
+            "activity_weighting_policy": weighting_policy(
+                config.pev_weighted_average
+            ),
+            "cv_shuffles": config.cv_shuffles,
+            "cv_holdout_fraction": config.cv_holdout_fraction,
+            "cv_seed": config.cv_seed,
+            "sessions": cv_sessions,
+            "splits": _make_cv_splits(
+                cv_sessions,
+                config.cv_shuffles,
+                config.cv_holdout_fraction,
+                config.cv_seed,
+            ),
+        }
+        cv_output_dir = config.cache_dir / weighting_subdir(
+            config.cv_output_subdir,
+            config.pev_weighted_average,
+        )
+        cv_output_dir.mkdir(parents=True, exist_ok=True)
+        cv_output_path = cv_output_dir / config.cv_output_filename
+        with cv_output_path.open("ab") as handle:
+            pickle.dump(cv_cache, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    manifest = {
+        "schema_version": CV_CACHE_SCHEMA_VERSION,
+        "source_caches": {
+            "cell_selection": str(config.cache_dir / "cell_trial_selection.pkl"),
+            "on_off_states": str(config.cache_dir / "on_off_states.pkl"),
+        },
+        "outputs": {
+            "trial_table": str(output_path),
+            "cv_feature_cache": str(cv_output_path) if cv_output_path else None,
+        },
+        "outcomes": [
+            {
+                "name": outcome.name,
+                "column": outcome.column,
+                "source_cache_key": outcome.cache_key,
+                "label": outcome.label,
+            }
+            for outcome in ALL_OUTCOMES
+        ],
+        "delay_outcome_definition": {
+            "first_bin_start_ms": 500,
+            "last_bin_start_ms": 1400,
+            "bin_selection": "inclusive",
+            "state_mask": "cluster-correction-applied off-state mask",
+        },
+        "periods_ms": {
+            name: {"start_inclusive": start, "end_exclusive": end}
+            for name, (start, end) in PERIODS.items()
+        },
+        "group_names": list(GROUP_NAMES),
+        "history_alpha": config.history_alpha,
+        "default_active_threshold": config.active_threshold,
+        "pev_weighted_average": config.pev_weighted_average,
+        "activity_weighting_mode": weighting_mode(config.pev_weighted_average),
+        "activity_weighting_policy": weighting_policy(
+            config.pev_weighted_average
+        ),
+        "n_rows": len(frame),
+        "n_sessions": int(frame["session"].nunique()),
+        "cv": {
+            "saved": config.save_cv_cache,
+            "shuffles": config.cv_shuffles if config.save_cv_cache else None,
+            "holdout_fraction": (
+                config.cv_holdout_fraction if config.save_cv_cache else None
+            ),
+            "seed": config.cv_seed if config.save_cv_cache else None,
+        },
+    }
+    manifest_path = output_dir / "manifest.json"
+    with manifest_path.open("w") as handle:
+        json.dump(manifest, handle, indent=2)
+        handle.write("\n")
+    print(
+        f"Saved {len(frame)} trials from {frame['session'].nunique()} sessions "
+        f"with {len(frame.columns)} columns to {output_path}"
+    )
+    if cv_output_path is not None:
+        print(
+            f"Saved raw fold-safe features and {config.cv_shuffles} "
+            f"trial-holdout splits to {cv_output_path}"
+        )
+    print(f"Saved preparation manifest to {manifest_path}")
+    return frame
+
+
+def main(config: Config) -> None:
+    prepare_data(config)
+
+
+if __name__ == "__main__":
+    main(tyro.cli(Config))

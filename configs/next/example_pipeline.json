@@ -1,0 +1,99 @@
+{
+  "select": {
+    "t_test_window": 50,
+    "min_cell_per_group": 1,
+    "min_fr_test": -1,
+    "min_presence_ratio": 0.9,
+    "var_ratio_threshold_delay_over_baseline": -1,
+    "var_ratio_threshold_sliding_over_all": -1,
+    "temp_dep_r_threshold": 2,
+    "temp_dep_r_threshold_baseline": 0.3,
+    "sig_pev_threshold": 2.5,
+    "save_extended_diagnostics": false,
+    "diagnostics_figure_config": "configs/diagnostic_figure_config.json"
+  },
+  "decode": {
+    "n_decode_shuffle": 100,
+    "t_decode_window": 50,
+    "min_cell_per_group": 1,
+    "cells_used_for_decoder": "STATIONARY",
+    "decoder_model": "LOGISTIC_REGRESSION",
+    "svm_kernel": "LINEAR",
+    "logistic_calibration_method": "SIGMOID",
+    "logistic_calibration_cv": 5,
+    "classifier_c": 1,
+    "grid_search_for_c": true,
+    "seed": 42
+  },
+  "states": {
+    "cc_method_on": "one_tailed",
+    "cc_method_off": "one_tailed",
+    "compare_with_cc_skipped_on": true,
+    "compare_with_cc_skipped_off": true,
+    "cluster_size_threshold_off": 1
+  },
+  "activity": {
+    "activity_bin_width_ms": 50,
+    "seed": 42,
+    "max_points_per_color_group": 50,
+    "show_principal_components": true,
+    "compare_with_max_off_state": true,
+    "pev_weighted_average": true
+  },
+  "prepare": {
+    "cv_shuffles": 50,
+    "cv_holdout_fraction": 0.2,
+    "cv_seed": 42,
+    "active_threshold": 0,
+    "history_alpha": 0.2
+  },
+  "models": {
+    "cv_shuffles": 50,
+    "cv_holdout_fraction": 0.2,
+    "cv_seed": 42,
+    "cv_prediction_sample_per_model": 1000,
+    "significance_alpha": 0.05,
+    "history_alpha": 0.2
+  },
+  "nested-count": {
+    "cv_shuffles": 50,
+    "cv_holdout_fraction": 0.2,
+    "cv_seed": 42,
+    "cv_prediction_sample_per_model": 1000,
+    "significance_alpha": 0.05
+  },
+  "nested-activity": {
+    "cv_shuffles": 50,
+    "cv_holdout_fraction": 0.2,
+    "cv_seed": 42,
+    "cv_prediction_sample_per_model": 1000,
+    "significance_alpha": 0.05
+  },
+  "criticality": {
+    "cv_shuffles": 50,
+    "cv_holdout_fraction": 0.2,
+    "cv_seed": 42,
+    "cv_prediction_sample_per_model": 1000,
+    "significance_alpha": 0.05,
+    "history_alpha": 0.2,
+    "active_percentiles": [
+      10,
+      20,
+      30,
+      40,
+      50,
+      60,
+      70,
+      80,
+      90
+    ]
+  },
+  "interactions": {
+    "cv_shuffles": 50,
+    "cv_holdout_fraction": 0.2,
+    "cv_seed": 42,
+    "cv_prediction_sample_per_model": 1000,
+    "significance_alpha": 0.05,
+    "history_alpha": 0.2
+  }
+}
