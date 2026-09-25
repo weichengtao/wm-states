@@ -26,7 +26,9 @@ trial population, outputs, and interpretation. The methods guide also describes
 With no `--stages` flag the runner executes the first five stages.
 `--stages all` executes all eleven; `--stages mixed` executes the last six.
 Explicit stage lists run in the supplied order, and the runner does not add
-prerequisites automatically.
+prerequisites automatically. Each runner invocation keeps a separate
+[history record](outputs.md#run-manifest-history), so a partial rerun preserves
+the earlier full-run manifest.
 
 | Stage | Required inputs |
 | --- | --- |
@@ -41,6 +43,10 @@ prerequisites automatically.
 
 After changing a stage's inputs or settings, rerun its dependents. See
 [Resume and rerun](configuration.md#resume-and-rerun) for checkpoint behavior.
+
+For a recorded partial rerun, select only the required stages, for example
+`--stages evaluate` on the same pipeline command. Standalone commands below
+produce the same stage outputs but do not create runner-history records.
 
 ## Default stages, one script at a time
 

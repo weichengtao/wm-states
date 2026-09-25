@@ -65,6 +65,23 @@ If the session data or screening settings changed, rerun `select` first.
 Code changes can also invalidate decoding fingerprints. Do not copy fingerprints
 between caches to bypass the check.
 
+## The latest manifest lists only a partial run
+
+`pipeline_manifest.json` describes the latest runner invocation. Find earlier
+full and partial records under `manifests/`; see [Run manifest history](outputs.md#run-manifest-history).
+An existing pre-history manifest is preserved as `prior-<content hash>.json` when
+the new runner first replaces it. Already-overwritten records cannot be restored.
+Standalone stage commands do not add history; run them through
+`pipeline.py --stages <stage>` to record future invocations.
+
+## A manifest still says running after a process stopped
+
+A forced termination can prevent the final status write. Check whether the
+process is active before rerunning. The history record preserves the last saved
+stage state, and the next invocation gets a new record. History does not prove
+that stage output files are complete; rerun the affected stage and its dependents
+as needed. Decoder checkpoint reuse follows the usual provenance rules.
+
 ## Mixed-effects fits fail or do not converge
 
 Inspect the result tables, fit warnings, and CV fit errors. A successful command

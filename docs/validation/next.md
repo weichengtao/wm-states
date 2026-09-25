@@ -2,6 +2,69 @@
 
 ## Latest validation — 2026-09-26
 
+Command capture passed **231 tests** in **6.589 seconds**: **114 next tests**
+and **117 historical tests**. Four additional tests cover exact argument values
+and quoting (including spaces, quotes, Unicode, and shell metacharacters),
+programmatic calls without an invented CLI, successful direct/module subprocess
+invocations with interpreter flags and working directories, and failed CLI
+runs that retain their command reference. Existing history tests still pass.
+
+A targeted integration run in `cache/test_run_046_next` reused a copy of the
+`test_run_044_next` decoding fixture. Evaluation was invoked once as a direct
+script and once through `python -X utf8 -m scripts.next.pipeline`. Both saved
+the exact Python argument vector, quoted command, working directory, and
+interpreter path. The first record remained byte-identical after the second
+run; both latest/history pairs matched. The saved command, split back into
+arguments and extended with `--dry-run`, successfully resolved the evaluation
+configuration without creating another history record.
+
+The strict MkDocs build, documented command-reference example, and whitespace
+checks pass. Command capture preserves Python process arguments, not outer
+launchers such as `uv run`, original shell quoting, environment assignments,
+or redirections. Earlier records are not backfilled. These runner changes do
+not refit or revalidate the full scientific pipeline.
+
+## Manifest-history documentation review — 2026-09-26
+
+The manifest-history documentation and pre-commit review passed **227 tests**
+in **4.165 seconds** (110 next and 117 historical tests), a strict MkDocs build,
+and `git diff --check`. The documented Python inspection example was executed
+against `cache/test_run_045_next` and correctly listed the earlier `evaluate states`
+invocation and the later `evaluate`-only invocation. Generated HTML contains the
+new history, inspection, retention, status, and migration section anchors.
+
+The documentation now distinguishes runner history from standalone stage
+execution and replaceable preparation manifests. It specifies manifest fields,
+status meanings, full-to-partial preservation, old-record archival, and the
+limits of metadata retention. This review changed documentation only; the
+runner integration and failure-path checks are recorded below.
+
+## Manifest-history validation — 2026-09-26
+
+Persistent run-manifest history passed **227 tests** in **4.168 seconds**:
+**110 next tests** and **117 historical tests**. Seven new regression tests
+cover complete-to-partial reruns, unique IDs at identical timestamps, recorded
+failures and keyboard interruptions, byte-preserved legacy/orphaned records,
+unchanged history after dry runs or invalid settings, progress before stage
+execution, and atomic-write failure cleanup. Strict MkDocs and whitespace
+checks also pass.
+
+A targeted integration run in `cache/test_run_045_next` used a copy of
+`test_run_044_next`'s decoding cache. It ran `evaluate states`, followed by an
+`evaluate`-only invocation, using the smoke preset. Both runs completed, produced
+distinct records in `manifests/`, and preserved the first record byte for byte.
+The root `pipeline_manifest.json` exactly matches the second invocation's
+history record. No refitting or full-pipeline rerun was needed for this runner
+change; this check does not revalidate the full scientific analysis.
+
+Each record includes runner configuration, resolved stage settings, UTC times,
+overall status, and attempted-stage statuses/timings. Existing root manifests
+are archived before replacement. History retains execution metadata, while
+analysis outputs remain replaceable. Forced termination can leave the last
+record marked `running`; records lost before this feature cannot be recovered.
+
+## Documentation review — 2026-09-26
+
 The documentation and pre-commit review passed **220 tests** in **4.088 seconds**
 (103 next and 117 historical tests), a strict MkDocs build, and `git diff --check`.
 The example preset resolves all eleven stages in a dry run. The methods were

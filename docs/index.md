@@ -18,7 +18,7 @@ has five stages; the full pipeline has eleven.
 | Review the example preset’s methods, populations, and validation design | [Analysis methods](next/methods.md) |
 | Understand screening and decoder estimates | [Selection and decoding](next/selection-decoding.md) |
 | Compare trial-level statistical models | [Mixed-effects analyses](next/mixed-effects.md) |
-| Find caches, figures, and scores | [Outputs and inspection](next/outputs.md) |
+| Find caches, figures, scores, and invocation history | [Outputs and inspection](next/outputs.md) |
 | Migrate historical settings | [Migration](next/migration.md) |
 | Review tested behavior and limitations | [Validation record](validation/next.md) |
 

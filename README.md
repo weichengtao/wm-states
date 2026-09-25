@@ -51,6 +51,11 @@ Every stage saves under its own directory in the run root: `select/`, `decode/`,
 `evaluate/`, `states/`, `activity/`, `prepare/`, and the individual model stages.
 Figures, diagnostics, and model outcomes use nested directories. Always pass
 the run root to `--cache-dir`; see the [output layout](docs/next/outputs.md).
+The runner retains each invocation in `manifests/`; partial reruns preserve
+earlier records. CLI records include the Python invocation and working directory
+for reuse. `pipeline_manifest.json` remains the latest-run view.
+See [run history](docs/next/outputs.md#run-manifest-history) for inspection and
+retention; standalone scripts do not create runner records.
 Earlier flat caches and the shared `mixedlm/` layout require a fresh full run.
 
 Keep all stage directories under the same run root. Activity comparison and

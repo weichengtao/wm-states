@@ -10,7 +10,7 @@ The example command runs the first five stages; add `--stages all` to include
 the six preparation and mixed-effects stages described here. See
 [Pipeline stages](pipeline.md) for commands. Inspect effective settings with
 `--settings configs/next/example_pipeline.json --stages all --dry-run`, and
-retain `pipeline_manifest.json` with reported results.
+retain the corresponding `manifests/<run_id>.json` records with reported results.
 
 ## Example design at a glance
 
@@ -606,7 +606,16 @@ successful-fit counts alongside the requested 50 model holdouts. Distinguish
 full-data model summaries from held-out performance, and describe the model
 holdouts as within-session validation with full-session cell screening.
 
-The run manifest records the latest runner invocation. Preserve it with the
-analysis outputs before rerunning only a subset of stages. See
+The runner preserves each invocation in `manifests/<run_id>.json`, including
+partial reruns. `pipeline_manifest.json` shows the latest invocation only.
+When an analysis spans multiple invocations, report the history records for
+its upstream and downstream stages. For CLI runs, history also preserves the
+Python invocation and working directory as a command reference. The saved
+resolved settings remain the record of effective analysis choices. Manifest
+history preserves settings and
+execution records; it does not version the generated analysis files or copy
+source code. Record the code revision separately. Standalone stage commands do
+not add runner history; use `pipeline.py --stages <stage>` to record partial
+work. See
 [Validation](../validation/next.md) for the scope of integration tests and
-[Outputs](outputs.md) for where to find the recorded estimates and figures.
+[Outputs](outputs.md) for the recorded estimates, figures, and manifest history.

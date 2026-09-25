@@ -141,9 +141,42 @@ where it previously had no effect. The unused selection `seed` and combined
 
 ## Resume and rerun
 
-The runner writes resolved settings, stage status, and timings to
-`<cache>/pipeline_manifest.json`. It runs every requested stage on each invocation;
-only decoding automatically reuses matching per-session checkpoints. A checkpoint
+Every `pipeline.py` invocation that begins execution gets its own
+`<cache>/manifests/<run_id>.json` record. Later full or partial runs preserve it.
+`pipeline_manifest.json` is the latest-run view. See [Run manifest history](outputs.md#run-manifest-history)
+for the schema, a full-to-partial example, and commands to inspect prior records.
+CLI records also retain the exact Python argument vector, a shell-quoted
+command, working directory, and interpreter path; see
+[Reuse a recorded command](outputs.md#reuse-a-recorded-command). Standalone stage
+scripts do not create runner history.
+
+| Status | Meaning |
+| --- | --- |
+| `running` | Execution started; progress is saved before and after stage attempts |
+| `complete` | Every requested stage returned successfully |
+| `failed` | Execution stopped with an ordinary exception; the failing stage records its error |
+| `interrupted` | Execution stopped with a caught keyboard interrupt or explicit Python exit |
+
+Failures and interruptions are re-raised after recording the outcome. An
+uncatchable termination, such as a forced kill, can leave the last saved status
+as `running` with no finish timestamp. `running` alone therefore does not prove
+that a process is still active. Requested but unattempted stages appear in
+`settings` without an execution entry in `stages`. A `complete` invocation does
+not establish that every statistical fit succeeded; inspect stage result tables
+and fit logs as described in [Methods](methods.md#performance-and-uncertainty).
+
+`--dry-run` and configuration errors raised before execution create no new
+history record and leave the previous latest view unchanged. Existing old-format
+root manifests are preserved automatically before replacement.
+
+History has no automatic pruning and retains execution metadata only. Reruns
+still replace stage outputs, including preparation manifests. Use separate run
+roots to retain different analysis variants, and avoid concurrent pipelines
+writing to the same caches. A partial rerun neither merges old settings into its
+record nor automatically reruns downstream stages.
+
+The runner runs every requested stage on each invocation; only decoding
+automatically reuses matching per-session checkpoints. A checkpoint
 is reused when its analysis settings, source data, selection cache, and code
 fingerprint match. Changing the worker count does not invalidate it.
 

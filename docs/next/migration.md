@@ -42,9 +42,24 @@ The runner now has five default stages and six mixed-effects stages. See
 
 ## Upgrade an earlier next run
 
+### Preserve runner history
+
+New `pipeline.py` invocations preserve their records in `manifests/` and keep
+`pipeline_manifest.json` as the latest view. New CLI records include command arguments, working directory, and a quoted
+command reference. Earlier records are not backfilled with guessed commands.
+An existing root manifest is archived automatically before replacement, including old-format records.
+This cannot recover manifests overwritten by earlier versions. The history
+upgrade itself needs no manual manifest migration; the cache-layout migration
+below still requires regenerated caches. As with other code updates, decoding
+fingerprints may change and trigger refitting when decoding next runs. See
+[Run manifest history](outputs.md#run-manifest-history).
+
+### Move to stage directories
+
 Caches now live under stage directories: `select/`, `decode/`, `evaluate/`,
 `states/`, `activity/`, `prepare/`, and each individual model stage. The root
-contains only the runner manifest. Decoding checkpoints moved to
+also contains the latest runner manifest and the `manifests/` history directory.
+Decoding checkpoints moved to
 `decode/checkpoints/`; the shared `mixedlm/` directory is no longer used.
 See [Outputs](outputs.md) for all paths, including figures and diagnostics.
 
@@ -59,6 +74,8 @@ when migrating the layout. Moving existing files is insufficient: decoding
 provenance includes input paths and implementation code. No legacy-path
 fallback or automatic cache migration is provided. The rerun guidance below
 applies after establishing the new layout.
+
+### Update screening commands and checks
 
 The next screening entry point is now `scripts/next/cell_screening.py`
 (module form: `python -m scripts.next.cell_screening`). Its outputs are

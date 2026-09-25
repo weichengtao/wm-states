@@ -13,6 +13,7 @@ import importlib
 import json
 import os
 from pathlib import Path
+import sys
 import time
 from typing import Literal, get_args, get_type_hints
 
@@ -20,6 +21,7 @@ import tyro
 from threadpoolctl import threadpool_limits
 
 from scripts.next.common import json_value
+from scripts.next.run_manifest import RunManifest, invocation_context
 
 STAGES = {
     'select': 'cell_screening',
@@ -70,7 +72,8 @@ def resolve_config(module, shared, overrides):
     return module.Config(**values)
 
 
-def main(config: Config):
+def main(config: Config, *, argv=None):
+    invocation = invocation_context(argv)
     stages = config.stages
     if stages == ('all',):
         stages = tuple(STAGES)
@@ -107,30 +110,33 @@ def main(config: Config):
         return
     config.cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ['WM_STATES_FIGURE_FORMATS'] = ','.join(config.figure_formats)
-    run = {'settings': {s: asdict(c) for s, _, c in resolved}, 'stages': []}
-    manifest = config.cache_dir / 'pipeline_manifest.json'
-    def save_manifest():
-        temporary = manifest.with_suffix('.tmp')
-        temporary.write_text(json.dumps(run, indent=2, default=json_value) + '\n')
-        temporary.replace(manifest)
-    for stage, module, stage_config in resolved:
-        started = time.monotonic()
-        entry = {'stage': stage, 'status': 'running'}
-        run['stages'].append(entry)
-        save_manifest()
-        print(f'\n[{stage}]', flush=True)
-        try:
-            with threadpool_limits(limits=1):
-                module.main(stage_config)
-        except Exception as exc:
-            entry.update(status='failed', error=f'{type(exc).__name__}: {exc}')
-            raise
-        else:
-            entry['status'] = 'complete'
-        finally:
-            entry['seconds'] = round(time.monotonic() - started, 3)
-            save_manifest()
+    manifest = RunManifest(config.cache_dir, {s: asdict(c) for s, _, c in resolved},
+                           asdict(config), invocation=invocation)
+    try:
+        for stage, module, stage_config in resolved:
+            started = time.monotonic()
+            entry = {'stage': stage, 'status': 'running'}
+            manifest.record['stages'].append(entry)
+            manifest.save()
+            print(f'\n[{stage}]', flush=True)
+            try:
+                with threadpool_limits(limits=1):
+                    module.main(stage_config)
+            except BaseException as exc:
+                entry.update(status='failed' if isinstance(exc, Exception) else 'interrupted',
+                             error=f'{type(exc).__name__}: {exc}')
+                raise
+            else:
+                entry['status'] = 'complete'
+            finally:
+                entry['seconds'] = round(time.monotonic() - started, 3)
+                manifest.save()
+    except BaseException as exc:
+        manifest.finish('failed' if isinstance(exc, Exception) else 'interrupted')
+        raise
+    else:
+        manifest.finish('complete')
 
 
 if __name__ == '__main__':
-    main(tyro.cli(Config))
+    main(tyro.cli(Config), argv=sys.orig_argv)
