@@ -21,6 +21,7 @@ if __package__ in (None, ""):
     __package__ = "scripts.next"
 
 
+from scripts.next.cache_paths import primary_cache, stage_path
 import json
 from scripts.next import cache_io as pickle
 from scripts.next.common import full_session_selection, validate_state_provenance
@@ -64,9 +65,9 @@ class Config:
 
     data_dir: Path = Path("data/nature")
     cache_dir: Path = Path("cache/next_run")
-    output_subdir: str = "mixedlm/prepared"
+    output_subdir: str = ""  # relative to this stage under cache_dir
     output_filename: str = "trial_table.pkl"
-    cv_output_subdir: str = "mixedlm/prepared"
+    cv_output_subdir: str = ""  # relative to this stage under cache_dir
     cv_output_filename: str = "cv_feature_cache.pkl"
     cv_shuffles: int = 50
     cv_holdout_fraction: float = 0.2
@@ -412,8 +413,10 @@ def _make_cv_splits(
     return splits
 
 
-def prepare_data(config: Config) -> pd.DataFrame:
-    """Build and save the complete trial-level DataFrame."""
+def prepare_data(config: Config, *, output_stage: str = "prepare") -> pd.DataFrame:
+    """Build trial data; criticality owns its threshold-specific preparations."""
+    if output_stage not in ("prepare", "criticality"):
+        raise ValueError("Prepared outputs must belong to prepare or criticality.")
     if not np.isfinite(config.active_threshold):
         raise ValueError("active_threshold must be finite.")
     if not np.isfinite(config.history_alpha) or not 0 < config.history_alpha <= 1:
@@ -424,7 +427,7 @@ def prepare_data(config: Config) -> pd.DataFrame:
     for value, name in path_fields:
         path = Path(value)
         if path.is_absolute() or ".." in path.parts:
-            raise ValueError(f"{name} must stay within cache_dir.")
+            raise ValueError(f"{name} must stay within its owning stage directory.")
     if Path(config.output_filename).name != config.output_filename:
         raise ValueError("output_filename must be a filename, not a path.")
     if config.save_cv_cache and (
@@ -439,8 +442,8 @@ def prepare_data(config: Config) -> pd.DataFrame:
     if config.save_cv_cache and invalid_holdout_fraction:
         raise ValueError("cv_holdout_fraction must be in (0, 1).")
 
-    selection_results = _load_pickle(config.cache_dir / "cell_trial_selection.pkl")
-    off_state_results = _load_pickle(config.cache_dir / "on_off_states.pkl")
+    selection_results = _load_pickle(primary_cache(config.cache_dir, "cell_screening.pkl"))
+    off_state_results = _load_pickle(primary_cache(config.cache_dir, "on_off_states.pkl"))
     if not isinstance(selection_results, list) or not isinstance(
         off_state_results, list
     ):
@@ -471,10 +474,10 @@ def prepare_data(config: Config) -> pd.DataFrame:
     if not np.all(np.isfinite(frame[numeric_columns].to_numpy(dtype=float))):
         raise ValueError("The output contains non-finite numeric values.")
 
-    output_dir = config.cache_dir / weighting_subdir(
+    output_dir = stage_path(config.cache_dir, output_stage, weighting_subdir(
         config.output_subdir,
         config.pev_weighted_average,
-    )
+    ))
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / config.output_filename
     frame.to_pickle(output_path)
@@ -504,10 +507,10 @@ def prepare_data(config: Config) -> pd.DataFrame:
                 config.cv_seed,
             ),
         }
-        cv_output_dir = config.cache_dir / weighting_subdir(
+        cv_output_dir = stage_path(config.cache_dir, output_stage, weighting_subdir(
             config.cv_output_subdir,
             config.pev_weighted_average,
-        )
+        ))
         cv_output_dir.mkdir(parents=True, exist_ok=True)
         cv_output_path = cv_output_dir / config.cv_output_filename
         with cv_output_path.open("ab") as handle:
@@ -515,8 +518,8 @@ def prepare_data(config: Config) -> pd.DataFrame:
     manifest = {
         "schema_version": CV_CACHE_SCHEMA_VERSION,
         "source_caches": {
-            "cell_selection": str(config.cache_dir / "cell_trial_selection.pkl"),
-            "on_off_states": str(config.cache_dir / "on_off_states.pkl"),
+            "cell_selection": str(primary_cache(config.cache_dir, "cell_screening.pkl")),
+            "on_off_states": str(primary_cache(config.cache_dir, "on_off_states.pkl")),
         },
         "outputs": {
             "trial_table": str(output_path),

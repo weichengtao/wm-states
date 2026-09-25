@@ -8,6 +8,7 @@ if __package__ in (None, ""):
     __package__ = "scripts.next"
 
 
+from scripts.next.cache_paths import primary_cache, stage_path
 import csv
 from scripts.next import cache_io as pickle
 from scripts.next.common import full_session_selection
@@ -156,7 +157,7 @@ def summary_row(result):
 
 
 def main(config: Config):
-    source_path = config.cache_dir / 'decoding_confidence.pkl'
+    source_path = primary_cache(config.cache_dir, 'decoding_confidence.pkl')
     with source_path.open('rb') as stream:
         sources = pickle.load(stream)
     if not sources:
@@ -183,9 +184,10 @@ def main(config: Config):
             )
         print(f'{session} | ' + ' | '.join(descriptions))
 
-    output_path = config.cache_dir / 'eval_confidence.pkl'
+    output_path = primary_cache(config.cache_dir, 'eval_confidence.pkl')
     save_pickle_atomic(results, output_path)
-    csv_path = config.cache_dir / 'eval_confidence.csv'
+    csv_path = stage_path(config.cache_dir, 'evaluate', 'tables', 'eval_confidence.csv')
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
     rows = [summary_row(result) for result in results]
     with csv_path.open('w', newline='') as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))

@@ -20,6 +20,7 @@ if __package__ in (None, ""):
     __package__ = "scripts.next"
 
 
+from scripts.next.cache_paths import primary_cache, stage_path
 from scripts.next import cache_io as pickle
 from scripts.next.common import full_session_selection, validate_state_provenance
 from dataclasses import dataclass, field, replace
@@ -61,7 +62,7 @@ class Config:
 
     data_dir: Path = Path("data/nature")
     cache_dir: Path = Path("cache/next_run")
-    output_subdir: str = "compare_activity_across_states"
+    output_subdir: str = ""  # relative to this stage under cache_dir
     activity_bin_width_ms: float = 50.0
     seed: int = 42
     figure_dpi: int = 300
@@ -1531,7 +1532,7 @@ def main(config: Config):
     """Generate one activity-state comparison plot for every cached session."""
     output_subdir = Path(config.output_subdir)
     if output_subdir.is_absolute() or ".." in output_subdir.parts:
-        raise ValueError("output_subdir must stay within cache_dir.")
+        raise ValueError("output_subdir must stay within its owning stage directory.")
     if config.figure_dpi <= 0:
         raise ValueError("figure_dpi must be positive.")
     if config.max_points_per_color_group is not None and (
@@ -1559,8 +1560,8 @@ def main(config: Config):
             "marginal_histogram_bin_offset_fraction must be between 0 and 0.5."
         )
 
-    selection_results = _load_pickle(config.cache_dir / "cell_trial_selection.pkl")
-    state_results = _load_pickle(config.cache_dir / "on_off_states.pkl")
+    selection_results = _load_pickle(primary_cache(config.cache_dir, "cell_screening.pkl"))
+    state_results = _load_pickle(primary_cache(config.cache_dir, "on_off_states.pkl"))
     if not isinstance(selection_results, list) or not isinstance(state_results, list):
         raise TypeError("Both input cache files must contain lists of results.")
     if not state_results:
@@ -1572,7 +1573,7 @@ def main(config: Config):
     validate_state_provenance(state_results, config.cache_dir, config.data_dir)
 
     figure_dir = weighting_subdir(
-        config.cache_dir / output_subdir,
+        stage_path(config.cache_dir, "activity", output_subdir, "figures"),
         config.pev_weighted_average,
     )
     figure_dir.mkdir(parents=True, exist_ok=True)
@@ -1613,6 +1614,8 @@ def main(config: Config):
                 save_figure_all_formats(
                     fig,
                     figure_dir
+                    / ("principal_components" if filename_prefix else "activity")
+                    / filename_group
                     / (
                         f"{filename_prefix}activity_across_{filename_group}_"
                         f"{prepared.session}.png"
@@ -1638,6 +1641,8 @@ def main(config: Config):
                 save_figure_all_formats(
                     pairwise_fig,
                     figure_dir
+                    / ("principal_components" if filename_prefix else "activity")
+                    / filename_group
                     / (
                         f"{filename_prefix}activity_across_{filename_group}_"
                         f"pairwise_{prepared.session}.png"
@@ -1666,6 +1671,8 @@ def main(config: Config):
                 save_figure_all_formats(
                     marginal_fig,
                     figure_dir
+                    / ("principal_components" if filename_prefix else "activity")
+                    / filename_group
                     / (
                         f"{filename_prefix}activity_across_{filename_group}_"
                         f"marginals_{prepared.session}.png"

@@ -80,12 +80,12 @@ class MeanCellActivityTest(unittest.TestCase):
 
 class WeightingOutputPathTest(unittest.TestCase):
     def test_only_weighted_mode_gets_a_subfolder(self):
-        base = Path("mixedlm/prepared")
+        base = Path("prepare")
 
         self.assertEqual(weighting_subdir(base, False), base)
         self.assertEqual(
             weighting_subdir(base, True),
-            Path("mixedlm/prepared/pev_weighted"),
+            Path("prepare/pev_weighted"),
         )
 
 

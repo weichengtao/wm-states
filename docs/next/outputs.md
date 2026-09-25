@@ -1,20 +1,51 @@
 # Outputs and inspection
 
-All run outputs live under the chosen cache directory:
+`--cache-dir` always names the **run root**, for both the runner and standalone
+scripts. Each stage owns a directory named after its pipeline stage ID. Only
+`pipeline_manifest.json` lives at the root; the runner creates stage directories
+as they are needed.
 
-| Path | Contents |
+| Path relative to the run root | Contents |
 | --- | --- |
 | `pipeline_manifest.json` | Resolved settings and status of the latest runner invocation |
-| `cell_trial_selection.pkl` | Full-session screening results |
-| `decoding_confidence.pkl` | Observed and null decoding estimates |
-| `eval_confidence.pkl`, `eval_confidence.csv` | Decoding evaluation results |
-| `on_off_states.pkl` | State masks and duration summaries |
-| `checkpoints/decoding/` | Per-session decoding checkpoints |
-| `mixedlm/` | Prepared data and mixed-effects results |
+| `select/cell_screening.pkl` | Full-session screening results |
+| `select/tables/cell_screening.csv` | Screening summary, enabled checks, and settings |
+| `select/diagnostics/` | Optional per-cell diagnostic CSV and rejection summary; plots in `figures/cells/` and `figures/reasons/` |
+| `decode/decoding_confidence.pkl` | Observed and null decoding estimates |
+| `decode/checkpoints/` | Per-session decoding checkpoints |
+| `decode/figures/` | Confidence and classifier-C plots; trial inspection in `inspection/` |
+| `evaluate/eval_confidence.pkl` | Decoding evaluation results |
+| `evaluate/tables/eval_confidence.csv` | Evaluation summary |
+| `evaluate/figures/across_runs/<comparison>/` | Cross-run evaluation plots, saved in each compared run |
+| `states/on_off_states.pkl` | State masks and duration summaries |
+| `states/figures/` | Plots grouped into `confidence/`, `masks/`, `durations/`, and `cluster_masses/` |
+| `activity/figures/` | Activity plots grouped by `activity/` or `principal_components/`, then `states/` or `cues/` |
+| `prepare/` | Shared `trial_table.pkl`, `cv_feature_cache.pkl`, and preparation `manifest.json` |
+| `models/outcomes/<outcome>/` | Model-family comparison |
+| `nested-count/outcomes/<outcome>/` | Nested cell-count comparisons |
+| `nested-activity/outcomes/<outcome>/` | Nested activity comparisons |
+| `criticality/outcomes/<outcome>/` | Active-cell threshold comparisons |
+| `criticality/prepared/active_thresholds/` | Threshold-specific trial tables and manifests in `percentile_<NN>/`, plus `thresholds.csv` |
+| `interactions/outcomes/<outcome>/` | Period interaction comparisons |
 
-The four primary `.pkl` caches in the table use a versioned format. Load their
-result lists with `scripts.next.cache_io.read(path)`. Read pickle caches only
-from trusted sources.
+Model outcome directories contain `tables/`, `figures/`, `logs/`, and, when
+enabled, `cross_validation/`. `<outcome>` is `total_off_state_duration` or
+`maximum_off_state_duration`. Optional plots and diagnostics are created only
+when requested and when the corresponding data are available.
+
+PEV-weighted variants add `pev_weighted/` to the relevant output directory:
+`prepare/pev_weighted/`, `activity/figures/pev_weighted/`, and
+`<model-stage>/outcomes/<outcome>/pev_weighted/`. Criticality's weighted trial
+tables live in `criticality/prepared/active_thresholds/percentile_<NN>/pev_weighted/`;
+its threshold summary lives in `criticality/prepared/active_thresholds/pev_weighted/`.
+The example preset weights activity plots but leaves mixed-effects inputs
+unweighted. See [custom subdirectory settings](configuration.md#cache-directory-layout).
+
+The four primary `.pkl` caches (screening, decoding, evaluation, and states) use
+a versioned envelope. Load their result lists with `scripts.next.cache_io.read(path)`.
+Read pickle caches only from trusted sources. Earlier flat next caches and the
+shared `mixedlm/` layout must be regenerated in a fresh run directory; the new
+scripts do not fall back to old locations.
 
 Activity comparison includes preferred/opposite cue views, per-cell
 and population plots, PCA, deterministic point sampling, and maximum off-state
@@ -29,7 +60,7 @@ Run this from the repository root in the analysis environment:
 from pathlib import Path
 from scripts.next.cache_io import read
 
-results = read(Path("cache/next_run_034_full_session/decoding_confidence.pkl"))
+results = read(Path("cache/next_run_034_full_session/decode/decoding_confidence.pkl"))
 for session in results:
     print(session["session"], session["decoding_confidence"].shape)
 ```
@@ -81,6 +112,8 @@ These optional scripts are separate from the eleven-stage runner:
 Selection diagnostics are opt-in through `select.save_extended_diagnostics` in
 JSON or `--save-extended-diagnostics` on the selection script. Use each script's
 `--help` for its required inputs and plotting options.
-The diagnostic CSV's `presence_ratio` uses correct trials in the screening
-window [−400, 1400) ms, matching the screening criterion. Activity traces and
+The diagnostic CSV's `presence_ratio` uses correct trials in the configured
+screening window ([−400, 1400) ms in the example), matching the screening criterion.
+Per-check columns distinguish `disabled`, `pass`, `fail`, and `not_applicable`.
+Activity traces and
 the additional baseline Spearman correlation still describe all session trials.

@@ -8,6 +8,7 @@ if __package__ in (None, ""):
     __package__ = "scripts.next"
 
 
+from scripts.next.cache_paths import primary_cache, stage_path
 from scripts.next import cache_io as pickle
 import re
 import warnings
@@ -57,7 +58,7 @@ def load_runs(cache_dirs):
         raise ValueError('Run cache directories must have distinct folder names.')
     runs = []
     for path in paths:
-        cache_file = path / 'eval_confidence.pkl'
+        cache_file = primary_cache(path, 'eval_confidence.pkl')
         if not cache_file.exists():
             raise FileNotFoundError(
                 f'Missing {cache_file}. Run scripts/next/eval_confidence.py '
@@ -229,7 +230,7 @@ def main(config: Config):
         re.sub(r'[^A-Za-z0-9_.-]+', '_', name) for name in names
     )
     output_dirs = [
-        Path(cache_dir) / 'eval_confidence_across_runs' / comparison
+        stage_path(cache_dir, 'evaluate', 'figures', 'across_runs', comparison)
         for cache_dir in config.cache_dirs
     ]
     output_paths = []

@@ -15,6 +15,7 @@ if __package__ in (None, ""):
     __package__ = "scripts.next"
 
 
+from scripts.next.cache_paths import stage_path
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,9 +64,9 @@ class Config:
 
     data_dir: Path = Path("data/nature")
     cache_dir: Path = Path('cache/next_run')
-    output_subdir: str = "mixedlm"
-    prepared_subdir: str = "mixedlm/prepared"
-    cv_input_subdir: str = "mixedlm/prepared"
+    output_subdir: str = ""  # relative to this stage under cache_dir
+    prepared_subdir: str = "prepared"  # relative to criticality/ under cache_dir
+    cv_input_subdir: str = ""  # relative to prepare/ under cache_dir
     cv_input_filename: str = "cv_feature_cache.pkl"
     outcome: OutcomeSelection = "both"
     run_cv: bool = True
@@ -88,10 +89,10 @@ class Config:
 def _validate_config(config: Config) -> list[int]:
     output_subdir = Path(config.output_subdir)
     if output_subdir.is_absolute() or ".." in output_subdir.parts:
-        raise ValueError("output_subdir must stay within cache_dir.")
+        raise ValueError("output_subdir must stay within its owning stage directory.")
     prepared_subdir = Path(config.prepared_subdir)
     if prepared_subdir.is_absolute() or ".." in prepared_subdir.parts:
-        raise ValueError("prepared_subdir must stay within cache_dir.")
+        raise ValueError("prepared_subdir must stay within its owning stage directory.")
     if not config.active_percentiles:
         raise ValueError("active_percentiles must not be empty.")
     if any(
@@ -117,7 +118,7 @@ def _validate_config(config: Config) -> list[int]:
         raise ValueError("figure_dpi must be positive.")
     cv_input_subdir = Path(config.cv_input_subdir)
     if cv_input_subdir.is_absolute() or ".." in cv_input_subdir.parts:
-        raise ValueError("cv_input_subdir must stay within cache_dir.")
+        raise ValueError("cv_input_subdir must stay within its owning stage directory.")
     if Path(config.cv_input_filename).name != config.cv_input_filename:
         raise ValueError("cv_input_filename must be a filename, not a path.")
     return percentiles
@@ -189,14 +190,13 @@ def _prepare_threshold_data(
             save_cv_cache=False,
             pev_weighted_average=config.pev_weighted_average,
         )
-        frames[percentile] = prepare_data(prepare_config)
+        frames[percentile] = prepare_data(prepare_config, output_stage="criticality")
         thresholds[percentile] = z_threshold
         paths[percentile] = (
-            config.cache_dir
-            / weighting_subdir(
+            stage_path(config.cache_dir, "criticality", weighting_subdir(
                 threshold_subdir,
                 config.pev_weighted_average,
-            )
+            ))
             / prepare_config.output_filename
         )
     return frames, thresholds, paths
@@ -487,7 +487,7 @@ def _run_outcome(
             config.cache_dir,
             config.output_subdir,
             outcome,
-            "active_cell_criticality",
+            "criticality",
         ),
         config.pev_weighted_average,
     )
@@ -689,11 +689,10 @@ def _run_outcome(
                     )
                 )
         _, cv_summary, _ = run_trial_holdout_cv(
-            config.cache_dir
-            / weighting_subdir(
+            stage_path(config.cache_dir, "prepare", weighting_subdir(
                 config.cv_input_subdir,
                 config.pev_weighted_average,
-            )
+            ))
             / config.cv_input_filename,
             cv_requests,
             output_dir / "cross_validation",
@@ -734,10 +733,10 @@ def main(config: Config) -> None:
             ],
         }
     )
-    threshold_path = config.cache_dir / weighting_subdir(
+    threshold_path = stage_path(config.cache_dir, "criticality", weighting_subdir(
         Path(config.prepared_subdir) / "active_thresholds",
         config.pev_weighted_average,
-    ) / "thresholds.csv"
+    )) / "thresholds.csv"
     threshold_path.parent.mkdir(parents=True, exist_ok=True)
     threshold_table.to_csv(threshold_path, index=False)
     for outcome in select_outcomes(config.outcome):

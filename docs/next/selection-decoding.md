@@ -1,15 +1,20 @@
 # Selection and decoding
 
+For the statistical definitions and step-by-step procedures, see the methods
+for [screening](methods.md#select), [decoding](methods.md#decode),
+[evaluation](methods.md#evaluate), [state detection](methods.md#states), and
+[activity comparison](methods.md#activity).
+
 - Screening always uses a full session. Each selection result contains
   `num_trials` and one set of selected, stationary, and presence-passing cells.
   There are no session partitions or leave-one-out cell-selection variants.
-- Selection uses correct trials for PEV and presence filtering. The example's
-  negative firing-rate/variance thresholds and preferred-cue correlation cutoff
-  of 2 disable their numerical exclusion thresholds; presence ratio, baseline
-  correlation, and PEV remain constrained. Unavailable statistics still fail
-  their applicability checks.
-- Extended diagnostic CSVs use the same correct-trial population and
-  [−400, 1400) ms window for presence ratios. Their activity traces and additional
+- Selection uses correct trials for PEV and presence filtering. The example
+  explicitly enables presence, baseline drift, and PEV checks, and disables
+  firing-rate, variance-ratio, and preferred-cue drift checks. Enabled checks
+  reject unavailable statistics; disabled checks do not reject cells or run
+  applicability tests. Each check has its own CLI switch and JSON boolean.
+- Extended diagnostic CSVs use the same correct-trial population and configured
+  presence window (the example uses [−400, 1400) ms). Their activity traces and additional
   baseline Spearman correlations still cover all trials; see
   [Diagnostic tools](outputs.md#diagnostic-tools).
 - Decoding uses correct preferred- and opposite-cue trials, testing each

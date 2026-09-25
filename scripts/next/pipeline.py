@@ -22,7 +22,7 @@ from threadpoolctl import threadpool_limits
 from scripts.next.common import json_value
 
 STAGES = {
-    'select': 'cell_trial_selection',
+    'select': 'cell_screening',
     'decode': 'decoding_confidence',
     'evaluate': 'eval_confidence',
     'states': 'on_off_states',

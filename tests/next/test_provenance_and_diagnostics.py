@@ -28,7 +28,7 @@ class StateProvenanceTest(unittest.TestCase):
         self.data.mkdir()
         self.source = self.data / 'example.mat'
         self.source.write_bytes(b'data version 1')
-        self.selection_path = self.cache / 'cell_trial_selection.pkl'
+        self.selection_path = self.cache / 'select/cell_screening.pkl'
         cache_io.save([{'session': 'example', 'num_trials': 10, 'cells': [1]}], self.selection_path)
         config = DecodeConfig(data_dir=self.data, cache_dir=self.cache)
         self.decoded = {
@@ -43,7 +43,7 @@ class StateProvenanceTest(unittest.TestCase):
         self.save_decoding()
 
     def save_decoding(self):
-        cache_io.save([self.decoded], self.cache / 'decoding_confidence.pkl')
+        cache_io.save([self.decoded], self.cache / 'decode/decoding_confidence.pkl')
 
     def validate(self):
         validate_state_provenance([self.state], self.cache, self.data)
@@ -102,12 +102,12 @@ class StateProvenanceTest(unittest.TestCase):
         for decoded, message in [([], 'no matching decoding result'),
                                  ([self.decoded, self.decoded], 'Duplicate sessions')]:
             with self.subTest(message=message):
-                cache_io.save(decoded, self.cache / 'decoding_confidence.pkl')
+                cache_io.save(decoded, self.cache / 'decode/decoding_confidence.pkl')
                 with self.assertRaisesRegex(ValueError, message):
                     self.validate()
 
     def test_missing_decoding_file_is_actionable(self):
-        (self.cache / 'decoding_confidence.pkl').unlink()
+        (self.cache / 'decode/decoding_confidence.pkl').unlink()
         with self.assertRaisesRegex(ValueError, 'Missing decoding cache.*Rerun decode'):
             self.validate()
 
@@ -116,7 +116,7 @@ class StateProvenanceTest(unittest.TestCase):
         from scripts.next import prepare_data_for_mixedlm as prepare
 
         self.state['decoding_fingerprint'] = 'old-decoding-run'
-        cache_io.save([self.state], self.cache / 'on_off_states.pkl')
+        cache_io.save([self.state], self.cache / 'states/on_off_states.pkl')
         for module, entrypoint, worker in [
             (activity, activity.main, 'prepare_session_activity'),
             (prepare, prepare.prepare_data, '_prepare_session_rows'),
@@ -134,13 +134,16 @@ class ScreeningDiagnosticsTest(unittest.TestCase):
         spikes[2:, 0, 1] = 1  # cell 1 fires only on incorrect trials
         spikes[:2, 2, 1] = 1  # 1400 ms is outside the screening window
         with tempfile.TemporaryDirectory() as directory:
-            config = SimpleNamespace(cache_dir=Path(directory), diagnostics_figure_config=None)
+            config = SimpleNamespace(cache_dir=Path(directory), diagnostics_figure_config=None,
+                                     baseline_drift_start=-400, baseline_drift_end=0,
+                                     t_test_start=500, t_test_end=1400,
+                                     presence_start=-400, presence_end=1400)
             rows = [dict(session='example', cell_idx=i, rejection_reason='pass') for i in range(2)]
             with patch('scripts.next.selection_diagnostics.load_session', return_value=(
                 spikes, np.array([-400, 500, 1400]), np.ones(10), np.arange(10) < 2,
             )):
                 save_diagnostics(rows, [Path('example.mat')], config)
-            frame = pd.read_csv(config.cache_dir / 'diagnostics/cell_rejection_diagnostics.csv')
+            frame = pd.read_csv(config.cache_dir / 'select/diagnostics/cell_rejection_diagnostics.csv')
             np.testing.assert_array_equal(frame.presence_ratio, [1, 0])
 
 
@@ -152,8 +155,8 @@ class CrossRunWarningTest(unittest.TestCase):
                           observed={f'{metric}_by_time_bin': np.array([.5]) for metric, _ in METRICS},
                           null=None)
             other = dict(result, **changes)
-            cache_io.save([result], root / 'run_a/eval_confidence.pkl')
-            cache_io.save([other], root / 'run_b/eval_confidence.pkl')
+            cache_io.save([result], root / 'run_a/evaluate/eval_confidence.pkl')
+            cache_io.save([other], root / 'run_b/evaluate/eval_confidence.pkl')
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter('always')
                 names, runs, sessions = load_runs([root / 'run_a', root / 'run_b'])

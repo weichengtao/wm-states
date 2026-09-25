@@ -12,7 +12,11 @@ session cap. See [Session selection](configuration.md#session-selection).
 
 The runner does not schedule missing prerequisites. Run stages in the
 [documented order](pipeline.md) and use the same data and cache directories.
-For mixed-effects analyses, run `prepare` before fitting models.
+For mixed-effects analyses, run `prepare` before fitting models. Pass the run
+root to `--cache-dir`, without appending `select`, `decode`, or another stage
+name. Caches from the earlier flat or shared `mixedlm/` layout must be
+regenerated; see [Migration](migration.md). If you customize prepared-data
+subdirectories, match the producing and consuming settings.
 
 ## The runner rejects settings or a stage name
 
@@ -54,8 +58,8 @@ screening or decoding settings in one analysis directory.
 
 ## Activity or preparation reports stale provenance
 
-Keep `decoding_confidence.pkl` in the same cache directory as selection and
-states. Rerun `decode evaluate states` with the current selection and data, then
+Keep `decode/decoding_confidence.pkl`, `select/cell_screening.pkl`, and
+`states/on_off_states.pkl` under the same run root. Rerun `decode evaluate states` with the current selection and data, then
 rerun activity and mixed-effects preparation before their dependent analyses.
 If the session data or screening settings changed, rerun `select` first.
 Code changes can also invalidate decoding fingerprints. Do not copy fingerprints

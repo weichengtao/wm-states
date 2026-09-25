@@ -15,6 +15,7 @@ has five stages; the full pipeline has eleven.
 | Install dependencies and run a smoke analysis | [Getting started](next/getting-started.md) |
 | Choose sessions, null counts, and workers | [Configuration](next/configuration.md) |
 | Run or resume analysis stages | [Pipeline stages](next/pipeline.md) |
+| Review the example preset’s methods, populations, and validation design | [Analysis methods](next/methods.md) |
 | Understand screening and decoder estimates | [Selection and decoding](next/selection-decoding.md) |
 | Compare trial-level statistical models | [Mixed-effects analyses](next/mixed-effects.md) |
 | Find caches, figures, and scores | [Outputs and inspection](next/outputs.md) |
@@ -32,6 +33,10 @@ has five stages; the full pipeline has eleven.
 | `docs/validation/next.md` | Dated validation results |
 | `data/` | Local recordings, excluded from Git |
 | `cache/` | Generated analysis outputs, excluded from Git |
+
+Each analysis stage writes to its own subdirectory under the run root. Pass
+that root, without a stage suffix, to `--cache-dir` on every command. See the
+[output layout](next/outputs.md).
 
 Historical scripts remain outside `scripts/next/`. Their caches are incompatible
 with the new pipeline; begin with a fresh cache directory. See the

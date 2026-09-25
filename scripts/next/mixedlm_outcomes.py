@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from scripts.next.cache_paths import stage_path
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -54,13 +55,7 @@ def analysis_output_dir(
     cache_dir: Path,
     output_subdir: str,
     outcome: OutcomeSpec,
-    analysis_name: str,
+    stage: str,
 ) -> Path:
-    """Return the outcome-first directory for one analysis."""
-    return (
-        cache_dir
-        / output_subdir
-        / "outcomes"
-        / outcome.slug
-        / analysis_name
-    )
+    """Return one outcome directory inside its analysis stage."""
+    return stage_path(cache_dir, stage, output_subdir, "outcomes", outcome.slug)

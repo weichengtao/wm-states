@@ -26,7 +26,8 @@ The pipeline runner has no `--n-decode-shuffle` flag. When running
 Set `--data-dir` and `--cache-dir` on the pipeline command; they are not allowed
 inside stage settings. Other shared options, such as worker count and session
 filters, supply defaults to applicable stages; stage-specific JSON values take
-precedence. Paths in JSON are relative to the working directory. The presets use
+precedence. File paths in JSON are relative to the working directory; cache
+subdirectory fields follow the stage-relative rules below. The presets use
 shared diagnostic figure settings at `configs/diagnostic_figure_config.json`.
 
 Preview every stage's resolved settings without running analyses:
@@ -48,6 +49,96 @@ PNG is the default figure format. The runner's `--figure-formats png tif eps`
 enables all three formats for analyses using the shared exporter; plots that
 only support PNG keep that format.
 
+## Cache directory layout
+
+Pass the run root to `--cache-dir` on every command, such as `cache/my_run`,
+without appending a stage name. Scripts resolve their own outputs and upstream
+inputs under that root. See [Outputs](outputs.md) for the complete layout.
+
+Subdirectory overrides stay inside their owning stage. Empty strings (the
+default except for criticality's `prepared_subdir`) mean the stage directory
+itself. Nested relative paths are allowed; absolute paths and `..` are rejected.
+
+| Setting | Relative to | Default |
+| --- | --- | --- |
+| `prepare.output_subdir`, `prepare.cv_output_subdir` | `<cache>/prepare/` | `""` |
+| Model-stage `input_subdir`, `cv_input_subdir` | `<cache>/prepare/` | `""` |
+| Model-stage `output_subdir` | That model stage's directory | `""` |
+| `criticality.prepared_subdir` | `<cache>/criticality/` | `"prepared"` |
+| `activity.output_subdir` | `<cache>/activity/`, before `figures/` | `""` |
+
+For example, `prepare.output_subdir: "custom/features"` writes
+`<cache>/prepare/custom/features/trial_table.pkl`. Set each consuming model
+stage's `input_subdir` to `"custom/features"` as well. Match `cv_output_subdir`
+and consuming `cv_input_subdir` separately when relocating the holdout cache.
+For weighted analyses, scripts append `pev_weighted/` automatically; omit that
+suffix from subdirectory settings. Output filename overrides are filenames,
+not paths.
+
+Criticality reads shared holdout features from `prepare/`, while its own
+threshold-specific preparations stay under `criticality/`. Changing a model's
+`output_subdir` relocates its result subtree without changing its input location.
+Both supplied presets use the default directory layout.
+
+## Screening checks
+
+Each screening check has an independent boolean in the JSON `select` object.
+The standalone CLI enables it with `--check-<name>` and disables it with
+`--no-check-<name>`. Thresholds always have valid numeric ranges, even when a
+check is disabled. Negative rates/ratios, correlations outside [0, 1], and
+nonfinite values are errors; they never mean "off".
+
+| CLI enable flag / JSON key | Example and script default | Parameters (CLI names) |
+| --- | --- | --- |
+| `--check-min-trials` / `check_min_trials` | On | `--min-trial-per-session` (320 total trials) |
+| `--check-firing-rate` / `check_firing_rate` | Off | `--min-fr-test` (default 0 Hz; nonnegative), test period |
+| `--check-presence-ratio` / `check_presence_ratio` | On | `--min-presence-ratio` (0.9; range [0, 1]), `--presence-start`, `--presence-end` (−400, 1400 ms) |
+| `--check-delay-variance` / `check_delay_variance` | Off | `--var-ratio-threshold-delay-over-baseline` (default 1; nonnegative) |
+| `--check-baseline-variance` / `check_baseline_variance` | Off | `--var-ratio-threshold-sliding-over-all` (default 0.5; nonnegative) |
+| `--check-baseline-drift` / `check_baseline_drift` | On | `--temp-dep-r-threshold-baseline` (0.3; range [0, 1]), `--baseline-drift-start`, `--baseline-drift-end` (−400, 0 ms) |
+| `--check-selectivity` / `check_selectivity` | On | `--sig-pev-threshold` (2.5%; range [0, 100]), `--sig-pev-duration` (100 ms), `--pev-clip-at` (0%; range [0, 100]) |
+| `--check-preferred-drift` / `check_preferred_drift` | Off | `--temp-dep-r-threshold` (default 0.3; range [0, 1]), test period |
+
+The test period uses `--t-test-start` / `--t-test-end` (500/1400 ms), and PEV
+uses `--t-test-window` / `--t-test-step` (50/10 ms). Variance checks use
+`--temp-check-baseline-start` / `--temp-check-baseline-end` (−500/0 ms),
+`--temp-check-delay-start` / `--temp-check-delay-end` (500/1000 ms), and
+`--min-trial-for-temp-check` (50 correct trials, also the sliding window length).
+Window lengths, strides, and counts must be positive; variance windows require
+at least two trials. End times must follow start times.
+
+For example, explicitly enable firing-rate screening at 1 Hz and disable
+baseline drift:
+
+```bash
+uv run python scripts/next/cell_screening.py \
+  --data-dir data/nature --cache-dir cache/next_screening_example \
+  --check-firing-rate --min-fr-test 1 \
+  --no-check-baseline-drift
+```
+
+An enabled check rejects cells whose required statistic is unavailable. A
+disabled check skips both rejection and applicability checks; its diagnostic
+status is `disabled`. Other statuses are `pass`, `fail`, and `not_applicable`.
+Extended diagnostics may still calculate descriptive measures for disabled
+checks. Selection caches record the check switches and resolved selection config.
+
+Cue/PEV metadata is still needed for decoding when selectivity rejection is
+disabled: PEV and preferred cue are then summarized across all test bins, with
+no threshold-run test. Selected cells in this mode are not necessarily
+cue-selective, despite historical downstream group names. Zero-PEV populations
+cannot use PEV-weighted means; choose equal weighting for such an analysis.
+Disabling presence admits all cells to the `PASSED_PRESENCE_RATIO` decoder mode.
+The stationary pool bypasses selectivity rejection but respects every other
+enabled cell check, including preferred-cue drift when enabled.
+
+Input validity, at least two correct-trial cue conditions, and positive residual
+degrees of freedom for cue metadata remain required. Disabling the selection
+trial-count gate does not disable decoding's separate session eligibility gate.
+`min_cell_per_group` belongs to decoding; it is no longer accepted by selection,
+where it previously had no effect. The unused selection `seed` and combined
+`temp_dep_detection` controls were also removed.
+
 ## Resume and rerun
 
 The runner writes resolved settings, stage status, and timings to
@@ -66,7 +157,8 @@ Activity comparison and mixed-effects preparation validate cache provenance
 before analysis. State fingerprints, preferred cues, trial IDs, and time bins
 must match the decoding cache. Decoding fingerprints must also match the current
 selection cache, session files, and implementation code. Both stages therefore
-require `decoding_confidence.pkl` alongside the selection and state caches.
+require `decode/decoding_confidence.pkl`, `select/cell_screening.pkl`, and
+`states/on_off_states.pkl` under the same run root.
 Stale or missing provenance stops the stage with instructions to rerun decoding
 and its dependents. This also applies to caches generated before a code change.
 

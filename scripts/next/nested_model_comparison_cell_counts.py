@@ -17,6 +17,7 @@ if __package__ in (None, ""):
     __package__ = "scripts.next"
 
 
+from scripts.next.cache_paths import stage_path
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -70,10 +71,10 @@ class Config:
     """Input, fitting, cross-validation, and output settings."""
 
     cache_dir: Path = Path('cache/next_run')
-    input_subdir: str = "mixedlm/prepared"
+    input_subdir: str = ""  # relative to prepare/ under cache_dir
     input_filename: str = "trial_table.pkl"
-    output_subdir: str = "mixedlm"
-    cv_input_subdir: str = "mixedlm/prepared"
+    output_subdir: str = ""  # relative to this stage under cache_dir
+    cv_input_subdir: str = ""  # relative to prepare/ under cache_dir
     cv_input_filename: str = "cv_feature_cache.pkl"
     outcome: OutcomeSelection = "both"
     run_cv: bool = True
@@ -776,7 +777,7 @@ def _run_cross_validation(
         for spec in specs
     ]
     metrics, _, _ = run_trial_holdout_cv(
-        config.cache_dir / config.cv_input_subdir / config.cv_input_filename,
+        stage_path(config.cache_dir, "prepare", config.cv_input_subdir) / config.cv_input_filename,
         requests,
         cv_dir,
         TrialHoldoutConfig(
@@ -827,12 +828,12 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
     specs = _model_specs(outcome.column)
     contrasts = _contrast_specs()
     frame = _load_and_validate_data(config, specs)
-    input_path = config.cache_dir / config.input_subdir / config.input_filename
+    input_path = stage_path(config.cache_dir, "prepare", config.input_subdir) / config.input_filename
     output_dir = analysis_output_dir(
         config.cache_dir,
         config.output_subdir,
         outcome,
-        "nested_cell_count_comparison",
+        "nested-count",
     )
     table_dir = output_dir / "tables"
     figure_dir = output_dir / "figures"

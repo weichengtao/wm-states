@@ -13,7 +13,7 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from scripts.next import cache_io
-from scripts.next.cell_trial_selection import Config as SelectionConfig
+from scripts.next.cell_screening import Config as SelectionConfig
 from scripts.next.common import compute_binned_rates, fingerprint, full_session_selection, worker_context
 from scripts.next.decoding_confidence import Config, decode_one_trial
 from scripts.next.decoder_models import make_grouped_stratified_cv_splits
@@ -33,7 +33,7 @@ class CacheContractTest(unittest.TestCase):
             source.write_bytes(b'input version 1')
             cache = root / 'cache'
             cache_io.save([{'session': 'session', 'num_trials': 400, 'max_num_cells_per_group': 4}],
-                          cache / 'cell_trial_selection.pkl')
+                          cache / 'select/cell_screening.pkl')
             config = Config(data_dir=data, cache_dir=cache, save_figures=False)
             with patch.object(decoder, 'decode_session', return_value={'session': 'session'}) as fit:
                 decoder.main(config)
@@ -47,7 +47,7 @@ class CacheContractTest(unittest.TestCase):
 
     def test_rejects_legacy_cache_and_roundtrips_new_cache(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'cell_trial_selection.pkl'
+            path = Path(directory) / 'cell_screening.pkl'
             path.write_bytes(pickle.dumps([{'session': 'old'}]))
             with self.assertRaisesRegex(ValueError, 'Incompatible cache'):
                 cache_io.read(path)
@@ -77,7 +77,7 @@ class CacheContractTest(unittest.TestCase):
                      'n_cue_preserved_trial_idx_shuffle', 'use_decoding_estimates_from_subset_of_repeats',
                      'list_of_repeats', 'compare_with_repeat_idx',
                      'train_delay_decoder_using_all_delay_time_bins'}
-        for name in ['cell_trial_selection', 'decoding_confidence', 'on_off_states', 'inspect_decoding_results']:
+        for name in ['cell_screening', 'decoding_confidence', 'on_off_states', 'inspect_decoding_results']:
             module = importlib.import_module('scripts.next.' + name)
             self.assertFalse(forbidden & {f.name for f in dataclasses.fields(module.Config)})
 
@@ -127,10 +127,10 @@ class StateTest(unittest.TestCase):
                       'time_bins': np.array([500, 550, 600]),
                       'decoding_confidence': np.full((2, 3), 0.8),
                       'decoding_confidence_null': np.full((2, 3, 3), 0.5)}
-            cache_io.save([source], cache / 'decoding_confidence.pkl')
+            cache_io.save([source], cache / 'decode/decoding_confidence.pkl')
             with patch.object(states, 'save_figure_all_formats'):
                 states.main(states.Config(cache_dir=cache, cluster_size_threshold_off=1))
-            result = cache_io.read(cache / 'on_off_states.pkl')[0]
+            result = cache_io.read(cache / 'states/on_off_states.pkl')[0]
             self.assertFalse(result['on_state_mask'].any())
             self.assertFalse(result['off_state_mask'].any())
             np.testing.assert_array_equal(result['off_state_duration_per_trial'], [0, 0])

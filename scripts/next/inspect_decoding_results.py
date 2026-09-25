@@ -7,6 +7,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     __package__ = "scripts.next"
 
+from scripts.next.cache_paths import primary_cache, stage_path
 from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
@@ -38,7 +39,7 @@ def select_indices(values, requested, name):
 
 
 def main(config: Config):
-    matches = [r for r in cache_io.read(config.cache_dir / 'decoding_confidence.pkl') if str(r['session']) == config.session]
+    matches = [r for r in cache_io.read(primary_cache(config.cache_dir, 'decoding_confidence.pkl')) if str(r['session']) == config.session]
     if len(matches) != 1:
         raise ValueError(f'Expected one decoded session {config.session}.')
     result = matches[0]
@@ -47,7 +48,7 @@ def main(config: Config):
     bins = select_indices(result['time_bins'], config.time_bin_start, 'time-bin-start')
     states = None
     if config.with_state:
-        matches = [r for r in cache_io.read(config.cache_dir / 'on_off_states.pkl') if str(r['session']) == config.session]
+        matches = [r for r in cache_io.read(primary_cache(config.cache_dir, 'on_off_states.pkl')) if str(r['session']) == config.session]
         if len(matches) != 1:
             raise ValueError('No unique matching state result.')
         states = matches[0]
@@ -71,7 +72,7 @@ def main(config: Config):
         ax.set(xlabel='Time (ms)', ylabel='P(preferred cue)', ylim=(0, 1),
                title=f'{config.session}: trial {result["trial_idx"][row]} (row {row})')
         ax.legend()
-        output = config.cache_dir / 'inspect_decoding_results' / f'{config.session}_trial_{row}.png'
+        output = stage_path(config.cache_dir, 'decode', 'figures', 'inspection', f'{config.session}_trial_{row}.png')
         save_figure_png_only(fig, output)
         plt.close(fig)
         print(output)

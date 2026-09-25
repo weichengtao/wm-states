@@ -2,6 +2,137 @@
 
 ## Latest validation — 2026-09-26
 
+The documentation and pre-commit review passed **220 tests** in **4.088 seconds**
+(103 next and 117 historical tests), a strict MkDocs build, and `git diff --check`.
+The example preset resolves all eleven stages in a dry run. The methods were
+checked against the resolved preset and implementation, including full-session
+screening, training-only decoder scaling, calibration order, on/off cluster
+rules, inclusive duration bins, model normalization, and holdout scoring.
+
+Model-definition inspection confirmed **34 model-family, 5 nested-count,
+6 nested-activity, 258 nine-threshold criticality, and 28 interaction models per
+outcome** for the example. Methods now distinguish each stage's populations and
+normalization, full-data versus held-out R², reused versus regenerated holdouts,
+and descriptive activity plots versus predictive evaluation. All method output
+paths follow the stage-directory layout.
+
+This review changed documentation only. The complete `test_run_044_next`
+integration results below still describe the committed analysis code; the
+full-resolution example analysis was not rerun.
+
+## Stage-directory validation — 2026-09-26
+
+The stage-directory cache refactor passed **220 tests** in **4.108 seconds**:
+**103 next tests** and **117 historical tests**. New layout tests cover stage
+ownership, nested relative paths and rejected escapes, both model outcomes,
+old flat-cache rejection, weighted/unweighted preparations, separate criticality
+threshold caches, preparation manifest paths, and rejection-diagnostic outputs.
+Existing provenance, decoding-resume, and cross-run tests use the new paths.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python -m unittest discover -s tests
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python scripts/next/pipeline.py \
+  --settings configs/next/smoke_pipeline.json \
+  --data-dir data/example --cache-dir cache/test_run_044_next \
+  --stages all --n-jobs 2
+```
+
+All eleven stages completed in **122.386 seconds** summed stage time. The run
+root contains exactly eleven stage directories and `pipeline_manifest.json`;
+no flat primary caches or shared `mixedlm/` directory were created. Criticality's
+threshold-specific trial tables are under `criticality/prepared/active_thresholds/`,
+while shared features and holdout caches are under `prepare/`.
+
+The four primary caches each contain four sessions. Their scientific data match
+`test_run_043_next` exactly, excluding configuration/provenance fields that
+necessarily reflect the new paths and code. The prepared table also matches
+exactly at **236 rows × 56 columns**. All **214 CV fits** succeeded and converged
+with no fit errors.
+
+A subsequent decoder invocation reused all four checkpoints without refitting.
+Standalone trial inspection saved its figure under `decode/figures/inspection/`.
+Cross-run comparison with a temporary copy of the evaluation cache wrote eight
+plots under the two runs' `evaluate/figures/across_runs/` directories. The example
+preset resolves all eleven stages in a dry run, the strict MkDocs build passes,
+and the whitespace check is clean.
+
+The smoke preset uses three null estimates, one holdout, and one criticality
+threshold; this is an integration check, not a full example-preset analysis or
+a controlled performance benchmark. Earlier flat caches must be regenerated
+in a fresh run directory; no automatic migration or legacy-path fallback is
+supported. Earlier validation entries below describe the layout at that time.
+
+## Screening rename validation — 2026-09-26
+
+The `cell_screening.py` rename passed **215 tests** in **4.226 seconds**.
+Both direct and module-style `--help` entry points work, and the example
+preset resolves all eleven stages in a dry run. The `select` stage now maps to
+`cell_screening`; methods and CLI examples reference that implementation.
+All next-pipeline readers and provenance checks use `cell_screening.pkl`, and
+the CSV summary is `cell_screening.csv`. Historical scripts retain their names.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python scripts/next/pipeline.py \
+  --settings configs/next/smoke_pipeline.json \
+  --data-dir data/example --cache-dir cache/test_run_043_next \
+  --stages all --n-jobs 2
+```
+
+All eleven stages completed using the renamed caches (125.349 seconds summed
+stage time), with four sessions, 236 prepared rows, and 214 successful,
+converged CV fits. No old-named screening outputs were created. Decoding
+probabilities, predictions, C arrays, trial/time axes, state masks, duration
+outcomes, and the prepared table match `test_run_042_next` exactly. Preparation
+manifests reference `cell_screening.pkl`. The strict documentation build passes.
+This smoke run uses three null estimates and one model holdout; its timing is
+not a controlled performance benchmark.
+
+## Explicit screening validation — 2026-09-26
+
+The explicit-screening refactor passed **215 tests** in **4.072 seconds**:
+**98 next tests** and **117 historical tests**. Its 15 focused screening tests
+also passed after the final measurement-helper review.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python -m unittest discover -s tests -v
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python -m unittest tests.next.test_cell_screening -v
+```
+
+The new tests cover every check's enable/disable CLI flags, independent rejection
+and applicability decisions, valid cue metadata with selectivity disabled,
+stationary-pool filtering, configured presence windows and correct trials,
+known variance/correlation values, constant or missing measurements, parameter
+validation, and removal of obsolete selection settings. Both presets resolve
+with explicit booleans and no sentinel thresholds. The documented standalone
+selection command resolves identically to the example preset. The strict MkDocs
+build and whitespace checks pass.
+
+The complete updated smoke pipeline passed in `cache/test_run_042_next`:
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python scripts/next/pipeline.py \
+  --settings configs/next/smoke_pipeline.json \
+  --data-dir data/example --cache-dir cache/test_run_042_next \
+  --stages all --n-jobs 2
+```
+
+All eleven stages completed (121.456 seconds summed stage time). The four
+sessions retained 32, 9, 13, and 32 selected cells respectively. Selected,
+stationary, and presence-passing cell IDs, selected trial IDs, PEV summaries,
+and preferred cues exactly match `test_run_041_next`. Observed/null probabilities,
+observed predictions, selected C arrays, trial/time axes, state masks, and
+duration outcomes also match exactly. The prepared table is unchanged at 236
+rows, and all 214 CV fits succeeded and converged without fit errors. The smoke
+preset uses three null estimates and one model holdout; timing is not a
+controlled performance benchmark.
+
+Disabled checks now skip applicability exclusions. This can change results on
+other data compared with the earlier sentinel-threshold approach; it is not a
+promise of scientific equivalence for every dataset. Selection caches record
+the enabled checks and complete selection configuration.
+
+## Cache-consistency validation — 2026-09-26
+
 The cache-consistency and diagnostics follow-up passed **200 tests** in
 **4.599 seconds**: **83 next tests** and **117 historical tests**.
 

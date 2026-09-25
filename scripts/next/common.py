@@ -1,4 +1,5 @@
 """Shared session validation, binning, provenance and bounded parallelism."""
+from scripts.next.cache_paths import primary_cache
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 import hashlib
@@ -111,7 +112,7 @@ def validate_state_provenance(state_results, cache_dir, data_dir):
     from scripts.next import cache_io
 
     cache_dir, data_dir = Path(cache_dir), Path(data_dir)
-    decoding_path = cache_dir / 'decoding_confidence.pkl'
+    decoding_path = primary_cache(cache_dir, 'decoding_confidence.pkl')
     rerun = 'Rerun decode, evaluate, and states with the current selection cache and data before downstream analyses.'
     if not decoding_path.exists():
         raise ValueError(f'Missing decoding cache for provenance validation. {rerun}')
@@ -132,7 +133,7 @@ def validate_state_provenance(state_results, cache_dir, data_dir):
                 raise ValueError(f'Session {session}: state/decoding {field} mismatch. {rerun}')
         if not isinstance(result.get('config'), dict) or not result['config']:
             raise ValueError(f'Session {session}: missing decoding settings for provenance validation. {rerun}')
-        current = decoding_fingerprint(result['config'], cache_dir / 'cell_trial_selection.pkl',
+        current = decoding_fingerprint(result['config'], primary_cache(cache_dir, 'cell_screening.pkl'),
                                        data_dir / f'{session}.mat')
         if current != key:
             raise ValueError(f'Session {session}: decoding cache is stale for the current selection, data, or code. {rerun}')

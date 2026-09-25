@@ -7,6 +7,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     __package__ = "scripts.next"
 
+from scripts.next.cache_paths import stage_path
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +27,7 @@ class Config:
 
 
 def main(config: Config):
-    directory = config.cache_dir / 'diagnostics'
+    directory = stage_path(config.cache_dir, 'select', 'diagnostics')
     frame = pd.read_csv(directory / 'cell_rejection_diagnostics.csv', dtype={'session': str})
     rows = []
     for session, cells in frame.groupby('session', sort=True):
@@ -38,7 +39,7 @@ def main(config: Config):
         fig, ax = plt.subplots(figsize=(8, 4), layout='constrained')
         ax.barh(list(counts), list(counts.values()))
         ax.set(title=f'{session}: screening reasons ({len(cells)} cells)', xlabel='Cell count')
-        save_figure_png_only(fig, directory / 'reject_reason_histograms' / f'{session}.png', config.dpi)
+        save_figure_png_only(fig, directory / 'figures' / 'reasons' / f'{session}.png', config.dpi)
         plt.close(fig)
     pd.DataFrame(rows).to_csv(directory / 'reject_reason_histograms_summary.csv', index=False)
 

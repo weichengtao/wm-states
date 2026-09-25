@@ -17,6 +17,7 @@ if __package__ in (None, ""):
     __package__ = "scripts.next"
 
 
+from scripts.next.cache_paths import stage_path
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -74,10 +75,10 @@ class Config:
     """Input, fitting, cross-validation, and output settings."""
 
     cache_dir: Path = Path('cache/next_run')
-    input_subdir: str = "mixedlm/prepared"
+    input_subdir: str = ""  # relative to prepare/ under cache_dir
     input_filename: str = "trial_table.pkl"
-    output_subdir: str = "mixedlm"
-    cv_input_subdir: str = "mixedlm/prepared"
+    output_subdir: str = ""  # relative to this stage under cache_dir
+    cv_input_subdir: str = ""  # relative to prepare/ under cache_dir
     cv_input_filename: str = "cv_feature_cache.pkl"
     outcome: OutcomeSelection = "both"
     run_cv: bool = True
@@ -511,8 +512,7 @@ def _run_cross_validation(
         for index, spec in enumerate(specs)
     ]
     _, summary, _ = run_trial_holdout_cv(
-        config.cache_dir
-        / weighting_subdir(config.cv_input_subdir, config.pev_weighted_average)
+        stage_path(config.cache_dir, "prepare", weighting_subdir(config.cv_input_subdir, config.pev_weighted_average))
         / config.cv_input_filename,
         requests,
         cv_dir,
@@ -543,8 +543,7 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
     specs = _model_specs(outcome.column)
     frame = _load_and_validate_data(config, specs)
     input_path = (
-        config.cache_dir
-        / weighting_subdir(config.input_subdir, config.pev_weighted_average)
+        stage_path(config.cache_dir, "prepare", weighting_subdir(config.input_subdir, config.pev_weighted_average))
         / config.input_filename
     )
     output_dir = weighting_subdir(
@@ -552,7 +551,7 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
             config.cache_dir,
             config.output_subdir,
             outcome,
-            "nested_mean_norm_activity_comparison",
+            "nested-activity",
         ),
         config.pev_weighted_average,
     )

@@ -1,4 +1,5 @@
 """Optional full-session screening diagnostics, outside the screening hot path."""
+from scripts.next.cache_paths import stage_path
 import json
 import numpy as np
 import pandas as pd
@@ -11,7 +12,7 @@ from scripts.next.figure_exports import save_figure_png_only
 
 
 def save_diagnostics(rows, files, config):
-    directory = config.cache_dir / 'diagnostics'
+    directory = stage_path(config.cache_dir, 'select', 'diagnostics')
     directory.mkdir(parents=True, exist_ok=True)
     targets = {}
     if config.diagnostics_figure_config is not None:
@@ -25,9 +26,9 @@ def save_diagnostics(rows, files, config):
         if not mask.any():
             continue
         spikes, times, _, correct = load_session(path)
-        baseline = spikes[:, (times >= -400) & (times < 0)].sum(axis=1)
-        delay = spikes[:, (times >= 500) & (times < 1400)].sum(axis=1)
-        presence_mask = (times >= -400) & (times < 1400)
+        baseline = spikes[:, (times >= config.baseline_drift_start) & (times < config.baseline_drift_end)].sum(axis=1)
+        delay = spikes[:, (times >= config.t_test_start) & (times < config.t_test_end)].sum(axis=1)
+        presence_mask = (times >= config.presence_start) & (times < config.presence_end)
         presence = np.full(spikes.shape[2], np.nan)
         if correct.any() and presence_mask.any():
             presence = (spikes[correct][:, presence_mask].sum(axis=1) > 0).mean(axis=0)

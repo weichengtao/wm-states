@@ -17,6 +17,7 @@ if __package__ in (None, ""):
     __package__ = "scripts.next"
 
 
+from scripts.next.cache_paths import stage_path
 import textwrap
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -73,10 +74,10 @@ class Config:
     """Input, model-fitting, and output settings."""
 
     cache_dir: Path = Path('cache/next_run')
-    input_subdir: str = "mixedlm/prepared"
+    input_subdir: str = ""  # relative to prepare/ under cache_dir
     input_filename: str = "trial_table.pkl"
-    output_subdir: str = "mixedlm"
-    cv_input_subdir: str = "mixedlm/prepared"
+    output_subdir: str = ""  # relative to this stage under cache_dir
+    cv_input_subdir: str = ""  # relative to prepare/ under cache_dir
     cv_input_filename: str = "cv_feature_cache.pkl"
     outcome: OutcomeSelection = "both"
     run_cv: bool = True
@@ -213,7 +214,7 @@ def _model_specs(
 def _validate_relative_path(value: str, field_name: str) -> None:
     path = Path(value)
     if path.is_absolute() or ".." in path.parts:
-        raise ValueError(f"{field_name} must stay within cache_dir.")
+        raise ValueError(f"{field_name} must stay within its owning stage directory.")
 
 
 def _base_columns_from_terms(terms: tuple[str, ...]) -> set[str]:
@@ -229,8 +230,7 @@ def _load_data(config: Config, specs: list[ModelSpec]) -> tuple[pd.DataFrame, Pa
     if Path(config.input_filename).name != config.input_filename:
         raise ValueError("input_filename must be a filename, not a path.")
     input_path = (
-        config.cache_dir
-        / weighting_subdir(config.input_subdir, config.pev_weighted_average)
+        stage_path(config.cache_dir, "prepare", weighting_subdir(config.input_subdir, config.pev_weighted_average))
         / config.input_filename
     )
     if not input_path.exists():
@@ -511,7 +511,7 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
             config.cache_dir,
             config.output_subdir,
             outcome,
-            "period_interactions",
+            "interactions",
         ),
         config.pev_weighted_average,
     )
@@ -647,11 +647,10 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
                 )
             )
         run_trial_holdout_cv(
-            config.cache_dir
-            / weighting_subdir(
+            stage_path(config.cache_dir, "prepare", weighting_subdir(
                 config.cv_input_subdir,
                 config.pev_weighted_average,
-            )
+            ))
             / config.cv_input_filename,
             requests,
             output_dir / "cross_validation",

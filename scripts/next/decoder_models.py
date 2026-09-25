@@ -65,7 +65,7 @@ def decoder_cells_for_session(
         if 'cell_idx_stationary' not in selection:
             raise ValueError(
                 'The selection cache does not contain cell_idx_stationary. '
-                'Rerun scripts/next/cell_trial_selection.py before using '
+                'Rerun scripts/next/cell_screening.py before using '
                 'cells_used_for_decoder=stationary.'
             )
         return set(np.asarray(selection['cell_idx_stationary'], dtype=np.int64).tolist())
@@ -74,7 +74,7 @@ def decoder_cells_for_session(
         if 'cell_idx_passed_presence_ratio' not in selection:
             raise ValueError(
                 'The selection cache does not contain cell_idx_passed_presence_ratio. '
-                'Rerun scripts/next/cell_trial_selection.py before using '
+                'Rerun scripts/next/cell_screening.py before using '
                 'cells_used_for_decoder=passed_presence_ratio.'
             )
         return set(

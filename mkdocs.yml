@@ -59,6 +59,7 @@ nav:
       - Getting started: next/getting-started.md
       - Configuration: next/configuration.md
       - Pipeline stages: next/pipeline.md
+      - Analysis methods: next/methods.md
       - Selection and decoding: next/selection-decoding.md
       - Mixed-effects analyses: next/mixed-effects.md
       - Outputs and inspection: next/outputs.md

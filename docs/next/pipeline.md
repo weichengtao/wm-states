@@ -7,17 +7,21 @@ directory, and set of analysis settings.
 
 | Stage | Analysis |
 | --- | --- |
-| `select` | Screen cells across each full session |
-| `decode` | Estimate observed and shuffled-null confidence |
-| `evaluate` | Score decoding confidence and predictions |
-| `states` | Detect on/off states |
-| `activity` | Compare activity across states and cue groups |
-| `prepare` | Prepare mixed-effects tables and CV features |
-| `models` | Compare mixed-effects model families |
-| `nested-count` | Compare nested cell-count models |
-| `nested-activity` | Compare nested activity models |
-| `criticality` | Scan active-cell thresholds |
-| `interactions` | Test interactions across periods |
+| [`select`](methods.md#select) | Screen cells across each full session |
+| [`decode`](methods.md#decode) | Estimate observed and shuffled-null confidence |
+| [`evaluate`](methods.md#evaluate) | Score decoding confidence and predictions |
+| [`states`](methods.md#states) | Detect on/off states |
+| [`activity`](methods.md#activity) | Compare activity across states and cue groups |
+| [`prepare`](methods.md#prepare) | Prepare mixed-effects tables and CV features |
+| [`models`](methods.md#models) | Compare mixed-effects model families |
+| [`nested-count`](methods.md#nested-count) | Compare nested cell-count models |
+| [`nested-activity`](methods.md#nested-activity) | Compare nested activity models |
+| [`criticality`](methods.md#criticality) | Scan active-cell thresholds |
+| [`interactions`](methods.md#interactions) | Test interactions across periods |
+
+Each stage links to its method, including the implemented statistical procedure,
+trial population, outputs, and interpretation. The methods guide also describes
+[shared mixed-effects estimation and validation](methods.md#mixed-effects-estimation).
 
 With no `--stages` flag the runner executes the first five stages.
 `--stages all` executes all eleven; `--stages mixed` executes the last six.
@@ -32,7 +36,8 @@ prerequisites automatically.
 | `states` | Decoding cache with at least two null estimates |
 | `activity` | Session files, selection, decoding, and state caches |
 | `prepare` | Session files, selection, decoding, and state caches |
-| Mixed-effects analyses | Prepared table and CV feature cache; criticality also reads session files |
+| `models`, `nested-count`, `nested-activity`, `interactions` | Prepared table and, when CV is enabled, raw CV feature cache |
+| `criticality` | Session files, selection, decoding, and state caches; raw CV feature cache when CV is enabled |
 
 After changing a stage's inputs or settings, rerun its dependents. See
 [Resume and rerun](configuration.md#resume-and-rerun) for checkpoint behavior.
@@ -45,20 +50,23 @@ order with the same data and cache directories.
 
 ```bash
 # 1. Select decoder cells and cache the selection results.
-uv run python scripts/next/cell_trial_selection.py \
+uv run python scripts/next/cell_screening.py \
   --n-jobs-session 10 \
   --data-dir data/nature \
   --cache-dir cache/next_run_034_full_session \
   --session-list-file configs/decoding_sessions.txt \
   --t-test-window 50 \
-  --min-cell-per-group 1 \
-  --min-fr-test -1 \
+  --check-min-trials \
+  --no-check-firing-rate \
+  --check-presence-ratio \
   --min-presence-ratio 0.9 \
-  --var-ratio-threshold-delay-over-baseline -1 \
-  --var-ratio-threshold-sliding-over-all -1 \
-  --temp-dep-r-threshold 2 \
+  --no-check-delay-variance \
+  --no-check-baseline-variance \
+  --check-baseline-drift \
   --temp-dep-r-threshold-baseline 0.3 \
+  --check-selectivity \
   --sig-pev-threshold 2.5 \
+  --no-check-preferred-drift \
   --no-save-extended-diagnostics \
   --diagnostics-figure-config configs/diagnostic_figure_config.json
 

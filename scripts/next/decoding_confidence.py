@@ -7,6 +7,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     __package__ = "scripts.next"
 
+from scripts.next.cache_paths import primary_cache, stage_path
 from dataclasses import dataclass, asdict
 import json
 from pathlib import Path
@@ -205,13 +206,13 @@ def decode_session(path, selection, config):
 
 
 def main(config: Config):
-    path = config.cache_dir / 'decoding_confidence.pkl'
+    path = primary_cache(config.cache_dir, 'decoding_confidence.pkl')
     if config.plot_only:
         results = cache_io.read(path)
         for result in results:
             plot_session(result, config.cache_dir, config.plot_actual_trial_id)
         return results
-    selection_path = config.cache_dir / 'cell_trial_selection.pkl'
+    selection_path = primary_cache(config.cache_dir, 'cell_screening.pkl')
     selections = cache_io.read(selection_path)
     selection_by_session = {r['session']: r for r in selections}
     if len(selection_by_session) != len(selections):
@@ -231,7 +232,7 @@ def main(config: Config):
     if not eligible:
         raise ValueError('No sessions passed decoding selection thresholds.')
     results = []
-    checkpoint_dir = config.cache_dir / 'checkpoints' / 'decoding'
+    checkpoint_dir = stage_path(config.cache_dir, 'decode', 'checkpoints')
     for file in eligible:
         key = decoding_fingerprint(config, selection_path, file)
         checkpoint = checkpoint_dir / f'{file.stem}.pkl'

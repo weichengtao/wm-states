@@ -1,4 +1,5 @@
 """Observed and null decoding plots, independent of model fitting."""
+from scripts.next.cache_paths import stage_path
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -7,7 +8,7 @@ from scripts.next.figure_exports import save_figure_png_only
 
 
 def plot_session(result, cache_dir, actual_trial_id=False):
-    directory = cache_dir / 'decoding_confidence'
+    directory = stage_path(cache_dir, 'decode', 'figures')
     for key, title in [('decoding_confidence', 'Observed confidence'),
                        ('decoding_confidence_null', 'Mean null confidence'),
                        ('decoding_classifier_c', 'Observed log10(C)'),

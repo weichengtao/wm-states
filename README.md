@@ -6,6 +6,7 @@ states, and fit mixed-effects models from full recording sessions.
 The supported pipeline lives in `scripts/next/`. It produces one observed
 estimate and N null estimates per tested trial and time bin. JSON presets are
 in `configs/next/`, tests in `tests/next/`, and documentation in `docs/`.
+Cell screening runs through `scripts/next/cell_screening.py` (pipeline stage `select`).
 Historical scripts remain available in their original locations; use a fresh
 cache directory for the new pipeline.
 
@@ -46,13 +47,21 @@ excluded from Git.
 
 ## Reuse and compare results
 
-Keep selection, decoding, and state caches together. Activity comparison and
+Every stage saves under its own directory in the run root: `select/`, `decode/`,
+`evaluate/`, `states/`, `activity/`, `prepare/`, and the individual model stages.
+Figures, diagnostics, and model outcomes use nested directories. Always pass
+the run root to `--cache-dir`; see the [output layout](docs/next/outputs.md).
+Earlier flat caches and the shared `mixedlm/` layout require a fresh full run.
+
+Keep all stage directories under the same run root. Activity comparison and
 mixed-effects preparation verify that the state results match decoding and that
 decoding matches the current selection cache, session data, and implementation
 code. Stale inputs stop the analysis with rerun instructions. After updating
 the code, rerun decoding and downstream stages; rerun selection first if data
 or screening settings changed. See [checkpoint reuse](docs/next/configuration.md#resume-and-rerun).
 
+Each screening check has an explicit `--check-*` / `--no-check-*` switch and
+validated settings; see [screening controls](docs/next/configuration.md#screening-checks).
 Screening diagnostics report presence ratios over correct trials, matching the
 selection criterion. Cross-run confidence comparisons warn when preferred cues
 or trial sets differ and still generate comparison plots. See
@@ -68,6 +77,8 @@ The [documentation home](docs/index.md) links to the full guides:
 - [Getting started](docs/next/getting-started.md)
 - [Configuration and checkpoint reuse](docs/next/configuration.md)
 - [Pipeline stages and standalone commands](docs/next/pipeline.md)
+- [Example-preset methods for all eleven stages](docs/next/methods.md), including
+  trial/cell populations, normalization, state rules, and model validation
 - [Selection and decoding behavior](docs/next/selection-decoding.md)
 - [Mixed-effects analyses](docs/next/mixed-effects.md)
 - [Outputs and inspection](docs/next/outputs.md)

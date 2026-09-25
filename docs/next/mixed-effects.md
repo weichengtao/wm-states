@@ -1,5 +1,11 @@
 # Mixed-effects analyses
 
+The methods guide describes [feature preparation](methods.md#prepare),
+[shared estimation and CV](methods.md#mixed-effects-estimation), and the
+procedures for [model families](methods.md#models),
+[nested counts](methods.md#nested-count), [nested activity](methods.md#nested-activity),
+[threshold scanning](methods.md#criticality), and [interactions](methods.md#interactions).
+
 After completing the default pipeline, run all six mixed-effects stages with
 the same preset and cache:
 
@@ -19,7 +25,7 @@ and maximum contiguous off-state duration are analyzed by default. These
 trial-holdout repetitions are independent of the removed decoder fit repeats.
 
 ```bash
-# 1. Prepare the no-CV table and the separate fold-safe CV feature cache.
+# 1. Prepare the full-data table and the separate raw CV feature cache.
 uv run python scripts/next/prepare_data_for_mixedlm.py \
   --data-dir data/nature \
   --cache-dir cache/next_run_034_full_session \
@@ -57,7 +63,7 @@ uv run python scripts/next/nested_model_comparison_mean_norm_activity.py \
   --cv-prediction-sample-per-model 1000 \
   --significance-alpha 0.05
 
-# 5. Scan active-cell thresholds from the 10th to 90th percentiles.
+# 5. Scan standard-normal active-cell cutoffs from the 10th to 90th percentiles.
 uv run python scripts/next/find_active_cell_criticality.py \
   --data-dir data/nature \
   --cache-dir cache/next_run_034_full_session \
@@ -82,7 +88,12 @@ uv run python scripts/next/test_interactions_across_periods.py \
 
 Preparation creates reproducible within-session trial holdouts, rounding the
 20% holdout count up. CV activity normalization is fitted using training trials
-only. `--history-alpha`, weighting policy, and CV settings must match preparation.
+only. Keep `--history-alpha`, weighting policy, and CV settings aligned with
+preparation to reproduce this example. Weighting mismatches are rejected; if the
+requested split count, seed, or holdout fraction cannot reuse the cached splits,
+the CV helper generates splits from the raw cache and records their source.
+Changing a model stage's history alpha does not rewrite the full-data table;
+regenerate that table when changing the intended history definition.
 The 1000-row prediction sample cap affects plotting samples, not CV metrics.
 `--outcome total` or `--outcome maximum` selects one outcome.
 
@@ -92,24 +103,32 @@ The cell-count-only comparison uses the unweighted prepared table; prepare both
 variants if running that analysis alongside weighted models.
 
 ```text
-<cache>/mixedlm/
-├── prepared/
+<cache>/
+├── prepare/
 │   ├── trial_table.pkl
 │   ├── cv_feature_cache.pkl
 │   ├── manifest.json
-│   ├── pev_weighted/
-│   └── active_thresholds/
-└── outcomes/
-    └── <outcome>/
-        ├── model_family/
-        ├── nested_cell_count_comparison/
-        ├── nested_mean_norm_activity_comparison/
-        ├── active_cell_criticality/
-        └── period_interactions/
+│   └── pev_weighted/                 # when requested
+├── models/outcomes/<outcome>/
+├── nested-count/outcomes/<outcome>/
+├── nested-activity/outcomes/<outcome>/
+├── criticality/
+│   ├── prepared/active_thresholds/
+│   │   ├── percentile_<NN>/          # trial_table.pkl + manifest.json
+│   │   └── thresholds.csv
+│   └── outcomes/<outcome>/
+└── interactions/outcomes/<outcome>/
 ```
 
-`<outcome>` is `total_off_state_duration` or `maximum_off_state_duration`;
-each has the same analysis subdirectory layout.
+Each model stage owns its result directory, with `tables/`, `figures/`, `logs/`,
+and optional `cross_validation/` below each outcome. `<outcome>` is
+`total_off_state_duration` or `maximum_off_state_duration`. Weighted model results
+add `pev_weighted/` below the outcome directory. Shared feature caches belong to
+`prepare/`; threshold-specific criticality tables belong to `criticality/`.
+See [Outputs](outputs.md) for the full layout and weighted threshold paths.
+
+Always pass the run root to `--cache-dir`. Subdirectory overrides are relative
+to the owning stage, as described in [Configuration](configuration.md#cache-directory-layout).
 
 Check the statistical analyses' logs and result tables for failed or nonconverged
 fits; a completed command does not imply that every model converged.
@@ -122,10 +141,10 @@ cue onset:
 
 | Period | Interval |
 | --- | --- |
-| Baseline | −400 to 0 |
-| Encoding | 100 to 300 |
-| Pre-delay | 300 to 500 |
-| Delay | 500 to 1400 |
+| Baseline | [−400, 0) |
+| Encoding | [100, 300) |
+| Pre-delay | [300, 500) |
+| Delay | [500, 1400) |
 
 Features distinguish preferred selective cells, selective nonpreferred cells,
 and stationary nonselective cells. PEV weighting changes selective-population

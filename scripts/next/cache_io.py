@@ -10,7 +10,7 @@ import tempfile
 
 HIGHEST_PROTOCOL = _pickle.HIGHEST_PROTOCOL
 SCHEMA_VERSION = 1
-PRIMARY = {'cell_trial_selection.pkl', 'decoding_confidence.pkl', 'on_off_states.pkl',
+PRIMARY = {'cell_screening.pkl', 'decoding_confidence.pkl', 'on_off_states.pkl',
            'eval_confidence.pkl'}
 
 
