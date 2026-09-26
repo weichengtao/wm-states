@@ -221,6 +221,9 @@ cache/
 /dashboard/playwright-report/
 /dashboard/test-results/
 /configs/next/.dashboard/
+# Saved template JSON stays trackable; only transient storage files are ignored.
+/configs/next/templates/.templates.lock
+/configs/next/templates/.*.tmp
 
 # Frontend source is unrelated to Python distribution lib directories.
 !/dashboard/src/lib/

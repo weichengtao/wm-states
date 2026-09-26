@@ -70,7 +70,7 @@
   "pageHelp": {
     "configure": {
       "label": "Configure your analysis",
-      "summary": "Start with the example preset, choose stages, then validate before launching.",
+      "summary": "Choose an analysis template, review your changes, and validate before launching. Save useful setups for future runs.",
       "path": "next/dashboard/#configure-an-analysis"
     },
     "monitor": {
@@ -146,9 +146,15 @@
     },
     {
       "title": "Keep a reusable configuration",
-      "keywords": "preset settings json save export import",
-      "answer": "The form starts with the example settings. Copy settings from the JSON editor into a named configuration file, or use Reuse settings from a previous run.",
-      "path": "next/dashboard/#generated-files-and-reusable-presets"
+      "keywords": "template preset settings json save export import recording paths reusable",
+      "answer": "Use Save as template to keep a named setup with selected stages, all effective stage parameters, workers, session limit, and figure formats. Recording paths are optional; the run name and output directory are excluded. Templates can be saved while another analysis runs, and are stored in configs/next/templates for deliberate sharing or commits.",
+      "path": "next/dashboard/#analysis-templates"
+    },
+    {
+      "title": "Review changes from your template",
+      "keywords": "changed comparison baseline example smoke restore use template undo current values",
+      "answer": "Your selected Analysis template stays the reference while you edit. Review changes shows template and current values; Changed filters a stage's parameters. Use template restores one parameter, Restore template reapplies the selected setup, and Undo restores the previous draft after an application or reset.",
+      "path": "next/dashboard/#template-comparison"
     },
     {
       "title": "Warnings and failed stages",

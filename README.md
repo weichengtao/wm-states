@@ -63,11 +63,17 @@ excluded from Git.
 
 ## Dashboard
 
-Use the local web dashboard to edit the example settings, launch all or selected
-stages, follow live logs and stage progress, inspect saved figures and tables,
+Use the local web dashboard to choose an analysis template, edit its settings,
+launch all or selected stages, follow live logs and stage progress, inspect saved figures and tables,
 and compare sessions or separate run directories side by side. You can open
 the dashboard before downloading recordings; data are needed when you start
 an analysis.
+
+Changes are highlighted against your selected template, with original/current
+values and individual resets. **Save as template** keeps a named setup for later,
+even while an analysis is running. Templates preserve analysis choices without
+reusing a run's output directory; recording paths are optional. See
+[analysis templates](docs/next/dashboard.md#analysis-templates) for saving and sharing.
 
 **First-time setup.** Open a terminal in the repository root (the directory
 containing `pyproject.toml`). Use Python 3.12 and Node.js 22.12 or newer:

@@ -1,5 +1,49 @@
 # Next pipeline validation
 
+## Template comparison and reusable configurations — 2026-09-26
+
+The dashboard template changes passed **422 Python tests** in **11.691 seconds**
+and **66 frontend tests** across **10 files**, plus TypeScript checking and the
+production Vite build. After the full Python run, a path-validation edge case
+was fixed and all **13 template API/storage tests** passed again: saving an
+unavailable `~user` recording path preserves its literal value without trying
+to resolve that user's home directory. The guide passed a strict MkDocs build,
+frontend formatting checks passed, and `git diff --check` passed.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m unittest discover -s tests -v
+npm --prefix dashboard test
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
+- Python tests cover saving independently of an active job, missing recording
+  and diagnostic files, configuration validation, persistence, case-insensitive
+  duplicate names, concurrent saves, atomic publication, ID collisions, unsafe
+  filesystem paths, and cross-origin request rejection.
+- Frontend tests cover the chosen template baseline, explicit nulls and inherited
+  defaults, worker overrides, optional recording paths, unknown JSON settings,
+  stage selection, captured effective defaults, and preservation of run identity.
+  Component tests verify that editing and saving remain enabled during an active
+  job while both launch buttons are disabled.
+- Browser review at **1440 × 960** and **390 × 844** verified Smoke-template
+  matching, changed values and counts, the comparison table, Restore/Undo,
+  changed-only filtering, and restoring one field to its template value.
+- Saved a temporary template with changed decoding, worker count, and stage
+  selection; reloaded the page and verified those choices persisted. A duplicate
+  name produced an inline error. Unapplied JSON disabled saving; applying it
+  updated the comparison. The temporary template was removed after review.
+- Reviewed the desktop/mobile save dialog and fixed mobile action-button
+  overflow. The configuration page fits a 390-pixel viewport. No browser console
+  warnings or errors appeared in the checked workflows.
+
+The changes affect dashboard configuration and storage, not the scientific
+algorithms or analysis caches. No analysis job was started or stopped for browser
+review; active-job behavior was checked with backend and component fixtures.
+Temporary dashboard and Vite preview servers were stopped after review.
+
 ## Shared dropdowns and common controls — 2026-09-26
 
 The control refinement passed **47 frontend tests** across **8 files**, TypeScript

@@ -161,7 +161,8 @@ def _validate_limits(config, stage):
             raise ValueError(f'{stage}.{name}: must be in [0, 0.5].')
 
 
-def resolve_settings(request: RunRequest, repo_root: Path, cache_dir: Path, data_dir: Path):
+def resolve_settings(request: RunRequest, repo_root: Path, cache_dir: Path, data_dir: Path,
+                     *, validate_external_files: bool = True):
     unknown = set(request.stages) - set(pipeline.STAGES)
     if unknown:
         raise ValueError(f'Unknown stages: {sorted(unknown)}.')
@@ -193,7 +194,7 @@ def resolve_settings(request: RunRequest, repo_root: Path, cache_dir: Path, data
         except (TypeError, ValueError) as exc:
             raise ValueError(f'{stage}: {exc}') from exc
         if stage in request.stages:
-            if (stage == 'select' and config.save_extended_diagnostics
+            if (validate_external_files and stage == 'select' and config.save_extended_diagnostics
                     and config.diagnostics_figure_config is not None):
                 path = config.diagnostics_figure_config
                 if not path.is_absolute():

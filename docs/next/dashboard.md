@@ -127,7 +127,7 @@ be published separately, including on GitHub Pages; see
 
 1. Prepare the four local example sessions using
    [Getting started](getting-started.md#prepare-the-recordings).
-2. Open **Configure pipeline**, choose the **Smoke test** preset, and click
+2. Open **Configure pipeline**, choose **Smoke test** under **Analysis template**, and click
    **Use example data** to set the data directory to `data/example`.
 3. Choose a fresh output directory, such as `cache/next_dashboard_001`, and a
    worker count suitable for your computer. Two workers is a modest starting
@@ -138,7 +138,7 @@ be published separately, including on GitHub Pages; see
    its figures and metrics. Use the comparison workspace to place two sessions
    or two run directories side by side.
 
-The smoke preset reduces computation to check that the pipeline works. Use
+The smoke template reduces computation to check that the pipeline works. Use
 **Example pipeline** for the example scientific analysis; see
 [Analysis methods](methods.md) for its choices. If you already have results,
 you can go straight to the run library without starting a new analysis.
@@ -174,12 +174,11 @@ or identifying metadata where names need context. Hover over a selected control
 to see its full label and description if the displayed text is shortened.
 
 Search within a stage by parameter name or description; spaces and underscores
-both work. **Changed** shows only parameters that differ from the example
-pipeline. The badges and stage counts compare effective values: the example
-JSON plus Python defaults for omitted fields. They always use this reference,
-including when you start from the smoke preset or copied settings. **Use example**
-restores one parameter without resetting the rest of your setup. Changing which
-stage you are viewing does not change whether that stage is included in the run.
+both work. **Changed** shows only parameters that differ from the selected
+**Analysis template**. Changing which stage you are viewing does not change
+whether that stage is included in the run. See
+[reviewing template changes](#template-comparison) for the comparison and restore
+controls.
 
 Validation catches unknown settings, incorrect types, and configuration errors
 that can be checked before execution. Loading session data, checking cache
@@ -195,11 +194,13 @@ to `null` for CSV-only diagnostics. These settings do not restrict screening
 or diagnostic CSV rows. See [screening diagnostics](configuration.md#screening-diagnostics)
 for the schema, template, and full-session trace behavior.
 
-Use the smoke preset for an integration check, with the four sessions prepared
+Use the **Smoke test** template for an integration check, with the four sessions prepared
 in [Getting started](getting-started.md). It reduces decoding and model work;
 it is not a substitute for the example preset's analysis settings. Selecting a
-preset replaces the stage settings while keeping your run details and stage
-selection. Review the shared paths and worker counts before starting.
+template applies its stage settings, selected stages, worker count, session
+limit, and figure formats. It keeps the current run name, cache directory, and
+permission to reuse outputs. Recording paths change only when the template
+includes them.
 
 To start from a previous invocation, choose **Reuse settings** in the run
 library. This copies its resolved analysis settings and shared run arguments
@@ -207,10 +208,10 @@ into a new form with a fresh output directory. It does not copy existing output
 files. A copied partial invocation still requires upstream results: choose the
 required stages for a new run, or deliberately reuse the existing directory.
 **Reset setup** restores the form's initial values, including its run details
-and initial preset or copied settings. After switching a preset or resetting,
+and initial preset or copied settings. After applying a template or resetting,
 **Undo** restores the previous draft, including any unapplied JSON text. Undo is
 available until the next configuration edit or replacement; it is not a full
-edit history. Edited stage settings are labeled **Custom settings**.
+edit history.
 
 Paths entered in the form are resolved from the repository root. Data and
 session-list files can be outside the repository. Dashboard run outputs belong
@@ -218,6 +219,87 @@ in named direct child directories under this repository's `cache/` directory so 
 can find them (for example, `cache/next_dashboard_001`, not a nested run path). The dashboard does not upload recordings or move existing runs.
 The optional session list filters the session files available in the selected
 data directory; missing listed sessions are reported by the pipeline.
+
+### Review changes against a template {#template-comparison}
+
+A template is a reusable analysis setup. A run is one execution against
+recordings, with its own output directory and history. Editing a setup does not
+modify the template or a running analysis.
+
+The selected **Analysis template** stays selected while you edit. For example,
+after changing a Smoke test parameter, the dashboard still compares with
+**Smoke test**; it does not switch the reference to Example pipeline or replace
+the name with a generic custom label.
+
+- The template panel reports whether your setup matches and how many values
+  differ. **Review changes** lists the **Template** and **Current** values,
+  including selected stages and shared run arguments.
+- Stage badges and **Changed** narrow the view to parameters that differ.
+  Values are compared after applying defaults, so omitted default values and
+  equivalent enum spellings do not create false differences.
+- **Use template** restores one parameter. **Restore template** reapplies all
+  analysis choices from the selected template, preserving the run's identity.
+  **Undo** restores the draft from before a template application or reset.
+
+Built-in templates use their JSON settings plus the current Python defaults.
+Templates saved through the dashboard capture the effective values for every
+stage, including stages not currently selected. Their saved values therefore
+do not change when a later checkout changes a Python default. Explicit
+stage-specific worker or session-limit overrides in JSON are retained and
+included in the comparison.
+
+A template without recording paths neither changes nor compares the current
+recording directory or session-list paths, including per-stage allowlist
+overrides. Apply any pending JSON edits before reviewing the updated comparison
+or saving a template.
+
+### Save and share analysis templates {#analysis-templates}
+
+1. Configure the analysis and click **Save as template**.
+2. Give it a new **Template name** and, optionally, a description of when to use it.
+3. Leave **Include recording paths** off for a setup you can apply to other
+   recordings. Enable it to also save the recording directory and session-list
+   paths, including explicit per-stage allowlists.
+4. Click **Save new template**. If your draft is unchanged, the saved template
+   becomes its comparison reference.
+
+The saved setup contains selected stages, effective parameters for all stages,
+worker count, session limit, and figure formats. It excludes the run name,
+cache directory, and permission to reuse outputs. Included paths are path
+strings; saving does not copy recordings or the files they reference.
+
+Saving always creates a new template. Existing templates, including the
+built-in **Example pipeline** and **Smoke test**, are not overwritten. Names
+must be unique without regard to case; choose a different name to keep a
+revised version. **Refresh templates** reloads the local collection. Invalid or
+unreadable files are skipped with a warning so other templates remain usable.
+
+Saving checks parameter names, types, stage order, and configuration limits.
+It does not require recordings, cache outputs, or an external diagnostics JSON
+file to be available. Use **Validate & preview** before starting an actual run;
+that check can inspect additional inputs, and execution still performs the
+pipeline's data and cache checks.
+
+You can edit and save future setups while an analysis runs. The banner explains
+that these edits affect future runs; **Start pipeline** is disabled until the
+active job finishes. Saving a template is independent of that job. The save
+dialog captures the setup when opened. Once a save request has started, closing
+the dialog does not cancel it: the captured setup is saved, and later edits are
+kept. The comparison reference changes to the saved template only if the draft
+still matches that captured setup.
+
+Saved templates live in `configs/next/templates/<id>.json`. They are ordinary,
+trackable repository files: you can commit or share them deliberately. Their
+version-1 envelope includes `schema_version`, an ID, a name, a description, a
+creation timestamp, and `config`. Keep the ID and filename consistent when
+copying a file into another checkout.
+
+A saved template envelope is **not** a command-line `--settings` file. Use it
+through the dashboard, or extract `config.settings` into a normal stage-settings
+JSON and pass the captured stages, workers, session limit, figure formats, and
+optional recording paths as runner arguments. Choose the output directory
+separately. The developer API exposes `GET /api/templates` for the collection
+and warnings, and `POST /api/templates` to save a new template.
 
 ### Reuse a run directory
 
@@ -372,13 +454,15 @@ run directory. Manifest records are also readable in Run history. Dashboard
 processing logs remain separately in `cache/.dashboard/`. The result API does
 not serve pickle files for download.
 
-## Generated files and reusable presets
+## Generated files and templates {#generated-files-and-reusable-presets}
 
-The dashboard keeps its generated files locally. They remain on disk when
-ignored by Git; ignoring them does not affect analysis or run discovery.
+The dashboard keeps its files locally. Generated caches and build outputs remain
+on disk when ignored by Git; ignoring them does not affect analysis or run
+discovery. Saved templates are kept in a separate, trackable directory.
 
 | Location | What it contains | How to treat it |
 | --- | --- | --- |
+| `configs/next/templates/<id>.json` | Named analysis templates with a versioned envelope | Commit or share deliberately; apply through the dashboard |
 | `configs/next/.dashboard/<job-id>.json` | The exact stage settings submitted for one job | Retain with a run to replay its recorded command verbatim |
 | `cache/.dashboard/` | Job records, friendly names, and full processing logs | Keep for dashboard job history; not required to discover stage-layout runs |
 | `cache/<run-name>/` | Scientific outputs and per-invocation manifests | Archive the whole run directory to preserve results and their history |
@@ -386,9 +470,10 @@ ignored by Git; ignoring them does not affect analysis or run discovery.
 | `dashboard/dist/` and `dashboard/*.tsbuildinfo` | Built frontend and TypeScript build bookkeeping | Recreate with `npm --prefix dashboard run build` after installing dependencies |
 | `site/` | Built MkDocs guide, including its search index | Recreate with `uv run --group dashboard --group docs --locked mkdocs build --strict` |
 
-To keep a reusable preset in Git, save a named JSON such as
+For a command-line stage-settings preset, save a named JSON such as
 `configs/next/my_analysis.json` outside `.dashboard/`. The supplied example and
-smoke presets are maintained this way. Run manifests retain resolved settings
+smoke presets are maintained this way; their format differs from the saved
+template envelope described [above](#analysis-templates). Run manifests retain resolved settings
 and the exact invocation, but the generated `--settings` file is also needed to
 repeat that command unchanged. Copying a run directory alone does not copy its
 dashboard job records or generated settings file.
@@ -412,6 +497,8 @@ frontend source, despite the repository's older generic `lib/` ignore rule.
 | Recent frontend changes are missing | Rebuild with `npm --prefix dashboard run build`, then refresh the browser. Use [frontend development](#frontend-development) for automatic updates while editing. |
 | Guide content is old, or a new Methods link gives 404 | Rebuild the guide with `uv run --group dashboard --group docs --locked mkdocs build --strict`, then refresh it. A missing documentation page never opens the dashboard in its place. |
 | A saved run is missing from the library | Click **Refresh runs**, then check its location and layout against [Find existing runs](#find-existing-runs). |
+| A saved template is missing or shows a warning | Click **Refresh templates**. Check its version-1 envelope, matching ID/filename, unique name, and valid settings in `configs/next/templates/`. |
+| A template name is already used | Save under a new name; names are compared without regard to case and existing templates are not overwritten. |
 | A discovered run reports missing or incompatible results | Read the displayed error and follow the [cache and provenance troubleshooting](troubleshooting.md#a-cache-is-incompatible); discovery does not validate every stage. |
 
 For an existing nvm installation at its usual location, load it into the

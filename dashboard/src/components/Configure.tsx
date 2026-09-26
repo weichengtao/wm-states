@@ -1,15 +1,16 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
   Check,
+  Bookmark,
   ChevronRight,
   Code2,
-  FlaskConical,
   FolderOpen,
   LoaderCircle,
   Play,
   RotateCcw,
+  RefreshCw,
   Search,
   SlidersHorizontal,
   Undo2,
@@ -22,6 +23,7 @@ import type {
   RunRequest,
   Schema,
   Settings,
+  PipelineTemplate,
 } from "@/lib/types";
 import { api, errorMessage } from "@/lib/api";
 import { humanize } from "@/lib/utils";
@@ -38,6 +40,13 @@ import {
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
+import SaveTemplateDialog from "./SaveTemplateDialog";
+import {
+  builtInTemplates,
+  formatTemplateValue,
+  templateChanges,
+  templateRun,
+} from "@/lib/templates";
 import { CopyButton, Notice } from "./shared";
 import GuideLink from "./GuideLink";
 import { fieldHelpPath, stageMethodsPath } from "@/lib/help";
@@ -45,19 +54,21 @@ function FieldEditor({
   stageId,
   field,
   value,
-  exampleValue,
+  templateValue,
+  templateName,
   onChange,
 }: {
   stageId: string;
   field: Field;
   value: Json;
-  exampleValue: Json;
+  templateValue: Json;
+  templateName: string;
   onChange: (value: Json) => void;
 }) {
   const id = `field-${stageId}-${field.name}`;
   const selectedChoice = choiceValue(field, value);
   const helpPath = fieldHelpPath(stageId, field.name);
-  const changed = !sameFieldValue(field, value, exampleValue);
+  const changed = !sameFieldValue(field, value, templateValue);
   return (
     <div className={`parameter ${changed ? "parameter-changed" : ""}`}>
       <div className="parameter-label">
@@ -67,11 +78,11 @@ function FieldEditor({
             <button
               type="button"
               className="text-button parameter-reset"
-              title={`Example: ${JSON.stringify(exampleValue)}`}
-              aria-label={`Reset ${humanize(field.name)} to example value`}
-              onClick={() => onChange(structuredClone(exampleValue))}
+              title={`${templateName}: ${formatTemplateValue(templateValue)}`}
+              aria-label={`Reset ${humanize(field.name)} to template value`}
+              onClick={() => onChange(structuredClone(templateValue))}
             >
-              <RotateCcw size={12} /> Use example
+              <RotateCcw size={12} /> Use template
             </button>
           )}
           {field.nullable && (
@@ -170,7 +181,12 @@ function FieldEditor({
         {field.description || field.name.replaceAll("_", " ")}
       </p>
       {changed && (
-        <span className="parameter-difference">Changed from example</span>
+        <span className="parameter-difference" title={templateName}>
+          <span>Template</span>{" "}
+          <code>{formatTemplateValue(templateValue)}</code>
+          <ArrowRight size={12} aria-hidden="true" />{" "}
+          <code>{formatTemplateValue(value)}</code>
+        </span>
       )}
       {helpPath && (
         <GuideLink
@@ -189,13 +205,31 @@ export default function Configure({
   onStarted,
   onBack,
   seed,
+  running = false,
 }: {
   schema: Schema;
   onStarted: (job: Job) => void;
   onBack: () => void;
   seed?: Partial<RunRequest> | null;
+  running?: boolean;
 }) {
   const initial = useMemo(() => initialRun(schema, seed), [schema, seed]);
+  const builtins = useMemo(() => builtInTemplates(schema), [schema]);
+  const initialTemplate = useMemo(
+    () =>
+      builtins.find(
+        (item) => item.id === presetName(initial.settings, schema),
+      ) ?? builtins[0],
+    [builtins, initial, schema],
+  );
+  const [templates, setTemplates] = useState(builtins);
+  const [selectedTemplate, setSelectedTemplate] = useState(initialTemplate);
+  const [templateError, setTemplateError] = useState("");
+  const [templateWarnings, setTemplateWarnings] = useState<string[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const templateRevision = useRef(0);
+  const [templateFeedback, setTemplateFeedback] = useState("");
+  const [reviewChanges, setReviewChanges] = useState(false);
   const [form, setForm] = useState(initial);
   const [active, setActive] = useState(schema.stages[0].id);
   const [query, setQuery] = useState("");
@@ -205,6 +239,8 @@ export default function Configure({
     JSON.stringify(initial.settings, null, 2),
   );
   const [jsonDirty, setJsonDirty] = useState(false);
+  const draftRef = useRef({ form, jsonDirty });
+  draftRef.current = { form, jsonDirty };
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const revision = useRef(0);
@@ -214,6 +250,7 @@ export default function Configure({
     jsonText: string;
     jsonDirty: boolean;
     jsonMode: boolean;
+    template: PipelineTemplate;
   } | null>(null);
   const [validation, setValidation] = useState<{
     command: string;
@@ -225,18 +262,30 @@ export default function Configure({
     setUndo(null);
     setValidation(null);
     setError("");
+    setTemplateFeedback("");
   };
   const stage = schema.stages.find((s) => s.id === active)!;
-  const preset = presetName(form.settings, schema);
-  const exampleForm = { ...form, settings: schema.presets.example };
+  const templateForm = templateRun(form, selectedTemplate);
+  const differences = templateChanges(form, selectedTemplate, schema);
+  const sharedDifferences = differences.filter(
+    (item) => item.stage === "shared",
+  );
+  const fieldClass = (name: string) =>
+    `field${sharedDifferences.some((item) => item.field === name) ? " field-changed" : ""}`;
+  const sharedHint = (name: string) => {
+    const difference = sharedDifferences.find((item) => item.field === name);
+    return difference ? (
+      <span className="shared-template-value">
+        Template: {formatTemplateValue(difference.before)}
+      </span>
+    ) : null;
+  };
   const changedFields = (stageId: string, fields: Field[]) =>
-    fields.filter(
-      (field) =>
-        !sameFieldValue(
-          field,
-          fieldValue(form, stageId, field),
-          fieldValue(exampleForm, stageId, field),
-        ),
+    fields.filter((field) =>
+      differences.some(
+        (difference) =>
+          difference.stage === stageId && difference.field === field.name,
+      ),
     );
   const changes = changedFields(stage.id, stage.fields);
   const filtered = stage.fields.filter(
@@ -244,24 +293,82 @@ export default function Configure({
       parameterMatchesQuery(field, query) &&
       (!changedOnly || changes.includes(field)),
   );
-  const replaceDraft = (next: RunRequest, label: string) => {
+  const replaceDraft = (
+    next: RunRequest,
+    label: string,
+    nextTemplate = selectedTemplate,
+  ) => {
     const previous = structuredClone({
       label,
       form,
       jsonText,
       jsonDirty,
       jsonMode,
+      template: selectedTemplate,
     });
     update(next);
     setJsonText(JSON.stringify(next.settings, null, 2));
     setJsonDirty(false);
     setUndo(previous);
+    setSelectedTemplate(nextTemplate);
   };
-  const presetChange = (value: "example" | "smoke") => {
-    const settings = structuredClone(schema.presets[value]);
+  const templateChange = (value: string) => {
+    const next = templates.find((item) => item.id === value);
+    if (!next) return;
     replaceDraft(
-      { ...form, settings },
-      `${value === "example" ? "Example pipeline" : "Smoke test"} settings loaded. Your run details and stage selection are unchanged.`,
+      templateRun(form, next),
+      `${next.name} applied. Run name and cache directory are unchanged.`,
+      next,
+    );
+  };
+  const refreshTemplates = useCallback(async () => {
+    const requestedRevision = ++templateRevision.current;
+    setTemplatesLoading(true);
+    setTemplateError("");
+    try {
+      const result = await api<{
+        templates: PipelineTemplate[];
+        warnings: string[];
+      }>("/templates");
+      if (templateRevision.current === requestedRevision) {
+        setTemplates(result.templates);
+        setSelectedTemplate(
+          (current) =>
+            result.templates.find((item) => item.id === current.id) ?? current,
+        );
+        setTemplateWarnings(result.warnings);
+      }
+    } catch (reason) {
+      if (templateRevision.current === requestedRevision)
+        setTemplateError(
+          `Saved templates could not be loaded. ${errorMessage(reason)} Use Refresh templates to try again.`,
+        );
+    } finally {
+      if (templateRevision.current === requestedRevision)
+        setTemplatesLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void refreshTemplates();
+  }, [refreshTemplates]);
+  const savedTemplate = (saved: PipelineTemplate, snapshot: RunRequest) => {
+    templateRevision.current += 1;
+    setTemplatesLoading(false);
+    setTemplates((items) => [
+      ...items.filter((item) => item.id !== saved.id),
+      saved,
+    ]);
+    const unchanged =
+      !draftRef.current.jsonDirty &&
+      JSON.stringify(draftRef.current.form) === JSON.stringify(snapshot);
+    if (unchanged) {
+      setSelectedTemplate(saved);
+      setUndo(null);
+    }
+    setTemplateFeedback(
+      unchanged
+        ? `Saved “${saved.name}”. It is now your comparison template.`
+        : `Saved “${saved.name}” from the captured setup. Your later edits are still here.`,
     );
   };
   const applyJson = () => {
@@ -294,6 +401,10 @@ export default function Configure({
           "Apply your JSON changes before validating or starting.",
         );
       if (!form.stages.length) throw new Error("Choose at least one stage.");
+      if (launch && running)
+        throw new Error(
+          "Another pipeline is running. You can still save this setup as a template.",
+        );
       if (launch) {
         onStarted(
           await api<Job>("/jobs", {
@@ -327,10 +438,11 @@ export default function Configure({
           </button>
           <h1>Set up your analysis</h1>
           <p>
-            Choose your data, select stages, and fine-tune the example pipeline.
+            Choose a template, make it yours, and keep useful setups for next
+            time.
           </p>
         </div>
-        <div className="heading-actions">
+        <div className="heading-actions configuration-actions">
           <Button
             variant="outline"
             disabled={!!busy}
@@ -338,15 +450,29 @@ export default function Configure({
               replaceDraft(
                 structuredClone(initial),
                 "Setup restored to its initial values.",
+                initialTemplate,
               )
             }
           >
             <RotateCcw />
             Reset setup
           </Button>
+          <SaveTemplateDialog
+            schema={schema}
+            form={form}
+            jsonDirty={jsonDirty}
+            running={running}
+            onSaved={savedTemplate}
+            onError={setTemplateError}
+          />
           <Button
             onClick={() => submit(true)}
-            disabled={!!busy || jsonDirty || !form.stages.length}
+            disabled={!!busy || jsonDirty || !form.stages.length || running}
+            title={
+              running
+                ? "Another pipeline is running. You can still edit and save templates."
+                : undefined
+            }
           >
             {busy === "launch" ? (
               <LoaderCircle className="animate-spin" />
@@ -357,45 +483,158 @@ export default function Configure({
           </Button>
         </div>
       </div>
-      <div className="setup-top">
-        <div className="preset-tile">
-          <div className="icon-tile">
-            <FlaskConical size={20} />
-          </div>
-          <div>
-            <h3>Analysis preset</h3>
+      {running && (
+        <div className="configuration-running" role="status">
+          <LoaderCircle size={17} className="animate-spin" />
+          <p>
+            <strong>An analysis is running.</strong> You can keep editing and
+            save templates here. These changes apply to future runs.
+          </p>
+        </div>
+      )}
+      <section
+        className={`panel template-panel ${differences.length ? "template-modified" : ""}`}
+        aria-labelledby="template-heading"
+      >
+        <div className="template-picker-row">
+          <span className="template-panel-icon">
+            <Bookmark size={22} />
+          </span>
+          <div className="template-picker-copy">
+            <h2 id="template-heading">Analysis template</h2>
             <p>
-              {preset === "example"
-                ? "Full example · 100 null shuffles · 50 model holdouts"
-                : preset === "smoke"
-                  ? "Integration check · 3 null shuffles · 1 model holdout"
-                  : "Custom settings · review your stage arguments"}
+              {selectedTemplate.description || "Your saved analysis setup."}
             </p>
           </div>
-          <Select
-            className="select-control"
-            aria-label="Analysis preset"
-            disabled={jsonDirty || !!busy}
-            value={preset}
-            onValueChange={(value) => {
-              if (value === "example" || value === "smoke") presetChange(value);
-            }}
-            options={[
-              { value: "custom", label: "Custom settings", disabled: true },
-              {
-                value: "example",
-                label: "Example pipeline",
-                description: "Full example analysis settings",
-              },
-              {
-                value: "smoke",
-                label: "Smoke test",
-                description: "Reduced settings for an integration check",
-              },
-            ]}
-          />
+          <div className="template-picker-controls">
+            <Select
+              aria-label="Analysis template"
+              disabled={jsonDirty || !!busy}
+              value={selectedTemplate.id}
+              onValueChange={templateChange}
+              options={(templates.some(
+                (item) => item.id === selectedTemplate.id,
+              )
+                ? templates
+                : [...templates, selectedTemplate]
+              ).map((item) => ({
+                value: item.id,
+                label: item.name,
+                description: `${item.builtin ? "Built-in" : "Saved template"}${item.description ? ` · ${item.description}` : ""}`,
+              }))}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Refresh templates"
+              disabled={templatesLoading}
+              onClick={() => void refreshTemplates()}
+            >
+              <RefreshCw className={templatesLoading ? "animate-spin" : ""} />
+            </Button>
+          </div>
         </div>
-      </div>
+        <div className="template-comparison-bar">
+          <div className="template-comparison-status" aria-live="polite">
+            {jsonDirty ? (
+              <>
+                <Code2 size={16} />
+                <span>
+                  Apply JSON to update comparisons and save a template.
+                </span>
+              </>
+            ) : differences.length ? (
+              <>
+                <span className="template-change-dot" />
+                <span>
+                  <strong>
+                    {differences.length}{" "}
+                    {differences.length === 1 ? "change" : "changes"}
+                  </strong>{" "}
+                  from {selectedTemplate.name}
+                </span>
+              </>
+            ) : (
+              <>
+                <Check size={16} />
+                <span>
+                  Matches <strong>{selectedTemplate.name}</strong>
+                </span>
+              </>
+            )}
+          </div>
+          <div className="heading-actions">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={jsonDirty || !differences.length}
+              aria-expanded={reviewChanges}
+              aria-controls="template-change-review"
+              onClick={() => setReviewChanges((value) => !value)}
+            >
+              {reviewChanges ? "Hide changes" : "Review changes"}
+            </Button>
+            {!!differences.length && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={jsonDirty || !!busy}
+                onClick={() =>
+                  replaceDraft(
+                    templateRun(form, selectedTemplate),
+                    `Restored ${selectedTemplate.name}.`,
+                  )
+                }
+              >
+                <RotateCcw /> Restore template
+              </Button>
+            )}
+          </div>
+        </div>
+        {reviewChanges && !jsonDirty && !!differences.length && (
+          <div id="template-change-review" className="template-change-review">
+            <div className="template-change-review-heading">
+              <span>Setting</span>
+              <span>Template</span>
+              <span>Current</span>
+            </div>
+            {differences.map((difference) => (
+              <div
+                className="template-change-row"
+                key={`${difference.stage}.${difference.field}`}
+              >
+                <div>
+                  <strong>{difference.label}</strong>
+                  <small>
+                    {difference.stage === "shared"
+                      ? "Run options"
+                      : (schema.stages.find(
+                          (entry) => entry.id === difference.stage,
+                        )?.label ?? difference.stage)}
+                  </small>
+                </div>
+                <code>{formatTemplateValue(difference.before)}</code>
+                <code>{formatTemplateValue(difference.after)}</code>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="template-scope-note">
+          Templates set analysis choices and selected stages. Run names and
+          cache directories stay with this run.
+        </p>
+      </section>
+      {templateFeedback && (
+        <div className="configuration-feedback" role="status">
+          <span>
+            <Check size={16} /> {templateFeedback}
+          </span>
+        </div>
+      )}
+      {templateError && <Notice>{templateError}</Notice>}
+      {templateWarnings.length > 0 && (
+        <Notice>{templateWarnings.join(" ")}</Notice>
+      )}
       {undo && (
         <div className="configuration-feedback" role="status">
           <span>
@@ -409,6 +648,7 @@ export default function Configure({
               setJsonText(undo.jsonText);
               setJsonDirty(undo.jsonDirty);
               setJsonMode(undo.jsonMode);
+              setSelectedTemplate(undo.template);
             }}
           >
             <Undo2 /> Undo
@@ -444,7 +684,7 @@ export default function Configure({
               A unique folder keeps this run easy to compare later.
             </p>
           </div>
-          <div className="field">
+          <div className={fieldClass("data_dir")}>
             <label htmlFor="data-dir">
               Recording directory{" "}
               <button
@@ -459,8 +699,9 @@ export default function Configure({
               value={form.data_dir}
               onChange={(e) => update({ data_dir: e.target.value })}
             />
+            {sharedHint("data_dir")}
           </div>
-          <div className="field">
+          <div className={fieldClass("session_list_file")}>
             <label htmlFor="session-list">
               Session allowlist <span>optional</span>
             </label>
@@ -473,11 +714,12 @@ export default function Configure({
                 update({ session_list_file: e.target.value || null })
               }
             />
+            {sharedHint("session_list_file")}
             <p id="session-list-help" className="field-hint">
               Only listed sessions found in the recording directory are used.
             </p>
           </div>
-          <div className="field">
+          <div className={fieldClass("n_jobs")}>
             <label htmlFor="workers">Parallel workers</label>
             <Input
               id="workers"
@@ -487,11 +729,12 @@ export default function Configure({
               value={form.n_jobs}
               onChange={(e) => update({ n_jobs: Number(e.target.value) })}
             />
+            {sharedHint("n_jobs")}
             <p id="workers-help" className="field-hint">
               Use 1 for a single worker or −1 for all available CPUs.
             </p>
           </div>
-          <div className="field">
+          <div className={fieldClass("max_sessions_to_run")}>
             <label htmlFor="max-sessions">
               Maximum sessions <span>optional</span>
             </label>
@@ -509,8 +752,10 @@ export default function Configure({
                 })
               }
             />
+            {sharedHint("max_sessions_to_run")}
           </div>
         </div>
+        {sharedHint("figure_formats")}
         <div className="setup-options">
           <div className="inline-checks">
             <span>Figure formats</span>
@@ -554,6 +799,7 @@ export default function Configure({
             {form.stages.length} of {schema.stages.length} stages selected.
             Execution follows the pipeline order.
           </p>
+          {sharedHint("stages")}
         </div>
         <div className="heading-actions">
           <Button
@@ -583,7 +829,7 @@ export default function Configure({
         <aside className="stage-picker">
           {schema.stages.map((item, index) => (
             <div
-              className={`stage-option ${active === item.id ? "active" : ""}`}
+              className={`stage-option ${active === item.id ? "active" : ""} ${form.stages.includes(item.id) !== selectedTemplate.config.stages.includes(item.id) ? "stage-inclusion-changed" : ""}`}
               key={item.id}
             >
               <input
@@ -611,13 +857,19 @@ export default function Configure({
                   {String(index + 1).padStart(2, "0")}
                 </span>
                 <span>{item.label || humanize(item.id)}</span>
-                {changedFields(item.id, item.fields).length > 0 && (
+                {differences.some(
+                  (difference) => difference.stage === item.id,
+                ) && (
                   <span
                     className="stage-change-count"
-                    title="Parameters changed from the example"
-                    aria-label={`${changedFields(item.id, item.fields).length} parameters changed from example`}
+                    title={`Parameters changed from ${selectedTemplate.name}`}
+                    aria-label={`${differences.filter((difference) => difference.stage === item.id).length} parameters changed from template`}
                   >
-                    {changedFields(item.id, item.fields).length}
+                    {
+                      differences.filter(
+                        (difference) => difference.stage === item.id,
+                      ).length
+                    }
                   </span>
                 )}
                 <ChevronRight size={14} />
@@ -722,7 +974,9 @@ export default function Configure({
               </div>
               <p className="parameter-results-count" aria-live="polite">
                 {filtered.length} of {stage.fields.length} parameters
-                {changedOnly ? " · differences from the example" : ""}
+                {changedOnly
+                  ? ` · differences from ${selectedTemplate.name}`
+                  : ""}
               </p>
               <div id="parameter-fields" className="parameters-grid">
                 {filtered.map((field) => (
@@ -731,7 +985,8 @@ export default function Configure({
                     stageId={stage.id}
                     field={field}
                     value={fieldValue(form, stage.id, field)}
-                    exampleValue={fieldValue(exampleForm, stage.id, field)}
+                    templateValue={fieldValue(templateForm, stage.id, field)}
+                    templateName={selectedTemplate.name}
                     onChange={(value) =>
                       update({
                         settings: {
@@ -752,12 +1007,12 @@ export default function Configure({
                   <h3>
                     {query
                       ? "No matching parameters"
-                      : "No changes from the example"}
+                      : "No changes from this template"}
                   </h3>
                   <p>
                     {query
                       ? `Try a shorter search in ${stage.label || humanize(stage.id)}${changedOnly ? ", or show all parameters" : ""}.`
-                      : "The parameters in this stage match the example pipeline."}
+                      : `The parameters in this stage match ${selectedTemplate.name}.`}
                   </p>
                   <Button
                     variant="outline"
@@ -802,7 +1057,7 @@ export default function Configure({
           </Button>
           <Button
             onClick={() => submit(true)}
-            disabled={!!busy || jsonDirty || !form.stages.length}
+            disabled={!!busy || jsonDirty || !form.stages.length || running}
           >
             {busy === "launch" ? "Starting…" : "Start pipeline"}
             {busy === "launch" ? (

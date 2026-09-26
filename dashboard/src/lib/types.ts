@@ -32,6 +32,31 @@ export type RunRequest = {
   settings: Settings;
   allow_existing: boolean;
 };
+export type TemplateConfig = {
+  settings: Settings;
+  stages: string[];
+  n_jobs: number;
+  max_sessions_to_run: number | null;
+  figure_formats: string[];
+  data_dir?: string;
+  session_list_file?: string | null;
+};
+export type PipelineTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  builtin: boolean;
+  created_at?: string;
+  path?: string;
+  config: TemplateConfig;
+};
+export type TemplateChange = {
+  stage: string;
+  field: string;
+  label: string;
+  before: Json | undefined;
+  after: Json | undefined;
+};
 export type StageProgress = {
   stage: string;
   status: string;

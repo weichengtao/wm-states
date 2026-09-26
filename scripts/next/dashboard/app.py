@@ -11,9 +11,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from scripts.next.dashboard.documentation import DocumentationFiles
-from scripts.next.dashboard.models import RunRequest
+from scripts.next.dashboard.models import RunRequest, TemplateRequest
 from scripts.next.dashboard.runner import BusyError, RunManager, TERMINAL
 from scripts.next.dashboard.schema import get_schema
+from scripts.next.dashboard.templates import TemplateConflict, TemplateStore
 
 
 def _trusted_origin(origin, host):
@@ -27,6 +28,7 @@ def _trusted_origin(origin, host):
 def create_app(repo_root: Path | None = None):
     root = (repo_root or Path(__file__).resolve().parents[3]).resolve()
     manager = RunManager(root)
+    templates = TemplateStore(root)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -65,6 +67,19 @@ def create_app(repo_root: Path | None = None):
     @app.get('/api/schema')
     def schema():
         return get_schema(root)
+
+    @app.get('/api/templates')
+    def list_templates():
+        return templates.list()
+
+    @app.post('/api/templates', status_code=201)
+    def save_template(request: TemplateRequest):
+        try:
+            return templates.save(request)
+        except TemplateConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @app.post('/api/validate')
     def validate(request: RunRequest):

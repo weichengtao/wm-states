@@ -332,6 +332,7 @@ export default function App() {
                 seed={seed}
                 onStarted={started}
                 onBack={() => navigate("results")}
+                running={activeJobs.length > 0}
               />
             ) : (
               page === "configure" &&
