@@ -9,7 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "./ui/button";
-import GuideLink from "./GuideLink";
+import GuideLink, { HelpLink } from "./GuideLink";
 import {
   helpTopics,
   matchesHelp,
@@ -126,6 +126,13 @@ export default function HelpPanel({ page }: { page: WorkspacePage }) {
                         <GuideLink path={topic.path}>
                           Read more in the guide
                         </GuideLink>
+                        {topic.reference && (
+                          <div className="mt-2">
+                            <HelpLink href={topic.reference.url}>
+                              {topic.reference.label}
+                            </HelpLink>
+                          </div>
+                        )}
                       </div>
                     </details>
                   ))}

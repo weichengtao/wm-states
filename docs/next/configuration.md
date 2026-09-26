@@ -82,6 +82,9 @@ image-based artists remain raster content inside the PDF; exporting a PNG-like
 artist does not turn it into vector geometry. Plot DPI affects raster outputs
 and rasterized elements, while vector lines and text remain resolution
 independent. PDF is preferable to EPS for plots that use transparency.
+For the underlying export behavior, see Matplotlib's
+[savefig reference](https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.savefig.html)
+and [rasterization guide](https://matplotlib.org/stable/gallery/misc/rasterization_demo.html).
 
 Use `png pdf` to get inline dashboard previews and a PDF original for export.
 PDF-only runs are supported: their figures appear in the viewer with a download
@@ -437,4 +440,4 @@ The shared permutation is limited to each held-out trial. Training sets differ
 between held-out trials, cell screening remains a full-session procedure, and
 the state-stage cluster summaries retain their existing definitions. This
 option alone does not establish joint session-wide or selection-corrected
-inference; see [state methods](methods.md#states).
+inference; see [state methods and cluster-test references](methods.md#states).

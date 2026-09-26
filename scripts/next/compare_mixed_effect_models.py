@@ -1,7 +1,7 @@
 """Fit and compare nested random-intercept models of off-state duration.
 
-All models are fit by maximum likelihood (``reml=False``) without cross
-validation.  M0 contains a fixed intercept and a session random intercept.  M1
+Full-data summaries use maximum likelihood (``reml=False``); repeated trial
+holdouts are fitted separately. M0 contains a fixed intercept and a session random intercept. M1
 adds the three session-level raw cell counts.  Separate baseline, encoding,
 pre-delay, and full-delay branches then add four sets of trial-level predictors
 cumulatively through M5.  Parallel RM2--RM5 branches add the same four blocks

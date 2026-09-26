@@ -5,6 +5,8 @@ The methods guide describes [feature preparation](methods.md#prepare),
 procedures for [model families](methods.md#models),
 [nested counts](methods.md#nested-count), [nested activity](methods.md#nested-activity),
 [threshold scanning](methods.md#criticality), and [interactions](methods.md#interactions).
+It includes references for statsmodels estimation, variance-component R², and
+validation, with the assumptions needed to interpret each result.
 
 After completing the default pipeline, run all six mixed-effects stages with
 the same preset and cache:
@@ -139,8 +141,12 @@ records a failed model and its `fit_error`; other models can continue.
 standard errors, confidence intervals, and p-values are withheld. Consult
 `inference_error` before interpreting a missing value or `significant=false`;
 withheld inference is not evidence of no effect. Nested comparisons similarly
-report `likelihood_ratio_valid` and `likelihood_ratio_error` instead of silently
-accepting invalid fits or materially negative likelihood improvements.
+report validity and error reasons instead of silently accepting invalid fits
+or materially negative likelihood improvements. General comparison tables use
+`likelihood_ratio_valid` / `likelihood_ratio_error`; the two nested stages'
+`nested_contrasts` tables use `inference_valid` / `inference_error` for the
+contrast. CV repeat metrics use `train_likelihood_ratio_valid` /
+`train_likelihood_ratio_error`. See the [diagnostic field table](methods.md#model-fitting).
 If every model fails for an outcome, the stage saves diagnostic tables and logs,
 then raises an error. The same rule applies when every requested CV fit fails.
 

@@ -40,24 +40,25 @@ class Config:
     session_list_file: Path | None = None
     max_sessions_to_run: int | None = None
     n_jobs: int = 1
-    par_verbose: int = 0
-    seed: int = 42
-    cells_used_for_decoder: CellsUsedForDecoder = CellsUsedForDecoder.STATIONARY
-    decoder_model: DecoderModel = DecoderModel.LOGISTIC_REGRESSION
-    svm_kernel: SVMKernel = SVMKernel.LINEAR
-    balance_decoder_training_trials: bool = True
-    classifier_c: float = 1.0
-    grid_search_for_c: bool = False
-    logistic_calibration_method: LogisticCalibrationMethod = LogisticCalibrationMethod.SIGMOID
-    logistic_calibration_cv: int = 5
-    min_cell_per_group: int = 1
-    min_trials_good_session: int = 320
-    t_decode_start: int = -200
-    t_decode_end: int = 1400
-    t_decode_window: int = 50
-    t_decode_step: int = 10
-    n_decode_shuffle: int = 100
-    # Reuse each training-label shuffle across time bins within a held-out trial.
+    par_verbose: int = 0  # Joblib progress verbosity; zero keeps worker output quiet.
+    seed: int = 42  # Reproducible trial balancing, inner folds, and null permutations; no decoding repeats.
+    cells_used_for_decoder: CellsUsedForDecoder = CellsUsedForDecoder.STATIONARY  # Cell pool from full-session screening; selection is outside decoder CV.
+    decoder_model: DecoderModel = DecoderModel.LOGISTIC_REGRESSION  # Binary classifier for the session's preferred versus opposite cue.
+    svm_kernel: SVMKernel = SVMKernel.LINEAR  # Used only by the SVM decoder.
+    balance_decoder_training_trials: bool = True  # Downsample training classes equally after holding out the test trial.
+    classifier_c: float = 1.0  # Inverse regularization strength; used only when C search is disabled.
+    grid_search_for_c: bool = False  # Search C = 1, 0.1, 0.01 by five-fold balanced accuracy; enabled in the example preset.
+    logistic_calibration_method: LogisticCalibrationMethod = LogisticCalibrationMethod.SIGMOID  # Logistic-only probability calibration; none uses the classifier's raw probabilities.
+    logistic_calibration_cv: int = 5  # Requested source-trial-grouped calibration folds; reduced with a warning when class counts require it.
+    min_cell_per_group: int = 1  # Minimum selected cells in the session's largest preferred-cue group, independent of decoder pool choice.
+    min_trials_good_session: int = 320  # Minimum total recording trials, including correct and incorrect trials.
+    t_decode_start: int = -200  # First bin start in milliseconds relative to cue onset.
+    t_decode_end: int = 1400  # Inclusive upper bound for bin starts; bins use [start, start + window).
+    t_decode_window: int = 50  # Firing-rate window width in milliseconds.
+    t_decode_step: int = 10  # Distance between bin starts in milliseconds; smaller than width means overlapping bins.
+    n_decode_shuffle: int = 100  # Null estimates per trial/bin, alongside exactly one observed estimate; states require at least two.
+    # Reuse each training-label shuffle across time bins within a held-out trial; false shuffles each bin independently.
+    # Permutations stay independent between held-out trials, and models are fitted separately at each bin.
     preserve_null_time_structure: bool = False
 
     # Reuse completed decoding checkpoints when settings, inputs, and code match.
@@ -136,7 +137,9 @@ def decode_one_trial(test_idx, binned_rates, labels, bin_starts, config):
 
     Each fit uses one sample per training trial from the test bin only.
     Null labels are permuted after selecting the outer training trials. The
-    optional time-structure mode reuses a permutation across bins, not folds.
+    optional time-structure mode reuses each permutation and its inner CV
+    splits across bins, with separate model fits at every bin. Permutations
+    remain independent between held-out trials.
     """
     labels = np.asarray(labels)
     rates = np.asarray(binned_rates)

@@ -1,5 +1,71 @@
 # Next pipeline validation
 
+## Methods references and cross-surface alignment — 2026-09-26
+
+The documentation/help refinement passed **409 Python tests** in **11.022
+seconds**: **292 next tests** and **117 historical tests**. The dashboard passed
+**30 frontend tests**, TypeScript checking, a production Vite build, and
+Prettier verification. The guide builds with MkDocs strict validation; the
+Python suite also checks rendered guide links, anchors, search assets, and
+canonical URLs under both `/docs/` and a GitHub Pages-style project prefix.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m unittest discover -s tests -v
+npm --prefix dashboard test
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
+### Alignment and reference review
+
+- Reviewed all eleven stage methods against their implementations and resolved
+  example settings. References explain effect sizes, regularization,
+  calibration, scoring, permutations, PCA, mixed models, R², threshold selection,
+  interactions, and figure export. Project-specific thresholds and state rules
+  are distinguished from the guarantees of the cited methods.
+- Parsed the README pipeline command through the actual CLI configuration and
+  confirmed its five-stage default. Parsed all eleven documented standalone
+  stage commands and compared their resolved analysis settings with the example
+  pipeline; they match, allowing the explicitly different worker counts.
+- Resolved the dashboard's example request with the same shared inputs and
+  confirmed it matches the eleven-stage CLI configuration. README and help now
+  explicitly distinguish the dashboard's initial eleven stages from the CLI's
+  default five and use the actual **Core stages** button label.
+- Verified the table-specific inference/likelihood-ratio field names, clarified
+  the session-wide longest-OFF activity highlight, and documented Gaussian
+  assumptions and conditional validation limits.
+- Reviewed primary papers and official API pages for the new external links.
+  scikit-learn URLs target the supported 1.8 series. Build/link tests validate
+  local destinations; they do not monitor third-party sites for future changes.
+- Added a frontend regression check that external statistical references keep
+  their original HTTPS URLs when the guide uses a GitHub Pages base, with
+  accessible new-tab links and `noopener noreferrer`.
+
+### Visual review and scope
+
+Expanded help topics and reference links were reviewed at **1440 × 960** and
+**390 × 844**. Text and controls remained readable without clipping; help searches
+for calibration and mixed models found the expected topics. The temporary
+preview server was stopped after review. No analysis jobs were launched.
+
+An executable-syntax comparison confirmed that the three edited analysis
+scripts differ only in comments/docstrings. No analysis defaults, numerical
+algorithms, cache schemas, or dependency versions changed, so no new scientific
+integration run was performed. The earlier four-session validation below
+remains the integration record, not evidence that these references validate
+the custom statistical choices.
+
+**Checkpoint consequence:** the existing provenance policy hashes complete
+analysis-script files, including comments. Improved decoder/state CLI help and
+the mixed-model docstring therefore invalidate older decoding fingerprints.
+Before continuing an older run, regenerate `decode evaluate states` and any
+dependent activity/model outputs as described in
+[checkpoint reuse](../next/configuration.md#resume-and-rerun). Selection need
+not be repeated when its inputs and settings are unchanged. Existing saved
+figures remain viewable. The fingerprint policy was not weakened for this update.
+
 ## Integrated dashboard guide and help — 2026-09-26
 
 The combined changes passed **409 Python tests** in **10.346 seconds**:

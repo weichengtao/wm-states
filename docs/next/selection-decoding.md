@@ -4,6 +4,8 @@ For the statistical definitions and step-by-step procedures, see the methods
 for [screening](methods.md#select), [decoding](methods.md#decode),
 [evaluation](methods.md#evaluate), [state detection](methods.md#states), and
 [activity comparison](methods.md#activity).
+Those sections link to papers and library documentation beside the relevant
+choices, and distinguish standard estimators from the custom state rules.
 
 - Screening always uses a full session. Each selection result contains
   `num_trials` and one set of selected, stationary, and presence-passing cells.
@@ -48,6 +50,8 @@ for [screening](methods.md#select), [decoding](methods.md#decode),
   Preflight checks require at least six correct preferred-cue trials and five
   correct opposite-cue trials with C search enabled, so five of each remain
   after the preferred trial is held out. Calibration fold reductions warn.
+  The example uses L2-regularized logistic regression; smaller C applies
+  stronger regularization. Its sigmoid calibration follows balanced subsampling.
 - Unknown and ineligible sessions produce warnings. `--max-sessions-to-run`
   on the runner caps selection as well as decoding. Selection caps the candidate
   file list; decoding caps eligible sessions after screening.
@@ -55,7 +59,8 @@ for [screening](methods.md#select), [decoding](methods.md#decode),
   accuracy, confidence, and valid counts for observed data and individual null
   shuffles. Both accuracies use `p >= 0.5`; native classifier predictions are
   retained in the decoding cache, with a warning if they disagree. These scores
-  concern preferred-cue test trials only.
+  concern preferred-cue test trials only, so they do not establish two-class
+  test performance or calibration. See [evaluation methods](methods.md#evaluate).
 - State detection retains the existing cluster-correction methods and total/
   maximum contiguous delay-duration outcomes. Bins with zero null variance are
   unclassified and produce a warning. Activity plots, including PCA, support

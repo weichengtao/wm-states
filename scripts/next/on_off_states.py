@@ -182,18 +182,18 @@ def state_mask_for_cache(state_mask, expected_shape):
 @dataclass
 class Config:
     cache_dir: Path = Path('cache/next_run') # directory for cached results and figures
-    z_threshold_on: float = 1.645
-    z_threshold_off: float = 0.842
-    cp_method_off: Literal['two_tailed', 'one_tailed'] = 'one_tailed'
-    cluster_size_threshold_off: int = 5
-    cc_method_on: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'
-    cc_method_off: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'
-    cc_alpha_on: float = 0.05
-    cc_alpha_off: float = 0.05
-    compare_with_cc_skipped_on: bool = False
-    compare_with_cc_skipped_off: bool = False
-    on_duration_xmax: float = 1000.0
-    off_duration_xmax: float = 1000.0
+    z_threshold_on: float = 1.645  # ON candidates require confidence z > this value, standardized by the trial/bin null distribution.
+    z_threshold_off: float = 0.842  # OFF candidate cutoff; a low-confidence definition, not a test of absence of information.
+    cp_method_off: Literal['two_tailed', 'one_tailed'] = 'one_tailed'  # One-tailed accepts z <= cutoff; two-tailed accepts |z| <= cutoff.
+    cluster_size_threshold_off: int = 5  # Minimum consecutive OFF bins; duration is bin count times decoding stride. Example preset uses one bin.
+    cc_method_on: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'  # Keep ON mass above a null maximum-mass cutoff; two-tailed uses alpha/2, skipped keeps candidates.
+    cc_method_off: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'  # Custom OFF rule: below the pooled null upper cutoff, inside both cutoffs, or keep all size-qualified candidates.
+    cc_alpha_on: float = 0.05  # Tail fraction for the ON null maximum-mass percentile; not a global guarantee across analyses.
+    cc_alpha_off: float = 0.05  # Tail fraction for the custom OFF pooled-mass percentiles; not a family-wise error level.
+    compare_with_cc_skipped_on: bool = False  # Add ON duration plots without the mass rule; saved primary state masks are unchanged.
+    compare_with_cc_skipped_off: bool = False  # Add OFF duration plots without the mass rule; candidate cutoff and minimum bin count still apply.
+    on_duration_xmax: float = 1000.0  # ON duration histogram axis limit in milliseconds; display only, with a minimum of 100.
+    off_duration_xmax: float = 1000.0  # OFF duration histogram axis limit in milliseconds; display only, with a minimum of 100.
 
     def __post_init__(self):
         if not 0 < self.cc_alpha_on < 1 or not 0 < self.cc_alpha_off < 1:

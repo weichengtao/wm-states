@@ -93,6 +93,9 @@ running analysis**.
 Choose **Help** for searchable guidance beside your work, **Pipeline guide**
 for the full documentation, or a **Stage methods** link for its analysis
 choices. Documentation opens in a new tab without replacing your configuration.
+Help topics also link to relevant statistical references. The dashboard starts
+with all eleven stages selected; choose **Core stages** to match the
+five-stage terminal example above.
 The guide is served at [http://127.0.0.1:8000/docs/](http://127.0.0.1:8000/docs/);
 the developer API reference is at `/api/docs`.
 
@@ -163,7 +166,8 @@ The [documentation home](docs/index.md) links to the full guides:
 - [Configuration and checkpoint reuse](docs/next/configuration.md)
 - [Pipeline stages and standalone commands](docs/next/pipeline.md)
 - [Example-preset methods for all eleven stages](docs/next/methods.md), including
-  trial/cell populations, normalization, state rules, and model validation
+  trial/cell populations, normalization, state rules, model validation, and
+  contextual links to papers and library documentation
 - [Selection and decoding behavior](docs/next/selection-decoding.md)
 - [Mixed-effects analyses](docs/next/mixed-effects.md)
 - [Outputs and inspection](docs/next/outputs.md)

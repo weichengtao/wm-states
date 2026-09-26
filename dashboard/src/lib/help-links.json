@@ -21,7 +21,7 @@
     {
       "id": "states",
       "label": "On/off states",
-      "summary": "Candidate thresholds, cluster correction, and durations.",
+      "summary": "Candidate thresholds, custom cluster rules, and duration interpretation.",
       "path": "next/methods/#states"
     },
     {
@@ -93,14 +93,50 @@
     {
       "title": "Choosing stages",
       "keywords": "order dependency prerequisites select decode states",
-      "answer": "Core stages cover screening through activity. Select all stages to include model preparation and fitting. A partial run needs its earlier stages' caches.",
+      "answer": "The dashboard initially selects all eleven stages. Core stages cover screening through activity; the command-line runner uses those five by default. A partial run needs its earlier stages' caches.",
       "path": "next/pipeline/#stage-order"
     },
     {
       "title": "Null shuffles through time",
       "keywords": "preserve_null_time_structure null temporal permutation n_decode_shuffle",
-      "answer": "The default shuffles labels independently at each bin. Enable Preserve null time structure to reuse a permutation across bins for each held-out trial and shuffle. Models remain separate at each bin, and permutations remain independent between held-out trials.",
+      "answer": "The example uses 100 null estimates and exactly one observed estimate. Labels are shuffled independently at each bin by default. Preserve null time structure reuses each permutation and its inner folds across bins; models are fitted separately, and permutations remain independent between held-out trials.",
       "path": "next/configuration/#null-shuffle-time-structure"
+    },
+    {
+      "title": "What does calibrated confidence mean?",
+      "keywords": "probability logistic_calibration_method logistic_calibration_cv sigmoid isotonic classifier_c grid_search_for_c sklearn reference",
+      "answer": "The example fits logistic regression and sigmoid calibration using held-out inner-fold predictions, then evaluates one untouched outer test trial. C is selected before calibration, not separately inside every calibration fold. Screening and cue selection use the full session, so performance is conditional on those choices.",
+      "path": "next/methods/#decode",
+      "reference": {
+        "label": "scikit-learn: probability calibration",
+        "url": "https://scikit-learn.org/1.8/modules/calibration.html"
+      }
+    },
+    {
+      "title": "Read decoding scores correctly",
+      "keywords": "evaluate accuracy brier log loss probability positive preferred class calibration reference",
+      "answer": "Only preferred-cue trials are tested. Accuracy is the fraction with predicted probability at least 0.5; it is a positive-class hit rate, not balanced two-class accuracy. Lower Brier score and log loss indicate better probability scores on those trials, but do not establish calibration across both classes.",
+      "path": "next/methods/#evaluate",
+      "reference": {
+        "label": "scikit-learn: Brier score",
+        "url": "https://scikit-learn.org/1.8/modules/generated/sklearn.metrics.brier_score_loss.html"
+      }
+    },
+    {
+      "title": "What do ON and OFF labels establish?",
+      "keywords": "states z_threshold_on z_threshold_off cc_alpha_on cc_alpha_off cluster significance absence information",
+      "answer": "ON and OFF are operational labels from confidence thresholds and cluster rules. OFF does not prove that information is absent. The OFF rule pools null cluster masses rather than using the ON maximum-mass rule; neither the alternative null time setting nor the alpha value alone establishes error control for the whole pipeline.",
+      "path": "next/methods/#states"
+    },
+    {
+      "title": "Interpret model validation and uncertainty",
+      "keywords": "models mixedlm statsmodels cv_shuffles cv_holdout_fraction significance_alpha inference_valid rank_eligible p values reference",
+      "answer": "The example repeats 20% within-session holdouts 50 times and reports both fixed-effect-only predictions and predictions that include fitted training-session intercepts. These holdouts do not measure prediction for new sessions or future trials. Check inference_valid and rank_eligible: a usable point prediction can coexist with unavailable coefficient uncertainty.",
+      "path": "next/methods/#mixed-effects-estimation",
+      "reference": {
+        "label": "statsmodels: linear mixed-effects models",
+        "url": "https://www.statsmodels.org/stable/mixed_linear.html"
+      }
     },
     {
       "title": "A fresh run or a rerun?",

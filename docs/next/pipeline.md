@@ -84,6 +84,7 @@ uv run python scripts/next/decoding_confidence.py \
   --t-decode-window 50 \
   --min-cell-per-group 1 \
   --n-decode-shuffle 100 \
+  --no-preserve-null-time-structure \
   --n-jobs 10 \
   --cells-used-for-decoder STATIONARY \
   --svm-kernel LINEAR \

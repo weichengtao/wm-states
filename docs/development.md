@@ -172,6 +172,20 @@ code. API reference links always stay with the local backend at `/api/docs`.
 6. When changing a help destination or heading, check the dashboard's help topic
    links and run the documentation link tests. They build the guide under both
    local-style and GitHub Pages-style prefixes and check the actual anchors.
+7. Keep method claims consistent with the stage implementation and resolved
+   example preset, including inherited defaults. Link primary papers or official
+   library documentation beside the choice they explain. Identify project-specific
+   thresholds and rules explicitly; citing a general method does not validate
+   a custom procedure. Prefer versioned API links when behavior is version-sensitive.
+
+Dashboard fields and defaults come from the analysis `Config` dataclasses and
+the selected preset. Inline parameter explanations come from those dataclasses'
+comments/docstrings, so update them at the source. Contextual topics, guide
+destinations, and optional external background references live in
+`dashboard/src/lib/help-links.json`. Guide paths stay relative to the selected
+documentation base; external references keep their full HTTPS URLs. Check both
+surfaces when changing an analysis option, and retain the methods page's explicit
+stage anchors so existing links keep working.
 
 The README is a short entry point. Keep detailed workflow instructions in these
 guides to avoid maintaining two copies. Dependency versions are recorded in

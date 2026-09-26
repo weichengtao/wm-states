@@ -107,10 +107,13 @@ Escape to return to the same workspace.
 - Each configuration stage has a **Stage methods** link to its method section.
 - **Learn more** links explain consequential settings such as screening checks,
   null-shuffle time structure, and state thresholds.
+- Expanded analysis topics include optional background reference links to
+  official library documentation. The full methods guide also cites papers and
+  explains which rules are specific to this pipeline.
 - Error messages include troubleshooting links where guidance is available.
 - **API reference** is the separate developer reference, now at `/api/docs`.
 
-Full documentation links open in a new tab, leaving your unsaved settings and
+Documentation and reference links open in a new tab, leaving your unsaved settings and
 live progress intact. The local guide has a **Back to dashboard** shortcut;
 switch to your original tab to resume its exact view. Search within the help
 panel searches its topics; use the guide's search for the complete documentation.

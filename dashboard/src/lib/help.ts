@@ -56,8 +56,10 @@ export function fieldHelpPath(stage: string, field: string): string | null {
     [
       "pev_weighted_average",
       "active_threshold",
+      "active_percentiles",
       "history_alpha",
       "show_principal_components",
+      "compare_with_max_off_state",
     ].includes(field)
   )
     return stageMethodsPath(stage);
@@ -69,6 +71,13 @@ export function fieldHelpPath(stage: string, field: string): string | null {
       "decoder_model",
       "cells_used_for_decoder",
       "balance_decoder_training_trials",
+      "svm_kernel",
+      "min_cell_per_group",
+      "min_trials_good_session",
+      "t_decode_start",
+      "t_decode_end",
+      "t_decode_window",
+      "t_decode_step",
     ].includes(field)
   )
     return stageMethodsPath(stage);

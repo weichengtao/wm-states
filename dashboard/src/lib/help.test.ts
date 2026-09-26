@@ -92,6 +92,12 @@ describe("contextual help", () => {
     expect(fieldHelpPath("activity", "show_principal_components")).toBe(
       "next/methods/#activity",
     );
+    expect(fieldHelpPath("decode", "t_decode_step")).toBe(
+      "next/methods/#decode",
+    );
+    expect(fieldHelpPath("criticality", "active_percentiles")).toBe(
+      "next/methods/#criticality",
+    );
     expect(fieldHelpPath("activity", "figure_dpi")).toBeNull();
   });
   it("finds parameter names and multiword help searches without case sensitivity", () => {

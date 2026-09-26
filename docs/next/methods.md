@@ -12,6 +12,13 @@ the six preparation and mixed-effects stages described here. See
 `--settings configs/next/example_pipeline.json --stages all --dry-run`, and
 retain the corresponding `manifests/<run_id>.json` records with reported results.
 
+**How to read the references.** Library links explain the estimators and APIs;
+papers explain the statistical background and limitations. The preset's
+thresholds, populations, and custom state rules are project choices, not
+recommendations established by those references. scikit-learn links target
+version 1.8, matching the supported dependency range; use `uv.lock` from the
+recorded code revision for exact package versions.
+
 ## Example design at a glance
 
 | Analysis choice | Resolved example setting |
@@ -92,6 +99,8 @@ Normalization also depends on the stage:
 Screening and cue selection remain full-session procedures. Decoder holdouts
 and model holdouts therefore assess predictions conditional on that selected
 population; they do not cross-validate the complete cell-selection procedure.
+This distinction matters when selection and analysis share data: see
+[Kriegeskorte et al. (2009), circular analysis](https://www.nature.com/articles/nn.2303).
 
 All paths below are relative to the run root supplied as `--cache-dir`. Each
 stage owns its outputs; see [Outputs](outputs.md) for tables, figures, diagnostics,
@@ -141,12 +150,21 @@ The example applies three cell checks:
     define the cell's cue by their circular-mean preference, rounded to a cue
     index. PEV is an effect-size criterion, not a per-bin significance test.
 
+For background, [Lakens (2013)](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2013.00863/full)
+explains ANOVA effect sizes and omega-squared's bias correction. The 2.5% cutoff,
+100 ms run, and clipping are this pipeline's screening choices. Baseline drift
+uses the magnitude of [Pearson r](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.pearsonr.html),
+not its p-value; passing the cutoff does not demonstrate absence of drift.
+
 Opposing or symmetric bin preferences can cancel the circular resultant. A
 numerically undefined circular mean remains unavailable rather than being
 rounded into an arbitrary cue. Otherwise selected cells with unavailable cue
 metadata stop screening with a diagnostic error; cells already rejected by
 enabled checks produce a warning. Inspect their cue responses and configured
 test window before changing the analysis.
+The [circular-mean definition](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.circmean.html)
+explains why zero resultant length has no unique direction; this pipeline
+explicitly marks that case unavailable.
 
 Bin starts include `test_end_ms`; each half-open window can extend beyond that
 last start. Enabled checks reject unavailable statistics. Disabled checks
@@ -218,10 +236,18 @@ enters fitting, scaling, C selection, or calibration. In this example, training 
 classes are subsampled without replacement to equal sizes once per held-out
 trial and reused across bins and null estimates.
 
-The example fits standardized logistic regression with the `liblinear` solver.
+The example fits standardized **L2-regularized logistic regression**, with a
+fitted intercept, the `liblinear` solver, and `max_iter=1000`.
+Smaller C means stronger regularization; see the
+[LogisticRegression API](https://scikit-learn.org/1.8/modules/generated/sklearn.linear_model.LogisticRegression.html).
 Each observed or null training problem selects C from `{1, 0.1, 0.01}` by
 mean balanced accuracy in five stratified source-trial-grouped folds. Equal
-scores choose the first candidate in that order. Scaling is fitted within those folds.
+scores choose the first candidate in that order.
+[Balanced accuracy](https://scikit-learn.org/1.8/modules/generated/sklearn.metrics.balanced_accuracy_score.html)
+averages recall across the two classes for this inner model-selection step.
+[StandardScaler](https://scikit-learn.org/1.8/modules/generated/sklearn.preprocessing.StandardScaler.html)
+fits cell means and population standard deviations (`ddof=0`) within each
+training fold, following the [training-only preprocessing rule](https://scikit-learn.org/1.8/common_pitfalls.html#data-leakage).
 Although the JSON sets `classifier_c=1`, enabling `grid_search_for_c` means the
 selected value is used for each fit. Sigmoid calibration uses only outer-training
 trials and can reduce the requested five folds when necessary; the C search
@@ -231,6 +257,10 @@ C is selected before calibration and shared across its folds, rather than
 reselected within each calibration fold. The held-out test trial enters neither
 step. `svm_kernel=LINEAR` is present in the preset but has no effect because the
 selected decoder is logistic regression.
+The [calibration guide](https://scikit-learn.org/1.8/modules/calibration.html)
+explains sigmoid calibration and `ensemble=False`. Here calibration follows
+balanced training subsampling; probabilities are not adjusted back to the
+session's original cue prevalence.
 
 Before launching session fit workers, validate the correct-trial class counts:
 the example's C search needs at least six preferred-cue and five opposite-cue
@@ -258,6 +288,12 @@ Changing only this boolean preserves the observed calculation. It does not
 restore pre-split shuffles, cell-wise label-preserving shuffles, or seed repeats.
 The [configuration reference](configuration.md#null-shuffle-time-structure)
 compares the policies and provides JSON and CLI examples.
+
+[Ojala and Garriga (2010)](https://jmlr.org/papers/v11/ojala10a.html) provide
+background on label-permutation tests of classifiers. This implementation
+generates trial/bin null confidence estimates with the scheme above; it does
+not call scikit-learn's `permutation_test_score` or produce its single
+cross-validated permutation-test p-value.
 
 Outputs include preferred-cue probabilities, observed class predictions,
 selected C values, original test-trial IDs, and provenance. Caches also record
@@ -294,6 +330,15 @@ evaluation warns and uses the probability threshold for both estimates.
 Such disagreement can occur with SVM probability estimates. The cached native
 predictions and native decoding accuracy are not overwritten.
 
+The formulas follow the binary [Brier score](https://scikit-learn.org/1.8/modules/generated/sklearn.metrics.brier_score_loss.html)
+and [log-loss](https://scikit-learn.org/1.8/modules/generated/sklearn.metrics.log_loss.html)
+definitions. These preferred-only scores cannot establish calibration over
+both cue classes. Brier score also reflects discrimination, so a lower score
+alone does not establish better calibration; see the
+[calibration guide](https://scikit-learn.org/1.8/modules/calibration.html).
+The [SVM probability documentation](https://scikit-learn.org/1.8/modules/svm.html#scores-probabilities)
+explains why native predictions can differ from probability-threshold decisions.
+
 Metrics are aggregated overall, by time bin, by estimate, and by time bin and
 estimate. Missing probabilities are excluded with warnings and valid-entry
 counts; aggregations with no valid entries are NaN. Each null shuffle remains
@@ -322,6 +367,12 @@ use `z > 1.645` for on states and `z <= 0.842` for off states. The preset sets
 the minimum off-cluster size to **one bin**, overriding the script default of
 five. Both correction-skipped comparison plots are enabled; the primary cached
 outcomes still use correction.
+
+The candidate cutoffs approximate the 95th and 80th
+[standard-normal quantiles](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.norm.html).
+Standardizing bounded null probabilities does not make them normally
+distributed: these z cutoffs are operational thresholds, not calibrated
+per-bin p-values.
 
 At least two finite null estimates and uniformly spaced time-bin starts are
 required. Each observed probability is standardized against the mean and
@@ -373,6 +424,15 @@ off-cluster procedure is not the on-state maximum-cluster test. Unclassified
 bins can belong to neither state. The enabled correction-skipped comparisons
 generate additional duration plots without replacing the corrected masks.
 
+For the general maximum-cluster idea and permutation assumptions, see
+[Maris and Oostenveld (2007)](https://pubmed.ncbi.nlm.nih.gov/17517438/) and the
+[FieldTrip cluster-permutation tutorial](https://www.fieldtriptoolbox.org/tutorial/stats/cluster_permutation_freq/).
+They are background, not validation of this pipeline's trial-specific
+permutations or pooled off-cluster rule. Even a valid cluster test does not
+establish a precise significant onset or offset; see
+[Sassenhagen and Draschkow (2019)](https://www.draschkow.com/app/download/9767211/16267843.pdf).
+Interpret the saved durations as outcomes of the stated state-detection rules.
+
 The state cache contains masks and two delay outcomes per preferred-cue trial:
 total off-state bins and the longest contiguous off-state run, each multiplied
 by the decoding stride. Delay membership uses bin starts **500 through 1400 ms
@@ -423,8 +483,13 @@ replace a cell's PEV or assign component numbers as cell IDs.
 
 The enabled PCA fits one common basis to pooled normalized trial/bin points from
 both balanced cue groups using all preferred cells, then projects the views
-onto up to three components. Longest-off-state highlighting reuses
-the fitted normalization and PCA transform. Plot sampling caps displayed
+onto up to three components. It uses [scikit-learn PCA](https://scikit-learn.org/1.8/modules/generated/sklearn.decomposition.PCA.html)
+with full SVD and no whitening; cell scaling happens before PCA.
+Longest-off-state highlighting selects the off episode with the longest delay
+overlap across the session, resolving ties by the first occurrence. Its trial
+can be outside the balanced plotting sample. The highlighted points reuse
+the fitted normalization and PCA transform; this view differs from the
+per-trial maximum-duration outcome used in models. Plot sampling caps displayed
 points; it does not refit decoders or alter cached state assignments. These
 are descriptive comparisons, with normalization and PCA fitted to the plotted
 cue groups, rather than a further held-out decoding evaluation. Activity-state
@@ -482,6 +547,10 @@ exponential moving average. If `x_i` is the current feature, history satisfies
 `h_1 = x_0` and `h_(i+1) = alpha × x_i + (1 − alpha) × h_i`. Trial zero has no
 history and is omitted from all model tables; history follows the ordered
 preferred-cue trials, not every original session trial. The example sets alpha to 0.2.
+The recurrence matches an exponentially weighted mean with `adjust=False`,
+shifted by one trial; see the [pandas EWM definition](https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.ewm.html).
+The pipeline computes it explicitly. Alpha controls the decay per retained
+preferred-cue trial, not per millisecond or per original session trial.
 
 Write the descriptive table, preparation manifest, and a separate CV cache
 containing raw per-cell rates, outcomes, cell counts/weights, and reproducible
@@ -510,6 +579,19 @@ transformation. Fits use maximum likelihood (`reml=False`) and the optimizer seq
 Nelder–Mead as needed. Full-data fits require at least two sessions; fitting
 failures and convergence information must be checked in the outputs.
 
+The [statsmodels mixed-model guide](https://www.statsmodels.org/stable/mixed_linear.html)
+describes the Gaussian random effects and residual assumptions. Here the model
+assumes independent sessions and conditionally independent, constant-variance
+Gaussian residuals given the fixed effects and session intercept. It includes
+no random slopes, animal-level grouping, or residual serial-correlation model.
+Bounded, discrete durations and serially related trials can violate these
+assumptions. Numerical convergence checks do not establish model adequacy;
+inspect residual behavior and session coverage before interpreting effects.
+See [MixedLM.fit](https://www.statsmodels.org/stable/generated/statsmodels.regression.mixed_linear_model.MixedLM.fit.html)
+for ML versus REML and optimizer behavior. Likelihood-ratio comparisons of different
+fixed-effect formulas use ML fits; the [lme4 comparison documentation](https://lme4.github.io/lme4/reference/merMod-class.html#arguments)
+explains this principle, although this pipeline fits with statsmodels.
+
 Nested comparisons use `2 × (logLik_full − logLik_reduced)` against a chi-square
 distribution with degrees of freedom equal to the parameter-count difference;
 only tiny negative differences within floating-point tolerance are clipped to
@@ -523,6 +605,16 @@ different from the held-out predictive R² below. Reported coefficient and
 model-comparison p-values are not adjusted across all fitted models, outcomes,
 or thresholds.
 
+The full-data R² calculation follows the variance partition of
+[Nakagawa and Schielzeth (2013)](https://doi.org/10.1111/j.2041-210x.2012.00261.x):
+with `V_fixed = Var(X beta, ddof=0)`, denominator
+`V_fixed + V_session + V_residual`, marginal R² uses `V_fixed` in the numerator
+and conditional R² uses `V_fixed + V_session`. This is implemented by the
+pipeline, not a statsmodels predictive-score call. Wald intervals and
+chi-square likelihood-ratio tests are asymptotic approximations; a small
+number of sessions or near-boundary fits can make them unreliable even when
+the numerical validity checks pass.
+
 Optimization success and inferential validity are recorded separately.
 Rank-deficient fixed-effect designs, nonconvergence, or nonfinite point estimates
 are model failures. A converged model with usable point estimates but an invalid
@@ -532,8 +624,16 @@ standard errors, z statistics, p-values, and confidence intervals are withheld.
 Comparisons involving such a model also withhold their likelihood-ratio p-value.
 A withheld result does not establish a nonsignificant effect. Boundary warnings
 alone do not invalidate inference when the final numerical checks pass.
-Inspect `fit_success`, `fit_error`, `inference_valid`, `inference_error`,
-`likelihood_ratio_valid`, and `likelihood_ratio_error` in the result tables.
+Inspect the table-specific diagnostics:
+
+| Result table | Validity/error fields |
+| --- | --- |
+| Full-data model summaries | `fit_success` / `fit_error`, `inference_valid` / `inference_error` |
+| Coefficient tables | `inference_valid` / `inference_error` |
+| General nested model comparisons | `likelihood_ratio_valid` / `likelihood_ratio_error` |
+| `nested-count` and `nested-activity`'s `nested_contrasts` | `inference_valid` / `inference_error` for the contrast |
+| CV repeat metrics | `fit_success` / `fit_error`, `inference_valid` / `inference_error`; `train_likelihood_ratio_valid` / `train_likelihood_ratio_error` for the training-fit contrast |
+
 Individual model failures retain diagnostic rows and allow other models to run.
 An outcome with no usable model fits, or a CV analysis with no successful fits,
 saves its diagnostics and then raises an error rather than reporting success.
@@ -560,6 +660,10 @@ more influence. Predictive R² is `1 − SSE / SST`, using the mean held-out out
 for SST, and may be negative. Session-centered R² centers observations and predictions
 separately within each session’s held-out rows. This centering is part of
 scoring only; it does not supply outcome information to model fitting.
+The distinction follows [MixedLM.predict](https://www.statsmodels.org/stable/generated/statsmodels.regression.mixed_linear_model.MixedLM.predict.html)
+(fixed effects only) and the training fit's
+[conditional random-effect estimates](https://www.statsmodels.org/stable/generated/statsmodels.regression.mixed_linear_model.MixedLMResults.random_effects.html),
+which the pipeline adds for its session-intercept predictions.
 
 These random trial holdouts assess prediction within observed sessions, not new-session
 generalization or prospective forecasting. Full-delay activity is concurrent
@@ -687,6 +791,9 @@ This stage measures sensitivity to the operational definition of an active
 cell. Its name does not imply a test of a dynamical critical point. Choosing
 the best cutoff from these results is exploratory; the pipeline does not add
 an outer validation loop for that threshold choice.
+The conversion uses [SciPy's normal `ppf`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.norm.html).
+For why selecting a setting and reporting its best validation score can be
+optimistic, see [Cawley and Talbot (2010)](https://www.jmlr.org/papers/v11/cawley10a.html).
 
 **Outputs:** `criticality/outcomes/<outcome>/`; threshold-specific trial tables
 and manifests in `criticality/prepared/active_thresholds/percentile_<NN>/`.
@@ -724,6 +831,9 @@ block, while coefficient tables describe individual interaction terms and
 common CV holdouts assess predictive changes. PEV weighting is an alternative
 for selective-group activity means, not enabled here. No cross-cell-group
 interaction terms are added.
+Formula interaction terms use [Patsy's numeric `:` operator](https://patsy.readthedocs.io/en/latest/formulas.html#operators).
+An interaction coefficient describes how one predictor's association changes
+with another, conditional on the included terms; it is not a causal effect.
 
 **Outputs:** `interactions/outcomes/<outcome>/`, including interaction estimates,
 model progression, final IM9 summaries, and CV results.
