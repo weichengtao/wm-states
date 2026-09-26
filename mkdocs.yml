@@ -57,6 +57,7 @@ nav:
   - Overview: index.md
   - Next pipeline:
       - Getting started: next/getting-started.md
+      - Dashboard: next/dashboard.md
       - Configuration: next/configuration.md
       - Pipeline stages: next/pipeline.md
       - Analysis methods: next/methods.md

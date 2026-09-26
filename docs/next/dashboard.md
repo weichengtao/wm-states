@@ -1,0 +1,383 @@
+# Dashboard
+
+The local dashboard configures and runs the complete `next` pipeline, shows
+processing status, and brings session results and saved figures into one viewer.
+It uses the same Python stages, JSON settings, caches, and manifest history as
+the command-line runner.
+
+## First-time setup
+
+Open a terminal in the repository root: the directory containing `README.md`,
+`pyproject.toml`, and `dashboard/`. Run every command on this page from there.
+You need `uv`, Python 3.12, and Node.js **22.12 or newer** with npm. Node.js 24
+is used for validation.
+
+Check your Node version with `node --version`. If you already use nvm, you can
+install and select Node.js 24 with:
+
+```bash
+nvm install 24
+nvm use 24
+```
+
+Install the Python dependencies and build the browser interface:
+
+```bash
+uv sync --python 3.12 --group dashboard --locked
+npm --prefix dashboard ci
+npm --prefix dashboard run build
+```
+
+`npm ci` installs the versions in the lockfile; `npm run build` creates the
+interface that the Python server serves. You only need one server for normal
+use. You can open it without recordings to explore the interface or view
+existing runs. To launch an analysis, first
+[prepare the recordings](getting-started.md#prepare-the-recordings).
+
+Start the dashboard:
+
+```bash
+uv run --group dashboard --locked python -m scripts.next.dashboard
+```
+
+When the terminal says the server is running, open
+**[http://127.0.0.1:8000/](http://127.0.0.1:8000/)** in your browser.
+The server does not open a browser automatically. An empty run library on a
+fresh checkout is normal; generated data and results are not included in Git.
+
+## Open the dashboard again
+
+On later visits, open a terminal in the repository root and run just:
+
+```bash
+uv run --group dashboard --locked python -m scripts.next.dashboard
+```
+
+Then open [http://127.0.0.1:8000/](http://127.0.0.1:8000/). If the server is
+already running in another terminal, simply open that address.
+
+- **Keep the server terminal open** while using the dashboard.
+- Closing or refreshing the browser tab leaves analysis running.
+- **Ctrl+C in the server terminal stops the dashboard and cancels any analysis
+  it launched that is still running.** Saved outputs remain on disk.
+- After frontend source changes, rebuild with
+  `npm --prefix dashboard run build`, then refresh the browser. If its
+  dependencies changed, run `npm --prefix dashboard ci` before rebuilding.
+- After backend Python changes, stop and restart the server when no analysis
+  is running. The normal launcher does not reload Python code automatically.
+
+### Use another port
+
+If port 8000 is already in use, start on a free port:
+
+```bash
+uv run --group dashboard --locked python -m scripts.next.dashboard --port 8001
+```
+
+Open [http://127.0.0.1:8001/](http://127.0.0.1:8001/) for that server. If you
+also serve the documentation, give each service its own port:
+
+| Service | Usual address | When to use it |
+| --- | --- | --- |
+| Dashboard | `http://127.0.0.1:8000/` | Configure runs, follow progress, and inspect results |
+| MkDocs documentation | `http://127.0.0.1:8001/` with the commands in this repository | Read these guides locally |
+| Vite development server | `http://127.0.0.1:5173/` | Edit the frontend with automatic browser updates |
+
+The [documentation preview instructions](../development.md#serve-the-documentation)
+use port 8001 explicitly; a bare `mkdocs serve` defaults to 8000. If both
+Python services share this environment, include `--group dashboard --group docs`
+in their `uv` commands to keep both sets of dependencies installed.
+
+The dashboard is intended for one trusted user on their own computer. Its
+launcher binds to loopback addresses and it has no account or authentication
+system. It reads Python pickle caches on the server: only place caches you trust
+in this repository's `cache/` directory. Do not expose the service through a
+public reverse proxy.
+
+## Try your first run
+
+1. Prepare the four local example sessions using
+   [Getting started](getting-started.md#prepare-the-recordings).
+2. Open **Configure pipeline**, choose the **Smoke test** preset, and click
+   **Use example data** to set the data directory to `data/example`.
+3. Choose a fresh output directory, such as `cache/next_dashboard_001`, and a
+   worker count suitable for your computer. Two workers is a modest starting
+   point. Keep all eleven stages selected for an end-to-end check.
+4. Click **Validate & preview**, review the generated command, and start the
+   run. Follow the stages and log in the processing view.
+5. Open the **Run library**, select the run, and choose a session to inspect
+   its figures and metrics. Use the comparison workspace to place two sessions
+   or two run directories side by side.
+
+The smoke preset reduces computation to check that the pipeline works. Use
+**Example pipeline** for the example scientific analysis; see
+[Analysis methods](methods.md) for its choices. If you already have results,
+you can go straight to the run library without starting a new analysis.
+
+## Configure an analysis
+
+The new-run form starts with the choices in
+`configs/next/example_pipeline.json`; settings omitted from that preset use the
+corresponding Python stage defaults. The dashboard selects all eleven stages
+initially. The command-line runner still selects its first five stages unless
+`--stages` is specified. See [Analysis methods](methods.md) for the example
+preset's scientific choices and [Pipeline stages](pipeline.md) for dependencies.
+
+1. Set the data directory containing the session `.mat` files and a new run
+   directory, such as `cache/next_dashboard_001`.
+2. Choose the stages and worker count. Stages keep their pipeline order;
+   prerequisites are not automatically added. A partial run needs the required
+   upstream caches in the same run directory.
+3. Review each stage's arguments. Fields are generated from the actual Python
+   configuration classes, including explicit screening switches, null-shuffle
+   counts, state thresholds, and mixed-effects settings. Use the JSON editor for
+   direct edits to the per-stage settings. Explicit `null` keeps an optional
+   setting unset; deleting a field restores its Python default. Switching back
+   to the form applies valid JSON and keeps invalid drafts available to correct.
+4. Validate the configuration, review the generated command, and start the run.
+
+Validation catches unknown settings, incorrect types, and configuration errors
+that can be checked before execution. Loading session data, checking cache
+provenance, and fitting models still happen in the pipeline; a valid form does
+not guarantee that an analysis will succeed.
+
+Screening diagnostics have a separate JSON file. In the `select` settings,
+enable `save_extended_diagnostics` and keep or change the
+`diagnostics_figure_config` path. Edit its session/cell targets and plot settings
+in that file; the dashboard's stage JSON editor stores the path. The supplied
+file targets available sessions and caps plots at 12 cells each. Set the path
+to `null` for CSV-only diagnostics. These settings do not restrict screening
+or diagnostic CSV rows. See [screening diagnostics](configuration.md#screening-diagnostics)
+for the schema, template, and full-session trace behavior.
+
+Use the smoke preset for an integration check, with the four sessions prepared
+in [Getting started](getting-started.md). It reduces decoding and model work;
+it is not a substitute for the example preset's analysis settings. Selecting a
+preset changes the stage settings, so review shared paths and worker counts as
+well.
+
+To start from a previous invocation, choose **Reuse settings** in the run
+library. This copies its resolved analysis settings and shared run arguments
+into a new form with a fresh output directory. It does not copy existing output
+files. A copied partial invocation still requires upstream results: choose the
+required stages for a new run, or deliberately reuse the existing directory.
+**Reset** restores the form's initial preset or copied settings. Edited settings
+are labeled **Custom settings**.
+
+Paths entered in the form are resolved from the repository root. Data and
+session-list files can be outside the repository. Dashboard run outputs belong
+in named direct child directories under this repository's `cache/` directory so the viewer
+can find them (for example, `cache/next_dashboard_001`, not a nested run path). The dashboard does not upload recordings or move existing runs.
+The optional session list filters the session files available in the selected
+data directory; missing listed sessions are reported by the pipeline.
+
+### Reuse a run directory
+
+A nonempty run directory is rejected unless reuse is explicitly enabled in the
+form. Enable reuse when resuming decoding or running later stages on existing
+outputs. This permits stages to replace their own artifacts; it does not create
+a second independent result snapshot.
+
+Each pipeline invocation still receives its own manifest in `manifests/`.
+Earlier invocation records survive partial reruns, while
+`pipeline_manifest.json` points to the latest invocation. History describes what
+ran and with which command and settings; it does not version every cache or
+figure. Use a new run directory to preserve both result sets for comparison.
+See [run manifest history](outputs.md#run-manifest-history).
+
+## Follow processing
+
+The processing view shows the requested stages, their actual manifest status,
+finished-stage durations, and a live log. Stage completion is a count of finished
+stages, not an estimate of total runtime: decoding and mixed-effects fits can
+take much longer than other stages. The dashboard does not invent a percentage
+for an unfinished stage.
+
+One dashboard job runs at a time. You can cancel a job from the interface; the
+server interrupts its process group, including pipeline workers. Existing
+completed outputs and decoding checkpoints remain on disk. Review the log and
+follow [resume guidance](configuration.md#resume-and-rerun) before reusing them.
+
+Live updates use WebSocket messages. The visible log is bounded to its latest
+500 lines; the complete combined stdout/stderr stream is saved at
+`cache/.dashboard/<job-id>.log`. Job metadata is saved next to that log. The
+exact stage settings submitted for each job are retained in
+`configs/next/.dashboard/<job-id>.json`, and the pipeline manifest records the
+Python command, working directory, and resolved settings. These generated
+files are ignored by Git.
+
+After a service restart, previous job records remain available. An unfinished
+job is marked failed with an explanation; restarting the dashboard does not
+automatically restart analysis. A browser refresh does not cancel a running job.
+Do not start a separate command-line writer against the same run directory while
+a dashboard job is using it.
+
+## Find existing runs
+
+You do not need to import or register runs. The **Run library** scans named
+directories directly inside this repository's `cache/`, including analyses
+started from the command line. For example:
+
+```text
+cache/
+  next_dashboard_001/
+    pipeline_manifest.json
+    select/
+    decode/
+    states/
+```
+
+A folder is discoverable when it contains at least one recognized stage
+directory, or a readable `pipeline_manifest.json` with nonempty `run_id` and
+`runner_config` fields. This allows a new run to appear before its first stage
+finishes. Partial and failed runs can appear too; a listing does not certify
+that every output is complete or compatible.
+
+The scan skips hidden folders and symlinks. It does not descend into nested
+run folders such as `cache/project/run1/`, and no particular run-name prefix is
+required. Historical flat caches are not migrated by the viewer. Dashboard
+job records supply friendly display names when available; other runs use their
+folder names.
+
+Open the run library or click its **Refresh runs** icon after adding a run or
+finishing a command-line analysis. The library also loads when the dashboard
+first opens. Select a run to inspect sessions, invocation history, and artifacts.
+
+## Inspect and compare results
+
+The session viewer shows decoding confidence over time, observed evaluation
+metrics when available, and off-state durations. Missing or incompatible data
+are reported explicitly. Evaluation and state summaries are hidden when their
+saved cue, trial rows, or time bins disagree with the decoding cache; state
+fingerprints are checked when present. The viewer does not replace the
+pipeline's full provenance validation or recompute scientific results.
+
+The confidence chart averages saved probabilities across the decoded trials at
+each bin start. Its null interval is the 2.5th–97.5th percentile across
+shuffle-specific trial means. This descriptive band is **not** the corrected
+state-detection threshold or a confidence interval for the observed curve. See
+[decoding methods](methods.md#decode) and [state methods](methods.md#states).
+
+Use the comparison workspace to place two session/run selections side by side:
+
+- Compare sessions within one run to inspect differences in cue populations,
+  confidence, performance, and state durations.
+- Select the same session from two run directories to compare analysis choices.
+- Compare saved figures through their stage and session filters, and inspect
+  CSV results in the table viewer or download the original artifact.
+
+Comparison warnings identify different preferred cues, different trial sets for
+the same session, and different time grids. Trials are compared by their saved
+IDs; a change in ordering alone does not mean a different set. Each curve keeps
+its own recorded time coordinates. The dashboard does not pair trials, align
+populations, pool sessions, or perform a new statistical test between runs.
+
+Across-run comparisons also list configuration differences using the latest
+recorded settings for each stage across manifest history. Cache and data paths
+are omitted. Missing history is shown as unrecorded; an empty difference list
+does not establish that the underlying data or output provenance are identical.
+
+The **Figure formats** controls offer PNG, TIFF, EPS, and PDF for every plotting
+stage. Choose **PNG and PDF** for inline previews plus PDF originals. PDF keeps
+vector paths and text with transparency and lossless compression; image-based
+plots still contain raster elements. See [figure exports](configuration.md#figure-exports).
+
+PNG figures display directly. PDF-only runs are supported and their figures
+remain available through **Download original**, without conversion. TIFF and
+EPS also use downloads for an external viewer. Existing output files in formats
+not selected for a rerun remain on disk.
+CSV tables can be paged through and downloaded from the Tables view. Its
+**Supporting files** section downloads saved JSON and log artifacts within the
+run directory. Manifest records are also readable in Run history. Dashboard
+processing logs remain separately in `cache/.dashboard/`. The result API does
+not serve pickle files for download.
+
+## Generated files and reusable presets
+
+The dashboard keeps its generated files locally. They remain on disk when
+ignored by Git; ignoring them does not affect analysis or run discovery.
+
+| Location | What it contains | How to treat it |
+| --- | --- | --- |
+| `configs/next/.dashboard/<job-id>.json` | The exact stage settings submitted for one job | Retain with a run to replay its recorded command verbatim |
+| `cache/.dashboard/` | Job records, friendly names, and full processing logs | Keep for dashboard job history; not required to discover stage-layout runs |
+| `cache/<run-name>/` | Scientific outputs and per-invocation manifests | Archive the whole run directory to preserve results and their history |
+| `dashboard/node_modules/` | Installed frontend dependencies | Recreate with `npm --prefix dashboard ci` |
+| `dashboard/dist/` and `dashboard/*.tsbuildinfo` | Built frontend and TypeScript build bookkeeping | Recreate with `npm --prefix dashboard run build` after installing dependencies |
+
+To keep a reusable preset in Git, save a named JSON such as
+`configs/next/my_analysis.json` outside `.dashboard/`. The supplied example and
+smoke presets are maintained this way. Run manifests retain resolved settings
+and the exact invocation, but the generated `--settings` file is also needed to
+repeat that command unchanged. Copying a run directory alone does not copy its
+dashboard job records or generated settings file.
+
+The ignore rules also reserve `dashboard/playwright-report/` and
+`dashboard/test-results/` for generated browser-test output. They are
+precautionary; there is currently no Playwright setup. Conversely,
+`dashboard/src/lib/` is explicitly **included** in Git because it contains
+frontend source, despite the repository's older generic `lib/` ignore rule.
+
+## Troubleshooting
+
+| What you see | What to do |
+| --- | --- |
+| `npm: command not found` or an unsupported Node version | Select Node.js 24 with nvm as shown above, then retry setup. If nvm is already installed but unavailable in this terminal, load it as described below. |
+| Python cannot find `scripts.next.dashboard` | Run the start command from the repository root, not from `dashboard/` or `scripts/next/`. |
+| Missing `fastapi` or `uvicorn` | Use the documented `uv run --group dashboard --locked ...` command; the `dashboard` dependency group is required. |
+| Browser says it cannot connect | Check that the server terminal is still running and that the browser port matches `--port`. Inspect the terminal for a startup error. |
+| `Frontend is not built` | Run the two npm commands in [first-time setup](#first-time-setup), then restart the server. |
+| `Address already in use`, or the browser shows the documentation | Use a free dashboard port, or put MkDocs on port 8001. See [Use another port](#use-another-port). |
+| Recent frontend changes are missing | Rebuild with `npm --prefix dashboard run build`, then refresh the browser. Use [frontend development](#frontend-development) for automatic updates while editing. |
+| A saved run is missing from the library | Click **Refresh runs**, then check its location and layout against [Find existing runs](#find-existing-runs). |
+| A discovered run reports missing or incompatible results | Read the displayed error and follow the [cache and provenance troubleshooting](troubleshooting.md#a-cache-is-incompatible); discovery does not validate every stage. |
+
+For an existing nvm installation at its usual location, load it into the
+current terminal before selecting Node:
+
+```bash
+source "$HOME/.nvm/nvm.sh"
+nvm use 24
+```
+
+If Node.js 24 has not been installed through nvm, run `nvm install 24` first.
+Once the Python server is running, its
+[health endpoint](http://127.0.0.1:8000/api/health) should show `"status": "ok"`.
+Use your chosen port if you changed it. A healthy backend with a missing
+interface usually means the frontend build step is still needed.
+
+## Frontend development
+
+Use this workflow when changing the React interface. Normal dashboard use only
+needs the single Python server described above.
+
+In terminal 1, from the repository root, start the backend on port 8000:
+
+```bash
+uv run --group dashboard --locked python -m scripts.next.dashboard
+```
+
+In terminal 2, also from the repository root, start Vite:
+
+```bash
+npm --prefix dashboard ci
+npm --prefix dashboard run dev
+```
+
+You can skip `npm ci` when dependencies are already installed and unchanged.
+Open **[http://127.0.0.1:5173/](http://127.0.0.1:5173/)** for this workflow.
+Keep both terminals running. Vite reloads frontend edits and forwards REST and
+WebSocket requests to the backend on port 8000. It does not replace the Python
+backend. If you change that backend port, update the proxy targets in
+`dashboard/vite.config.ts` to match.
+
+The frontend uses React, TypeScript, Vite, Tailwind CSS, and shadcn-style Radix
+components. The backend lives in `scripts/next/dashboard/` and uses FastAPI and
+Pydantic. API documentation is available at `/docs` on the backend. Tests and a
+production build can be run with:
+
+```bash
+uv run --group dashboard --locked python -m unittest discover -s tests/next -v
+npm --prefix dashboard test
+npm --prefix dashboard run build
+```

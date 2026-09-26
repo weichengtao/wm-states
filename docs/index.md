@@ -10,9 +10,15 @@ has five stages; the full pipeline has eleven.
 
 ## Start here
 
+To use the pipeline in your browser, follow the dashboard's
+[first-time setup](next/dashboard.md#first-time-setup). Already set up? Use
+[Open the dashboard again](next/dashboard.md#open-the-dashboard-again).
+The same viewer can [find existing command-line runs](next/dashboard.md#find-existing-runs).
+
 | Task | Guide |
 | --- | --- |
 | Install dependencies and run a smoke analysis | [Getting started](next/getting-started.md) |
+| Configure runs, follow progress, and compare sessions visually | [Dashboard](next/dashboard.md) |
 | Choose sessions, null counts, and workers | [Configuration](next/configuration.md) |
 | Run or resume analysis stages | [Pipeline stages](next/pipeline.md) |
 | Review the example preset’s methods, populations, and validation design | [Analysis methods](next/methods.md) |
@@ -26,7 +32,8 @@ has five stages; the full pipeline has eleven.
 
 | Location | Contents |
 | --- | --- |
-| `scripts/next/` | Analysis scripts and shared implementation |
+| `scripts/next/` | Analysis scripts and shared implementation, including the dashboard backend |
+| `dashboard/` | React and TypeScript dashboard frontend |
 | `configs/next/` | Example and smoke JSON presets |
 | `tests/next/` | Tests for the new implementation |
 | `docs/next/` | Pipeline guides |
@@ -52,4 +59,6 @@ run. Screening presence diagnostics use correct trials, and
 [cross-run comparisons](next/outputs.md#inspect-and-compare-results) warn about
 different preferred cues or trial sets while continuing to produce figures.
 
-To build or serve these docs locally, see [Development](development.md).
+To build or serve these docs locally, see [Development](development.md#serve-the-documentation).
+The documented local addresses are port **8000** for the dashboard and
+**8001** for the documentation preview, so both can run together.

@@ -28,6 +28,11 @@ dependencies = [
 packages = []
 
 [dependency-groups]
+dashboard = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.34,<1",
+    "httpx>=0.28,<1",
+]
 docs = [
     "mkdocs>=1.6,<2",
     "mkdocs-material>=9.6,<10",

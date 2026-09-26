@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import chi2
 
+from scripts.next.figure_exports import save_figure
 from scripts.next.activity_weighting import weighting_mode, weighting_policy
 from scripts.next.compare_mixed_effect_models import (
     OUTCOME,
@@ -399,9 +400,9 @@ def _plot_overview(
         "Top models by mean held-out marginal RMSE; bars show ±1 SD"
     )
     path = output_dir / "cv_model_performance.png"
-    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return path
+    return outputs[0]
 
 
 def _plot_prediction_sample(
@@ -456,9 +457,9 @@ def _plot_prediction_sample(
         "Models ranked by mean held-out marginal RMSE"
     )
     path = output_dir / "cv_observed_vs_predicted_sample.png"
-    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return path
+    return outputs[0]
 
 
 def run_trial_holdout_cv(

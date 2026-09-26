@@ -9,6 +9,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
+from scripts.next.screening_metadata import ScreeningMetadata, validate_cue
+
 CLASSIFIER_C_GRID = (1.0, 0.1, 0.01)
 CLASSIFIER_C_GRID_SEARCH_CV = 5
 CLASSIFIER_C_GRID_SEARCH_SCORING = 'balanced_accuracy'
@@ -58,42 +60,31 @@ def decoder_cells_for_session(
     num_cells_total: int,
 ) -> set[int]:
     """Return the cell indices available to the decoder in one selection."""
+    mode = CellsUsedForDecoder(mode)
+    metadata = ScreeningMetadata(selection, num_cells_total=num_cells_total)
     if mode is CellsUsedForDecoder.ALL:
         return set(range(num_cells_total))
 
     if mode is CellsUsedForDecoder.STATIONARY:
-        if 'cell_idx_stationary' not in selection:
-            raise ValueError(
-                'The selection cache does not contain cell_idx_stationary. '
-                'Rerun scripts/next/cell_screening.py before using '
-                'cells_used_for_decoder=stationary.'
-            )
-        return set(np.asarray(selection['cell_idx_stationary'], dtype=np.int64).tolist())
+        return set(metadata.stationary_cell_ids.tolist())
 
     if mode is CellsUsedForDecoder.PASSED_PRESENCE_RATIO:
-        if 'cell_idx_passed_presence_ratio' not in selection:
-            raise ValueError(
-                'The selection cache does not contain cell_idx_passed_presence_ratio. '
-                'Rerun scripts/next/cell_screening.py before using '
-                'cells_used_for_decoder=passed_presence_ratio.'
-            )
-        return set(
-            np.asarray(selection['cell_idx_passed_presence_ratio'], dtype=np.int64).tolist()
-        )
+        return set(metadata.presence_passed_cell_ids.tolist())
 
-    cell_properties = selection['cell_properties']
-    cells = np.asarray(cell_properties['cell_idx'], dtype=np.int64)
+    selected_cell_ids = metadata.selected_cell_ids
     if mode is CellsUsedForDecoder.SELECTIVE:
-        return set(cells.tolist())
+        return set(selected_cell_ids.tolist())
 
-    preferred_cues = np.asarray(cell_properties['mean_pref_test'])
+    preferred_cue = validate_cue(preferred_cue)
+    preferred_cues = metadata.preferred_cues
     if mode is CellsUsedForDecoder.PREFERRED:
         keep = preferred_cues == preferred_cue
     elif mode is CellsUsedForDecoder.PREFERRED_AND_OPPOSITE:
+        opposite_cue = validate_cue(opposite_cue, 'opposite_cue')
         keep = (preferred_cues == preferred_cue) | (preferred_cues == opposite_cue)
     else:
         raise ValueError(f'Unsupported decoder cell mode: {mode}')
-    return set(cells[keep].tolist())
+    return set(selected_cell_ids[keep].tolist())
 
 def make_grouped_stratified_cv_splits(
     labels,

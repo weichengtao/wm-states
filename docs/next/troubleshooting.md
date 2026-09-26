@@ -1,5 +1,26 @@
 # Troubleshooting
 
+## The dashboard does not open
+
+Keep the dashboard's server terminal running and open the address it prints.
+The default is `http://127.0.0.1:8000/`. The documentation preview uses port
+8001 in this guide, and Vite uses port 5173 only for frontend development.
+Opening one service's address does not start another service.
+
+See [dashboard troubleshooting](dashboard.md#troubleshooting) for missing
+dependencies, missing frontend builds, and connection errors. If the terminal
+reports an occupied port, follow [Use another port](dashboard.md#use-another-port).
+For the normal launch command, see
+[Open the dashboard again](dashboard.md#open-the-dashboard-again).
+
+## An existing run does not appear in the dashboard
+
+The viewer discovers supported runs in named directories directly under this
+repository's `cache/`. It does not automatically import arbitrary directories
+or historical flat caches. Follow
+[Find existing runs](dashboard.md#find-existing-runs) to check the location and
+output layout before rerunning an analysis.
+
 ## Sessions are missing or skipped
 
 The scripts process the intersection of session-list IDs and files in the data

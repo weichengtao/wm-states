@@ -13,7 +13,7 @@ do not create runner-history records.
 | `manifests/prior-<content hash>.json` | Preserved pre-history or orphaned latest manifests, when present |
 | `select/cell_screening.pkl` | Full-session screening results |
 | `select/tables/cell_screening.csv` | Screening summary, enabled checks, and settings |
-| `select/diagnostics/` | Optional per-cell diagnostic CSV and rejection summary; plots in `figures/cells/` and `figures/reasons/` |
+| `select/diagnostics/` | Optional per-cell diagnostic CSV, resolved `figure_config.json`, and rejection summary; plots in `figures/cells/` and `figures/reasons/` |
 | `decode/decoding_confidence.pkl` | Observed and null decoding estimates |
 | `decode/checkpoints/` | Per-session decoding checkpoints |
 | `decode/figures/` | Confidence and classifier-C plots; trial inspection in `inspection/` |
@@ -46,14 +46,53 @@ unweighted. See [custom subdirectory settings](configuration.md#cache-directory-
 
 The four primary `.pkl` caches (screening, decoding, evaluation, and states) use
 a versioned envelope. Load their result lists with `scripts.next.cache_io.read(path)`.
+The screening envelope is version 2 and stores descriptive screening settings
+and check names. Older screening envelopes are rejected with instructions to
+rerun `select`; decoding, evaluation, and state envelope versions remain 1.
+Rerun dependent stages after regenerating screening so their provenance matches.
 Read pickle caches only from trusted sources. Earlier flat next caches and the
 shared `mixedlm/` layout must be regenerated in a fresh run directory; the new
 scripts do not fall back to old locations.
 
 Activity comparison includes preferred/opposite cue views, per-cell
 and population plots, PCA, deterministic point sampling, and maximum off-state
-highlights. PEV weighting applies to selective-cell population means; stationary
-nonselective cells retain equal weights.
+highlights. PEV weighting applies to selected-cell population means; the
+remaining cells passing the other checks retain equal weights. Labels reflect
+the recorded screening switches: selection implies selectivity only when that
+check ran. Cell axes show screening selectivity PEV; PC axes show PCA explained
+variance, which is stored separately.
+
+Preparation preserves per-session population definitions in three places:
+
+- `trial_table.pkl`: `frame.attrs["population_metadata"]`, keyed by session.
+- `cv_feature_cache.pkl`: each session's `screening_checks` and `population_labels`.
+- `manifest.json`: `session_population_metadata`, keyed by session.
+
+Each entry records the screening switches and readable labels. This metadata
+does not add predictor columns or change formulas. Existing population keys
+such as `selective_nonpreferred` remain stable for table readers, even when a
+different screening configuration requires a more cautious display label.
+
+## Figure files
+
+Every plotting stage uses the shared figure exporter. PNG is the default;
+`--figure-formats png pdf` saves a PNG preview and PDF original in the same
+stage directory, while `--figure-formats pdf` writes PDF only. TIFF and EPS are
+also available. The choice includes diagnostics, inspection tools, cross-run
+plots, and statistical model figures; no plots force a PNG exception.
+
+PDF keeps paths and text as vector content, supports transparency, and compresses
+streams and embedded images losslessly. Image-based plots, such as heatmaps,
+still contain raster images. The dashboard previews PNG files and lists PDFs
+as downloadable figures without converting their contents. Choose both formats
+when you want inline previews and PDFs for later use.
+
+A rerun only writes the formats currently selected. It leaves any older PNG,
+TIFF, EPS, or PDF files in place; their presence alone does not prove they were
+produced by the latest invocation. Check that invocation's `figure_formats`
+and use a new run directory when preserving distinct output sets. See
+[figure export configuration](configuration.md#figure-exports) for standalone
+commands and the shared environment setting.
 
 ## Run manifest history
 
@@ -241,10 +280,65 @@ These optional scripts are separate from the eleven-stage runner:
 | `reject_reason_histograms.py` | Summarize saved screening rejection diagnostics |
 
 Selection diagnostics are opt-in through `select.save_extended_diagnostics` in
-JSON or `--save-extended-diagnostics` on the selection script. Use each script's
-`--help` for its required inputs and plotting options.
+JSON or `--save-extended-diagnostics` on the selection script. Both example and
+smoke presets leave them disabled. Their separate
+`configs/next/diagnostic_figures.json` controls plot targets, cell caps, figure
+size, DPI, and title details; see [diagnostic configuration](configuration.md#screening-diagnostics).
+
+With diagnostics enabled, `select/diagnostics/cell_rejection_diagnostics.csv`
+contains per-cell screening rows, independent of the plot targets. Set the
+figure-config path to `null`, or set `plots.enabled: false`, to produce this
+table without cell figures. Enabled plots go to
+`select/diagnostics/figures/cells/`, in the shared output formats.
+`select/diagnostics/figure_config.json` retains the resolved diagnostic
+configuration for reference. As with other stage outputs, a rerun replaces this
+snapshot; use separate run roots to preserve different diagnostic versions.
+Disabling plots does not delete old figures already in the run directory.
+
+Use each inspection script's `--help` for its required inputs and plotting options.
 The diagnostic CSV's `presence_ratio` uses correct trials in the configured
 screening window ([−400, 1400) ms in the example), matching the screening criterion.
 Per-check columns distinguish `disabled`, `pass`, `fail`, and `not_applicable`.
-Activity traces and
-the additional baseline Spearman correlation still describe all session trials.
+Activity traces and the additional baseline Spearman correlation still describe
+all session trials, including incorrect trials. The default plot cap keeps the
+first 12 sorted cell indices per available session and warns when it truncates
+the requested set; it is not a sampling procedure. Missing targeted sessions are
+warned about and skipped. Neither condition removes CSV rows or changes
+screening results.
+
+### Screening diagnostic fields
+
+The per-cell CSV stores stable machine-readable names; diagnostic plot titles
+and rejection histograms display readable check labels. The `rejection_reason`
+column joins all failed check codes with `|`; a cell passing every enabled
+check has `pass`. Each `check_<identifier>` column records `disabled`,
+`pass`, `fail`, or `not_applicable` independently.
+
+| Check identifier | Diagnostic measurement | Failure code |
+| --- | --- | --- |
+| `firing_rate` | `mean_test_firing_rate_hz` | `fail_firing_rate` |
+| `presence_ratio` | `presence_ratio` | `fail_presence_ratio` |
+| `delay_variance` | `delay_to_baseline_variance_ratio` | `fail_delay_variance` |
+| `baseline_variance` | `baseline_window_variance_ratio` | `fail_baseline_variance` |
+| `baseline_drift` | `baseline_drift_r` | `fail_baseline_drift` |
+| `selectivity` | `mean_selectivity_pev_pct` | `fail_selectivity` |
+| `preferred_cue_drift` | `preferred_cue_drift_r` | `fail_preferred_cue_drift` |
+
+An unavailable statistic required by an enabled check uses the same failure
+code with `_not_applicable` appended, for example
+`fail_baseline_drift_not_applicable`. Disabled checks never add a failure code.
+The session-level `min_trials` gate runs before per-cell rows are generated.
+
+`baseline_drift_r` is the Pearson correlation used for screening over correct
+trials. The additional `baseline_all_trials_spearman_r` is descriptive and uses
+all session trials; it does not determine rejection. The diagnostic CSV covers
+all cells in sessions reaching the cell checks, regardless of figure targets.
+Selected-cell properties in `select/cell_screening.pkl` additionally contain
+`preferred_cue` and, when selectivity screening is enabled,
+`qualifying_selectivity_bin_count`; these are not per-cell diagnostic CSV
+columns. The rejection-summary table preserves the same machine-readable
+failure codes in `reason` and includes their readable forms in `reason_label`.
+Each cell can contribute to several failure rows. Percentages use all cells in
+the session as their denominator and need not sum to 100%.
+See [migration mappings](migration.md#screening-names-and-cache-version) when
+updating readers of older next diagnostics.

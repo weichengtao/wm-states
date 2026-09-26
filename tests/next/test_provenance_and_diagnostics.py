@@ -135,9 +135,9 @@ class ScreeningDiagnosticsTest(unittest.TestCase):
         spikes[:2, 2, 1] = 1  # 1400 ms is outside the screening window
         with tempfile.TemporaryDirectory() as directory:
             config = SimpleNamespace(cache_dir=Path(directory), diagnostics_figure_config=None,
-                                     baseline_drift_start=-400, baseline_drift_end=0,
-                                     t_test_start=500, t_test_end=1400,
-                                     presence_start=-400, presence_end=1400)
+                                     baseline_drift_start_ms=-400, baseline_drift_end_ms=0,
+                                     test_start_ms=500, test_end_ms=1400,
+                                     presence_start_ms=-400, presence_end_ms=1400)
             rows = [dict(session='example', cell_idx=i, rejection_reason='pass') for i in range(2)]
             with patch('scripts.next.selection_diagnostics.load_session', return_value=(
                 spikes, np.array([-400, 500, 1400]), np.ones(10), np.arange(10) < 2,

@@ -60,6 +60,18 @@ in this example. “Stationary” names the screening rule; it does not establis
 stationarity under every possible test. Presence-passing cells are also cached,
 but that alternative decoder population is not selected by the example.
 
+These population definitions are shared by decoding, activity comparison,
+weighting, and model preparation. Cached cell IDs and aligned cue/PEV arrays
+are validated before use. Activity plots rank preferred cells by finite PEV,
+preserving screening order for ties; model preparation retains screening order.
+The distinction changes neither the population definitions nor their weights.
+Outside the example, disabled selectivity screening means “selected” does not
+imply “selective”. Activity labels and preparation metadata describe the checks
+actually enabled. Existing table keys such as `selective_nonpreferred` and
+`stationary_nonselective` remain stable identifiers; interpret them using the
+recorded population definitions rather than treating their names as evidence
+that a disabled check passed.
+
 Window start times and window coverage are distinct. A 50 ms window beginning
 at 1400 ms includes samples in [1400, 1450) ms. Decoding and PEV include their
 last configured start; preparation uses the half-open periods listed below.
@@ -94,7 +106,9 @@ delay-variance, baseline-variance, and preferred-cue drift checks. Use 50 ms
 PEV windows, presence at least 0.9, absolute baseline correlation at most 0.3,
 and PEV above 2.5%. Inherited defaults place PEV bin starts from 500 through
 1400 ms every 10 ms and require 100 ms of contiguous selectivity. Extended
-diagnostics are disabled, even though a diagnostic figure path is supplied.
+diagnostics are disabled. The supplied figure-config path takes effect when
+`save_extended_diagnostics` is enabled: it requests all available sessions,
+with a cap of 12 cell plots per session, 8 × 5 inch figures, and 150 DPI.
 
 Session files are intersected with the optional allowlist. The enabled session
 gate requires at least 320 total trials. Independently of that gate, cue metadata
@@ -126,7 +140,7 @@ The example applies three cell checks:
     define the cell's cue by their circular-mean preference, rounded to a cue
     index. PEV is an effect-size criterion, not a per-bin significance test.
 
-Bin starts include `t_test_end`; each half-open window can extend beyond that
+Bin starts include `test_end_ms`; each half-open window can extend beyond that
 last start. Enabled checks reject unavailable statistics. Disabled checks
 perform no rejection or applicability exclusion, replacing the old sentinel
 behavior. All thresholds must be finite and in their documented ranges.
@@ -148,9 +162,22 @@ metadata summarized across all finite test bins for that check.
 
 Caches include the resolved selection settings and enabled-check map. Optional
 diagnostics distinguish disabled checks from passes, failures, and unavailable
-statistics. Diagnostic presence uses the same configured correct-trial window
+statistics. Check identifiers describe the method: `baseline_drift` and
+`preferred_cue_drift` name the two distinct correlations, while `delay_variance`
+and `baseline_variance` name the two variance-ratio checks. A failed enabled
+check records `fail_<check identifier>`; an unavailable required measurement
+adds `_not_applicable`. These names do not change the statistics, thresholds,
+check order, or selected populations. See the
+[diagnostic field reference](outputs.md#screening-diagnostic-fields).
+Diagnostic presence uses the same configured correct-trial window
 as screening; traces and the additional baseline Spearman statistic describe
-all trials. Screening remains a full-session procedure outside decoder CV.
+all trials, including incorrect trials. Diagnostic figure targets and cell caps
+limit plots only; they do not change any screening check, cell population, or
+CSV row. The default cap takes the first 12 sorted cell indices, so these plots
+are an inspection aid rather than a representative sample. Set explicit cells
+or remove the cap when a different review scope is needed; see
+[diagnostic configuration](configuration.md#screening-diagnostics).
+Screening remains a full-session procedure outside decoder CV.
 
 **Outputs:** `select/cell_screening.pkl`, `select/tables/cell_screening.csv`, and
 optional `select/diagnostics/`.
@@ -304,6 +331,10 @@ confidence, masks, durations, and cluster-mass plots.
 
 **Stage:** `activity` · **Implementation:** `compare_activity_across_states.py`
 
+The entry point coordinates numerical preparation in `activity_preparation.py`
+and figure generation in `activity_plots.py`. Typed activity records in
+`activity_types.py` keep cell selectivity and PCA metrics separate.
+
 **Example choices.** Use 50 ms activity windows, seed 42, PEV-weighted selective
 population means, PCA views, and longest-off-state comparisons. Set
 `max_points_per_color_group=50` for point sampling in applicable plots.
@@ -321,6 +352,11 @@ views show up to the three preferred cells with highest cached mean PEV.
 Population views distinguish preferred selective, other selective, and
 stationary nonselective cells. The enabled PEV weighting affects selective-cell
 population means only; nonselective means retain equal weights.
+
+Cell-axis percentages report **selectivity PEV** from the configured screening
+test windows. PCA-axis percentages report **explained variance of normalized
+activity**. These are different quantities, stored separately; PCA does not
+replace a cell's PEV or assign component numbers as cell IDs.
 
 The enabled PCA fits one common basis to pooled normalized trial/bin points from
 both balanced cue groups using all preferred cells, then projects the views

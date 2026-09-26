@@ -16,7 +16,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scripts.next import cache_io
-from scripts.next.figure_exports import save_figure_png_only
+from scripts.next.figure_exports import save_figure
 
 
 @dataclass
@@ -73,9 +73,10 @@ def main(config: Config):
                title=f'{config.session}: trial {result["trial_idx"][row]} (row {row})')
         ax.legend()
         output = stage_path(config.cache_dir, 'decode', 'figures', 'inspection', f'{config.session}_trial_{row}.png')
-        save_figure_png_only(fig, output)
+        outputs = save_figure(fig, output)
         plt.close(fig)
-        print(output)
+        for path in outputs:
+            print(path)
 
 
 if __name__ == '__main__':

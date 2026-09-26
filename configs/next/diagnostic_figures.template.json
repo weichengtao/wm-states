@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "targets": {
+    "sessions": ["210921", "211015"],
+    "cells": {"start": 0, "stop": 5},
+    "cells_by_session": {
+      "211015": [1, 3]
+    }
+  },
+  "plots": {
+    "enabled": true,
+    "max_cells_per_session": null,
+    "size_inches": [8, 5],
+    "dpi": 150,
+    "show_not_applicable_reasons": false
+  }
+}

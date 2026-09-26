@@ -54,6 +54,36 @@ below still requires regenerated caches. As with other code updates, decoding
 fingerprints may change and trigger refitting when decoding next runs. See
 [Run manifest history](outputs.md#run-manifest-history).
 
+### Update diagnostic figure settings
+
+Next screening uses `configs/next/diagnostic_figures.json`, with a versioned
+`targets` and `plots` structure. Replace paths to the historical
+`configs/diagnostic_figure_config.json` in custom next presets. Copy the new
+default or `configs/next/diagnostic_figures.template.json`, then transfer the
+sessions and cells you want to plot. The old `figures` array is not accepted.
+
+Use `targets.sessions` for session stems, `targets.cells` for the default cell
+selector, and `targets.cells_by_session` for per-session replacements. An old
+inclusive range `cell_start: 0, cell_end: 4` becomes
+`{"start": 0, "stop": 5}`. Use `"all"` explicitly for all cells; an empty cell
+list now requests no figures. Remove `trial_start`, `trial_end`, and
+`trial_holdout`: diagnostic traces always use complete sessions.
+
+Remove `skip_not_applicable_reasons_in_diagnostics_figure` from stage JSON and
+CLI commands. Its replacement, `plots.show_not_applicable_reasons`, lives in
+the diagnostic file and has the inverse meaning: set it to `false` to hide
+those title details. The complete rejection reasons remain in the CSV.
+
+Diagnostics remain disabled by default in both pipeline presets. When enabled,
+the new supplied figure config caps output at the first 12 sorted cells per
+available session and warns about truncation. Set
+`plots.max_cells_per_session` to `null` to plot all requested cells. Setting
+the figure-config path to `null` or `plots.enabled` to `false` gives CSV-only
+diagnostics. Plot targets never filter the screening or diagnostic table.
+See [screening diagnostics](configuration.md#screening-diagnostics) for the
+complete schema and commands. Historical configurations outside `configs/next/`
+remain available for the historical scripts.
+
 ### Move to stage directories
 
 Caches now live under stage directories: `select/`, `decode/`, `evaluate/`,
@@ -93,7 +123,7 @@ Replace sentinel thresholds with explicit screening switches:
 | `min_fr_test: -1` | `check_firing_rate: false` |
 | `var_ratio_threshold_delay_over_baseline: -1` | `check_delay_variance: false` |
 | `var_ratio_threshold_sliding_over_all: -1` | `check_baseline_variance: false` |
-| `temp_dep_r_threshold: 2` | `check_preferred_drift: false` |
+| `temp_dep_r_threshold: 2` | `check_preferred_cue_drift: false` |
 
 Remove the obsolete threshold entries or replace them with valid values. Remove
 `temp_dep_detection` and set each temporal check independently. Remove selection's
@@ -105,6 +135,107 @@ This is a deliberate behavior change: disabled checks no longer reject cells
 with unavailable statistics. Old sentinel thresholds still performed those
 applicability exclusions, so selected cells and downstream estimates can change.
 Rerun selection and all dependent stages in a fresh cache directory.
+
+### Screening names and cache version
+
+Screening settings now identify the check, measured quantity, and units.
+Update custom `select` objects using this mapping. CLI options use the same
+names with underscores replaced by hyphens: for example, `--min-fr-test`
+becomes `--min-test-firing-rate-hz`. Both old JSON keys and old CLI flags are
+rejected; there are no aliases. The supplied presets already use the new names.
+
+| Previous JSON key | Current JSON key |
+| --- | --- |
+| `min_trial_per_session` | `min_trials_per_session` |
+| `min_fr_test` | `min_test_firing_rate_hz` |
+| `presence_start` / `presence_end` | `presence_start_ms` / `presence_end_ms` |
+| `var_ratio_threshold_delay_over_baseline` | `min_delay_to_baseline_variance_ratio` |
+| `var_ratio_threshold_sliding_over_all` | `min_baseline_window_variance_ratio` |
+| `min_trial_for_temp_check` | `variance_window_trials` |
+| `temp_check_baseline_start` / `temp_check_baseline_end` | `variance_baseline_start_ms` / `variance_baseline_end_ms` |
+| `temp_check_delay_start` / `temp_check_delay_end` | `variance_delay_start_ms` / `variance_delay_end_ms` |
+| `temp_dep_r_threshold_baseline` | `max_abs_baseline_drift_r` |
+| `baseline_drift_start` / `baseline_drift_end` | `baseline_drift_start_ms` / `baseline_drift_end_ms` |
+| `sig_pev_threshold` | `selectivity_pev_threshold_pct` |
+| `sig_pev_duration` | `selectivity_min_duration_ms` |
+| `pev_clip_at` | `selectivity_pev_floor_pct` |
+| `check_preferred_drift` | `check_preferred_cue_drift` |
+| `temp_dep_r_threshold` | `max_abs_preferred_cue_drift_r` |
+| `t_test_start` / `t_test_end` | `test_start_ms` / `test_end_ms` |
+| `t_test_window` / `t_test_step` | `selectivity_bin_width_ms` / `selectivity_bin_step_ms` |
+
+`variance_window_trials` retains both roles of its predecessor: the minimum
+number of correct trials for either variance check and the baseline
+sliding-window length. The rename does not alter the methods, thresholds,
+or selected populations. “Selectivity” replaces “significant PEV” because
+the PEV threshold is an effect-size criterion, not a statistical significance
+test.
+
+Update external readers of diagnostic CSVs and cached cell properties:
+
+| Previous measurement or status field | Current field |
+| --- | --- |
+| `mean_fr_test` | `mean_test_firing_rate_hz` |
+| `temp_dep_var_ratio_stage1` | `delay_to_baseline_variance_ratio` |
+| `temp_dep_sliding_ratio_stage2` | `baseline_window_variance_ratio` |
+| `temp_dep_r_baseline` | `baseline_drift_r` |
+| `temp_dep_r` | `preferred_cue_drift_r` |
+| `mean_pev_test` | `mean_selectivity_pev_pct` |
+| `mean_pref_test` | `preferred_cue` |
+| `num_sig_pev_bins` | `qualifying_selectivity_bin_count` |
+| `r_s_baseline` | `baseline_all_trials_spearman_r` |
+| `check_preferred_drift` | `check_preferred_cue_drift` |
+
+`preferred_cue` and `qualifying_selectivity_bin_count` belong to the selected-cell
+cache properties, rather than the per-cell diagnostic CSV. The latter is
+present when selectivity screening is enabled.
+
+Failure codes now use `fail_<check identifier>`. The `rejection_reason` column
+and rejection-summary table use these names consistently. The summary also
+adds `reason_label` for a readable label; figure titles and axes use those
+labels.
+
+| Previous failure code | Current failure code |
+| --- | --- |
+| `fail_min_fr_test` | `fail_firing_rate` |
+| `fail_min_presence_ratio` | `fail_presence_ratio` |
+| `fail_temp_dep_stage1` | `fail_delay_variance` |
+| `fail_temp_dep_stage2` | `fail_baseline_variance` |
+| `fail_temp_dep_stage3_baseline` | `fail_baseline_drift` |
+| `fail_sig_pev` | `fail_selectivity` |
+| `fail_temp_dep_stage3` | `fail_preferred_cue_drift` |
+
+The `_not_applicable` suffix is unchanged and follows the new failure code.
+`pass` still means no enabled cell check rejected the cell. Other check-status
+values remain `disabled`, `pass`, `fail`, and `not_applicable`.
+
+Screening caches now require envelope version 2. Earlier screening caches are
+rejected with an instruction to rerun `select`; there is no automatic
+conversion. Regenerate screening and diagnostics, then rerun dependent stages
+to establish matching provenance. Use a fresh run directory to retain the old
+results for comparison. Decoding, evaluation, and state cache envelope versions
+remain 1. Existing manifests and historical validation records retain the
+settings and field names used at the time of their runs.
+
+### Refresh downstream provenance
+
+Downstream consumers now share screening metadata and session-input helpers.
+Activity preparation, typed records, and plotting live in separate modules;
+`compare_activity_across_states.py` remains the CLI and re-exports its analysis
+helpers. Python callers constructing `SessionActivity` should supply
+`dimensions=CellActivityDimensions(cell_ids, selectivity_pev_pct)` for cells or
+`PrincipalComponentDimensions(component_numbers, explained_variance_ratio,
+source_cell_count)` for PCs. These records live in `activity_types.py` and
+replace the overloaded `cell_ids`/`cell_pev` constructor fields. The PCA ratio
+is stored as a fraction and converted to percent only for display.
+
+Existing model group keys, predictor columns, and CLI options are unchanged.
+Activity labels and preparation metadata describe the enabled screening checks;
+they do not infer selectivity from a historical group-key name. Shared validation
+rejects malformed cell and trial IDs instead of silently coercing them. These
+changes preserve the numerical methods and normalization populations, but the
+implementation fingerprint changes, so earlier decoding checkpoints require
+regeneration as described below.
 
 Activity comparison and mixed-effects preparation now require the decoding
 cache to validate the selection/data provenance and the state's decoding

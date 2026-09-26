@@ -61,7 +61,7 @@ uv run python scripts/next/cell_screening.py \
   --data-dir data/nature \
   --cache-dir cache/next_run_034_full_session \
   --session-list-file configs/decoding_sessions.txt \
-  --t-test-window 50 \
+  --selectivity-bin-width-ms 50 \
   --check-min-trials \
   --no-check-firing-rate \
   --check-presence-ratio \
@@ -69,12 +69,12 @@ uv run python scripts/next/cell_screening.py \
   --no-check-delay-variance \
   --no-check-baseline-variance \
   --check-baseline-drift \
-  --temp-dep-r-threshold-baseline 0.3 \
+  --max-abs-baseline-drift-r 0.3 \
   --check-selectivity \
-  --sig-pev-threshold 2.5 \
-  --no-check-preferred-drift \
+  --selectivity-pev-threshold-pct 2.5 \
+  --no-check-preferred-cue-drift \
   --no-save-extended-diagnostics \
-  --diagnostics-figure-config configs/diagnostic_figure_config.json
+  --diagnostics-figure-config configs/next/diagnostic_figures.json
 
 # 2. Fit the observed decoder and estimate shuffled null confidence.
 uv run python scripts/next/decoding_confidence.py \

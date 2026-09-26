@@ -15,7 +15,8 @@ for [screening](methods.md#select), [decoding](methods.md#decode),
   applicability tests. Each check has its own CLI switch and JSON boolean.
 - Extended diagnostic CSVs use the same correct-trial population and configured
   presence window (the example uses [−400, 1400) ms). Their activity traces and additional
-  baseline Spearman correlations still cover all trials; see
+  baseline Spearman correlations still cover all trials. Diagnostic figure
+  targets and caps affect plots only, with no change to screening or CSV rows; see
   [Diagnostic tools](outputs.md#diagnostic-tools).
 - Decoding uses correct preferred- and opposite-cue trials, testing each
   preferred-cue trial once. Training, normalization, C search, and calibration

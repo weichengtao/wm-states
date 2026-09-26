@@ -11,16 +11,17 @@ from dataclasses import asdict, dataclass, fields
 from enum import Enum
 import importlib
 import json
-import os
 from pathlib import Path
 import sys
 import time
-from typing import Literal, get_args, get_type_hints
+from typing import get_args, get_type_hints
 
 import tyro
 from threadpoolctl import threadpool_limits
 
 from scripts.next.common import json_value
+from scripts.next.diagnostic_config import load_diagnostic_config
+from scripts.next.figure_exports import FigureFormat, figure_format_context, validate_figure_formats
 from scripts.next.run_manifest import RunManifest, invocation_context
 
 STAGES = {
@@ -49,7 +50,7 @@ class Config:
     n_jobs: int = 1  # Session workers for selection, trial workers for decoding.
     session_list_file: Path | None = None
     max_sessions_to_run: int | None = None
-    figure_formats: tuple[Literal['png', 'tif', 'eps'], ...] = ('png',)
+    figure_formats: tuple[FigureFormat, ...] = ('png',)
     dry_run: bool = False  # Print resolved settings without running any analysis.
 
 
@@ -74,6 +75,7 @@ def resolve_config(module, shared, overrides):
 
 def main(config: Config, *, argv=None):
     invocation = invocation_context(argv)
+    validate_figure_formats(config.figure_formats)
     stages = config.stages
     if stages == ('all',):
         stages = tuple(STAGES)
@@ -104,38 +106,41 @@ def main(config: Config, *, argv=None):
             raise ValueError(f'Settings for {stage} must be an object.')
         if 'cache_dir' in overrides or 'data_dir' in overrides:
             raise ValueError('Set cache_dir and data_dir on the pipeline command to keep stages aligned.')
-        resolved.append((stage, module, resolve_config(module, shared, overrides)))
+        stage_config = resolve_config(module, shared, overrides)
+        if stage == 'select' and stage_config.save_extended_diagnostics:
+            load_diagnostic_config(stage_config.diagnostics_figure_config)
+        resolved.append((stage, module, stage_config))
     if config.dry_run:
         print(json.dumps({s: asdict(c) for s, _, c in resolved}, indent=2, default=json_value))
         return
     config.cache_dir.mkdir(parents=True, exist_ok=True)
-    os.environ['WM_STATES_FIGURE_FORMATS'] = ','.join(config.figure_formats)
-    manifest = RunManifest(config.cache_dir, {s: asdict(c) for s, _, c in resolved},
-                           asdict(config), invocation=invocation)
-    try:
-        for stage, module, stage_config in resolved:
-            started = time.monotonic()
-            entry = {'stage': stage, 'status': 'running'}
-            manifest.record['stages'].append(entry)
-            manifest.save()
-            print(f'\n[{stage}]', flush=True)
-            try:
-                with threadpool_limits(limits=1):
-                    module.main(stage_config)
-            except BaseException as exc:
-                entry.update(status='failed' if isinstance(exc, Exception) else 'interrupted',
-                             error=f'{type(exc).__name__}: {exc}')
-                raise
-            else:
-                entry['status'] = 'complete'
-            finally:
-                entry['seconds'] = round(time.monotonic() - started, 3)
+    with figure_format_context(config.figure_formats):
+        manifest = RunManifest(config.cache_dir, {s: asdict(c) for s, _, c in resolved},
+                               asdict(config), invocation=invocation)
+        try:
+            for stage, module, stage_config in resolved:
+                started = time.monotonic()
+                entry = {'stage': stage, 'status': 'running'}
+                manifest.record['stages'].append(entry)
                 manifest.save()
-    except BaseException as exc:
-        manifest.finish('failed' if isinstance(exc, Exception) else 'interrupted')
-        raise
-    else:
-        manifest.finish('complete')
+                print(f'\n[{stage}]', flush=True)
+                try:
+                    with threadpool_limits(limits=1):
+                        module.main(stage_config)
+                except BaseException as exc:
+                    entry.update(status='failed' if isinstance(exc, Exception) else 'interrupted',
+                                 error=f'{type(exc).__name__}: {exc}')
+                    raise
+                else:
+                    entry['status'] = 'complete'
+                finally:
+                    entry['seconds'] = round(time.monotonic() - started, 3)
+                    manifest.save()
+        except BaseException as exc:
+            manifest.finish('failed' if isinstance(exc, Exception) else 'interrupted')
+            raise
+        else:
+            manifest.finish('complete')
 
 
 if __name__ == '__main__':

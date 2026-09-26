@@ -7,9 +7,14 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from scripts.next.screening_metadata import (
+    SELECTED_POPULATION_KEYS,
+    ScreeningMetadata,
+    validate_cell_ids,
+)
+
 
 PEV_WEIGHTED_SUBDIR = "pev_weighted"
-SELECTIVE_GROUPS = ("preferred", "selective_nonpreferred")
 STATIONARY_NONSELECTIVE = "stationary_nonselective"
 
 
@@ -27,8 +32,8 @@ def weighting_policy(pev_weighted_average: bool) -> dict[str, str]:
             STATIONARY_NONSELECTIVE: "equal",
         }
     return {
-        "preferred": "mean_pev_test",
-        "selective_nonpreferred": "mean_pev_test",
+        "preferred": "mean_selectivity_pev_pct",
+        "selective_nonpreferred": "mean_selectivity_pev_pct",
         STATIONARY_NONSELECTIVE: "equal",
     }
 
@@ -46,9 +51,9 @@ def cell_group_activity_weights(
     cell_groups: Mapping[str, np.ndarray],
     pev_weighted_average: bool,
 ) -> dict[str, np.ndarray | None]:
-    """Return PEV weights for selective groups and equal weights otherwise.
+    """Return PEV weights for selected groups and equal weights otherwise.
 
-    A ``None`` value represents equal weighting. Empty selective groups receive
+    A ``None`` value represents equal weighting. Empty selected groups receive
     an empty weight vector so callers can retain their existing zero-cell logic.
     """
     weights: dict[str, np.ndarray | None] = {
@@ -57,24 +62,13 @@ def cell_group_activity_weights(
     if not pev_weighted_average:
         return weights
 
-    properties = selection_result.get("cell_properties", {})
-    selective_cells = np.asarray(
-        properties.get("cell_idx", []), dtype=np.int64
-    ).ravel()
-    selective_pev = np.asarray(
-        properties.get("mean_pev_test", []), dtype=float
-    ).ravel()
-    if selective_cells.shape != selective_pev.shape:
-        raise ValueError(
-            "cell_idx and mean_pev_test must have matching shapes for "
-            "PEV-weighted activity."
-        )
-    if np.unique(selective_cells).size != selective_cells.size:
-        raise ValueError("Selective cell IDs must be unique for PEV weighting.")
-    pev_by_cell = dict(zip(selective_cells.tolist(), selective_pev.tolist()))
+    metadata = ScreeningMetadata(selection_result)
+    pev_by_cell = dict(zip(
+        metadata.selected_cell_ids.tolist(), metadata.selectivity_pev_pct.tolist()
+    ))
 
-    for group_name in SELECTIVE_GROUPS:
-        cell_ids = np.asarray(cell_groups.get(group_name, []), dtype=np.int64).ravel()
+    for group_name in SELECTED_POPULATION_KEYS:
+        cell_ids = validate_cell_ids(cell_groups.get(group_name, []), group_name)
         missing = [
             int(cell_id)
             for cell_id in cell_ids
@@ -82,7 +76,7 @@ def cell_group_activity_weights(
         ]
         if missing:
             raise ValueError(
-                f"Missing mean_pev_test for {group_name} cells: {missing}"
+                f"Missing mean_selectivity_pev_pct for {group_name} cells: {missing}"
             )
         group_weights = np.asarray(
             [pev_by_cell[int(cell_id)] for cell_id in cell_ids], dtype=float
@@ -90,19 +84,19 @@ def cell_group_activity_weights(
         if group_weights.size:
             if not np.all(np.isfinite(group_weights)):
                 raise ValueError(
-                    f"Non-finite mean_pev_test values in {group_name} group."
+                    f"Non-finite mean_selectivity_pev_pct values in {group_name} group."
                 )
             if np.any(group_weights < 0):
                 raise ValueError(
-                    f"Negative mean_pev_test values in {group_name} group."
+                    f"Negative mean_selectivity_pev_pct values in {group_name} group."
                 )
             if float(np.sum(group_weights)) <= 0:
                 raise ValueError(
-                    f"mean_pev_test weights sum to zero in {group_name} group."
+                    f"mean_selectivity_pev_pct weights sum to zero in {group_name} group."
                 )
         weights[group_name] = group_weights
 
-    # PEV estimates are deliberately not used for stationary-nonselective cells.
+    # PEV estimates are deliberately not used for cells outside the selected pool.
     if STATIONARY_NONSELECTIVE in cell_groups:
         weights[STATIONARY_NONSELECTIVE] = None
     return weights

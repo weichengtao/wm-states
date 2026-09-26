@@ -65,7 +65,11 @@ class CacheLayoutTest(unittest.TestCase):
 
     def test_preparation_and_criticality_have_separate_weighted_caches(self):
         rows = [dict(session='example', trial_id=i, value=float(i)) for i in (1, 2)]
-        cv_session = dict(session='example', trial_ids=np.array([0, 1, 2]))
+        cv_session = dict(
+            session='example', trial_ids=np.array([0, 1, 2]),
+            screening_checks={'selectivity': False},
+            population_labels=prepare.population_labels({'selectivity': False}),
+        )
         for weighted in (False, True):
             with self.subTest(weighted=weighted), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -85,6 +89,15 @@ class CacheLayoutTest(unittest.TestCase):
                 self.assertTrue((prepared / 'trial_table.pkl').is_file())
                 self.assertTrue(cv_path.is_file())
                 manifest = json.loads((prepared / 'manifest.json').read_text())
+                population_metadata = {'example': {
+                    'screening_checks': cv_session['screening_checks'],
+                    'population_labels': cv_session['population_labels'],
+                }}
+                self.assertEqual(manifest['session_population_metadata'], population_metadata)
+                self.assertEqual(
+                    prepare.pd.read_pickle(prepared / 'trial_table.pkl').attrs['population_metadata'],
+                    population_metadata,
+                )
                 self.assertEqual(manifest['outputs']['cv_feature_cache'], str(cv_path))
                 self.assertEqual(manifest['source_caches']['cell_selection'],
                                  str(root / 'select/cell_screening.pkl'))
@@ -100,12 +113,25 @@ class CacheLayoutTest(unittest.TestCase):
             root = Path(directory)
             diagnostics = root / 'select/diagnostics'
             diagnostics.mkdir(parents=True)
-            pd.DataFrame([dict(session='example', rejection_reason='presence_ratio')]).to_csv(
+            pd.DataFrame([dict(session='example', rejection_reason='fail_presence_ratio')]).to_csv(
                 diagnostics / 'cell_rejection_diagnostics.csv', index=False)
-            with patch.object(reasons, 'save_figure_png_only') as save:
+            with patch.dict('os.environ', {'WM_STATES_FIGURE_FORMATS': 'pdf'}):
                 reasons.main(reasons.Config(cache_dir=root))
-            self.assertEqual(save.call_args.args[1], diagnostics / 'figures/reasons/example.png')
+            output = diagnostics / 'figures/reasons/example.pdf'
+            self.assertTrue(output.read_bytes().startswith(b'%PDF-'))
+            self.assertFalse(output.with_suffix('.png').exists())
             self.assertTrue((diagnostics / 'reject_reason_histograms_summary.csv').is_file())
+
+    def test_model_plot_returns_actual_pdf_path(self):
+        from scripts.next.compare_mixed_effect_models import ModelSpec, _save_coefficient_forest
+        spec = ModelSpec('M0', 'Intercept model', (), None)
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict('os.environ', {'WM_STATES_FIGURE_FORMATS': 'pdf'}):
+            output = _save_coefficient_forest(
+                [{'term': 'Intercept'}], spec, Path(directory), 100, 'Off-state duration')
+            self.assertEqual(output.suffix, '.pdf')
+            self.assertTrue(output.read_bytes().startswith(b'%PDF-'))
+            self.assertFalse(output.with_suffix('.png').exists())
 
 
 if __name__ == '__main__':

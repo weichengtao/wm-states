@@ -21,6 +21,7 @@ if __package__ in (None, ""):
 
 
 from scripts.next.cache_paths import stage_path
+from scripts.next.figure_exports import save_figure
 import json
 import math
 import re
@@ -588,9 +589,9 @@ def _save_model_plot(
         fontsize=12,
     )
     output_path = output_dir / f"marginal_effects_{_safe_filename(spec.name)}.png"
-    fig.savefig(output_path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, output_path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return output_path
+    return outputs[0]
 
 
 def _save_coefficient_forest(
@@ -647,9 +648,9 @@ def _save_coefficient_forest(
         ax.legend(fontsize=8, loc="best")
     ax.set_title(f"{outcome_label}\n{spec.name}: {spec.description}")
     output_path = output_dir / f"coefficient_forest_{_safe_filename(spec.name)}.png"
-    fig.savefig(output_path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, output_path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return output_path
+    return outputs[0]
 
 
 def _write_log_header(

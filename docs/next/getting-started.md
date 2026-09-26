@@ -1,5 +1,13 @@
 # Getting started
 
+This page walks through running the pipeline from a terminal. To configure runs,
+follow progress, and view results in your browser, start with the dashboard's
+[first-time setup](dashboard.md#first-time-setup), or
+[open it again](dashboard.md#open-the-dashboard-again) if it is already built.
+Both interfaces use the same recordings, analysis stages, and cache layout;
+[existing command-line runs](dashboard.md#find-existing-runs) can also appear in
+the dashboard.
+
 ## Install the analysis environment
 
 Use Python 3.12 and run all commands from the repository root:

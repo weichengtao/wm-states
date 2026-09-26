@@ -20,79 +20,86 @@ class SessionMeasurements:
     def num_cells(self):
         return self.spikes.shape[2]
 
-    def period_rates(self, start, end, *, correct_only=True):
-        key = (start, end, correct_only)
-        if key not in self._rates:
-            mask = (self.times >= start) & (self.times < end)
-            trials = np.flatnonzero(self.correct) if correct_only else np.arange(len(self.cues))
-            if not mask.any():
-                rates = np.full((len(trials), self.num_cells), np.nan)
+    def period_rates(self, start_ms, end_ms, *, correct_only=True):
+        cache_key = (start_ms, end_ms, correct_only)
+        if cache_key not in self._rates:
+            time_mask = (self.times >= start_ms) & (self.times < end_ms)
+            trial_indices = np.flatnonzero(self.correct) if correct_only else np.arange(len(self.cues))
+            if not time_mask.any():
+                firing_rates_hz = np.full((len(trial_indices), self.num_cells), np.nan)
             else:
-                duration = mask.sum() * (self.times[1] - self.times[0]) / 1000
-                rates = self.spikes[np.ix_(trials, np.flatnonzero(mask), np.arange(self.num_cells))].sum(axis=1) / duration
-            self._rates[key] = rates
-        return self._rates[key]
+                duration_seconds = time_mask.sum() * (self.times[1] - self.times[0]) / 1000
+                firing_rates_hz = self.spikes[np.ix_(
+                    trial_indices, np.flatnonzero(time_mask), np.arange(self.num_cells)
+                )].sum(axis=1) / duration_seconds
+            self._rates[cache_key] = firing_rates_hz
+        return self._rates[cache_key]
 
 
 def firing_rate(data, config):
-    return data.period_rates(config.t_test_start, config.t_test_end).mean(axis=0)
+    return data.period_rates(config.test_start_ms, config.test_end_ms).mean(axis=0)
 
 
 def presence_ratio(data, config):
-    rates = data.period_rates(config.presence_start, config.presence_end)
-    result = (rates > 0).mean(axis=0)
-    result[~np.all(np.isfinite(rates), axis=0)] = np.nan
-    return result
+    presence_period_rates_hz = data.period_rates(config.presence_start_ms, config.presence_end_ms)
+    trial_presence_ratios = (presence_period_rates_hz > 0).mean(axis=0)
+    trial_presence_ratios[~np.all(np.isfinite(presence_period_rates_hz), axis=0)] = np.nan
+    return trial_presence_ratios
 
 
 def delay_variance(data, config):
-    baseline = data.period_rates(config.temp_check_baseline_start, config.temp_check_baseline_end)
-    delay = data.period_rates(config.temp_check_delay_start, config.temp_check_delay_end)
-    if len(baseline) < config.min_trial_for_temp_check:
+    baseline_rates_hz = data.period_rates(config.variance_baseline_start_ms, config.variance_baseline_end_ms)
+    delay_rates_hz = data.period_rates(config.variance_delay_start_ms, config.variance_delay_end_ms)
+    if len(baseline_rates_hz) < config.variance_window_trials:
         return np.full(data.num_cells, np.nan)
     with np.errstate(divide='ignore', invalid='ignore'):
-        result = np.var(delay, axis=0, ddof=1) / np.var(baseline, axis=0, ddof=1)
-    result[~np.isfinite(result)] = np.nan
-    return result
+        delay_to_baseline_ratios = np.var(delay_rates_hz, axis=0, ddof=1) / np.var(baseline_rates_hz, axis=0, ddof=1)
+    delay_to_baseline_ratios[~np.isfinite(delay_to_baseline_ratios)] = np.nan
+    return delay_to_baseline_ratios
 
 
 def baseline_variance(data, config):
-    baseline = data.period_rates(config.temp_check_baseline_start, config.temp_check_baseline_end)
-    if len(baseline) < config.min_trial_for_temp_check:
+    baseline_rates_hz = data.period_rates(config.variance_baseline_start_ms, config.variance_baseline_end_ms)
+    if len(baseline_rates_hz) < config.variance_window_trials:
         return np.full(data.num_cells, np.nan)
-    windows = np.lib.stride_tricks.sliding_window_view(baseline, config.min_trial_for_temp_check, axis=0)
+    baseline_trial_windows = np.lib.stride_tricks.sliding_window_view(
+        baseline_rates_hz, config.variance_window_trials, axis=0)
     with np.errstate(divide='ignore', invalid='ignore'):
-        result = np.var(windows, axis=-1, ddof=1).mean(axis=0) / np.var(baseline, axis=0, ddof=1)
-    result[~np.isfinite(result)] = np.nan
-    return result
+        window_to_global_variance_ratios = (
+            np.var(baseline_trial_windows, axis=-1, ddof=1).mean(axis=0)
+            / np.var(baseline_rates_hz, axis=0, ddof=1))
+    window_to_global_variance_ratios[~np.isfinite(window_to_global_variance_ratios)] = np.nan
+    return window_to_global_variance_ratios
 
 
-def temporal_correlation(values, indices):
+def temporal_correlation(firing_rates_hz, trial_indices):
     """Pearson r for each cell; constant or unavailable measurements stay NaN."""
-    result = np.full(values.shape[1], np.nan)
-    if len(indices) < 2:
-        return result
-    x = np.asarray(indices, dtype=float)
-    x = x - x.mean()
-    centered = values - values.mean(axis=0)
-    denominator = np.sqrt(np.sum(x ** 2) * np.sum(centered ** 2, axis=0))
-    np.divide(np.sum(x[:, None] * centered, axis=0), denominator,
-              out=result, where=np.isfinite(denominator) & (denominator > 0))
-    return np.clip(result, -1, 1)
+    drift_correlations = np.full(firing_rates_hz.shape[1], np.nan)
+    if len(trial_indices) < 2:
+        return drift_correlations
+    trial_positions = np.asarray(trial_indices, dtype=float)
+    centered_trial_positions = trial_positions - trial_positions.mean()
+    centered_firing_rates = firing_rates_hz - firing_rates_hz.mean(axis=0)
+    correlation_denominator = np.sqrt(
+        np.sum(centered_trial_positions ** 2) * np.sum(centered_firing_rates ** 2, axis=0))
+    np.divide(np.sum(centered_trial_positions[:, None] * centered_firing_rates, axis=0),
+              correlation_denominator, out=drift_correlations,
+              where=np.isfinite(correlation_denominator) & (correlation_denominator > 0))
+    return np.clip(drift_correlations, -1, 1)
 
 
 def baseline_drift(data, config):
-    baseline = data.period_rates(config.baseline_drift_start, config.baseline_drift_end)
-    return temporal_correlation(baseline, np.arange(len(baseline)))
+    baseline_rates_hz = data.period_rates(config.baseline_drift_start_ms, config.baseline_drift_end_ms)
+    return temporal_correlation(baseline_rates_hz, np.arange(len(baseline_rates_hz)))
 
 
 @dataclass
 class Selectivity:
-    mean_pev: np.ndarray
+    mean_pev_pct: np.ndarray
     preferred_cue: np.ndarray
-    significant_bins: np.ndarray
-    passes: np.ndarray
-    applicable: np.ndarray
+    qualifying_bin_mask: np.ndarray
+    passes_duration_check: np.ndarray
+    has_finite_pev: np.ndarray
 
 
 def selectivity(data, config):
@@ -102,33 +109,39 @@ def selectivity(data, config):
     metadata. With it disabled, all finite bins are used and no run test is made.
     Nonqualifying cells also use all finite bins for optional preferred drift.
     """
-    starts = np.arange(config.t_test_start, config.t_test_end + 1, config.t_test_step)
-    rates = compute_binned_rates(data.spikes[data.correct], data.times, starts,
-                                config.t_test_window, dtype=np.float64)
-    labels = data.cues[data.correct]
-    pev, preferences = pev_and_preferred_cue(rates, labels, np.unique(labels))
-    pev = np.clip(pev, config.pev_clip_at, 100)
-    masks = np.zeros(pev.shape, dtype=bool)
-    means = np.full(data.num_cells, np.nan)
-    cues = np.full(data.num_cells, np.nan)
-    applicable = np.isfinite(pev).any(axis=1)
-    for cell in np.flatnonzero(applicable):
+    bin_start_times_ms = np.arange(config.test_start_ms, config.test_end_ms + 1, config.selectivity_bin_step_ms)
+    correct_trial_bin_rates_hz = compute_binned_rates(
+        data.spikes[data.correct], data.times, bin_start_times_ms,
+        config.selectivity_bin_width_ms, dtype=np.float64)
+    correct_trial_cues = data.cues[data.correct]
+    pev_pct_by_bin, preferred_cues_by_bin = pev_and_preferred_cue(
+        correct_trial_bin_rates_hz, correct_trial_cues, np.unique(correct_trial_cues))
+    pev_pct_by_bin = np.clip(pev_pct_by_bin, config.selectivity_pev_floor_pct, 100)
+    qualifying_bin_mask = np.zeros(pev_pct_by_bin.shape, dtype=bool)
+    mean_pev_pct = np.full(data.num_cells, np.nan)
+    preferred_cues = np.full(data.num_cells, np.nan)
+    has_finite_pev = np.isfinite(pev_pct_by_bin).any(axis=1)
+    for cell_index in np.flatnonzero(has_finite_pev):
         if config.check_selectivity:
-            _, masks[cell] = get_periods_and_mask(pev[cell], config.sig_pev_duration / config.t_test_step,
-                                                  config.sig_pev_threshold)
-        bins = masks[cell] if masks[cell].any() else np.isfinite(pev[cell])
-        means[cell] = pev[cell, bins].mean()
-        angles = np.deg2rad((preferences[cell, bins] - 1) * 45 - 135)
-        angle = np.rad2deg(circmean(angles, high=np.pi, low=-np.pi))
-        cues[cell] = (np.round((angle + 135) / 45 + 1).astype(int) - 1) % 8 + 1
-    return Selectivity(means, cues, masks, masks.any(axis=1), applicable)
+            _, qualifying_bin_mask[cell_index] = get_periods_and_mask(
+                pev_pct_by_bin[cell_index], config.selectivity_min_duration_ms / config.selectivity_bin_step_ms,
+                config.selectivity_pev_threshold_pct)
+        metadata_bin_mask = (qualifying_bin_mask[cell_index] if qualifying_bin_mask[cell_index].any()
+                             else np.isfinite(pev_pct_by_bin[cell_index]))
+        mean_pev_pct[cell_index] = pev_pct_by_bin[cell_index, metadata_bin_mask].mean()
+        preferred_angles_radians = np.deg2rad((preferred_cues_by_bin[cell_index, metadata_bin_mask] - 1) * 45 - 135)
+        mean_preferred_angle_degrees = np.rad2deg(circmean(preferred_angles_radians, high=np.pi, low=-np.pi))
+        preferred_cues[cell_index] = (np.round((mean_preferred_angle_degrees + 135) / 45 + 1).astype(int) - 1) % 8 + 1
+    return Selectivity(mean_pev_pct, preferred_cues, qualifying_bin_mask,
+                       qualifying_bin_mask.any(axis=1), has_finite_pev)
 
 
-def preferred_drift(data, config, preferred_cues):
-    rates = data.period_rates(config.t_test_start, config.t_test_end, correct_only=False)
-    result = np.full(data.num_cells, np.nan)
+def preferred_cue_drift(data, config, preferred_cues):
+    test_period_rates_hz = data.period_rates(config.test_start_ms, config.test_end_ms, correct_only=False)
+    preferred_cue_drift_r = np.full(data.num_cells, np.nan)
     for cue in np.unique(preferred_cues[np.isfinite(preferred_cues)]):
-        cells = np.flatnonzero(preferred_cues == cue)
-        trials = np.flatnonzero(data.cues == cue)
-        result[cells] = temporal_correlation(rates[np.ix_(trials, cells)], trials)
-    return result
+        cell_indices = np.flatnonzero(preferred_cues == cue)
+        cue_trial_indices = np.flatnonzero(data.cues == cue)
+        preferred_cue_drift_r[cell_indices] = temporal_correlation(
+            test_period_rates_hz[np.ix_(cue_trial_indices, cell_indices)], cue_trial_indices)
+    return preferred_cue_drift_r

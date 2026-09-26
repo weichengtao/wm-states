@@ -18,6 +18,7 @@ if __package__ in (None, ""):
 
 
 from scripts.next.cache_paths import stage_path
+from scripts.next.figure_exports import save_figure
 import textwrap
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -355,9 +356,9 @@ def _plot_model_progression(
     axes[0, 0].legend()
     fig.suptitle(f"{outcome_label}: across-period interaction model progression")
     output_path = output_dir / "model_progression.png"
-    fig.savefig(output_path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, output_path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return output_path
+    return outputs[0]
 
 
 def _plot_likelihood_ratio_tests(
@@ -384,16 +385,16 @@ def _plot_likelihood_ratio_tests(
         if stage in INTERACTION_ONLY_STAGES:
             label.set_color("lightgray")
     ax.set_xlabel("Newly completed model stage")
-    ax.set_ylabel("−log₁₀ LRT p-value vs parent")
+    ax.set_ylabel(r"$-\log_{10}$ LRT p-value vs parent")
     ax.set_title(
         f"{outcome_label}: joint significance of each added predictor block"
     )
     ax.legend()
     ax.grid(alpha=0.2)
     output_path = output_dir / "likelihood_ratio_progression.png"
-    fig.savefig(output_path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, output_path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return output_path
+    return outputs[0]
 
 
 def _short_interaction_label(term: str, group_column_name: str) -> str:
@@ -485,9 +486,9 @@ def _plot_final_interactions(
             "Panels use independent x-axes; red indicates nominal p < 0.05"
         )
         output_path = output_dir / f"im9_interactions_{group_label}.png"
-        fig.savefig(output_path, dpi=figure_dpi, bbox_inches="tight")
+        outputs = save_figure(fig, output_path, dpi=figure_dpi, bbox_inches="tight")
         plt.close(fig)
-        output_paths.append(output_path)
+        output_paths.extend(outputs)
     return output_paths
 
 

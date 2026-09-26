@@ -18,6 +18,7 @@ if __package__ in (None, ""):
 
 
 from scripts.next.cache_paths import stage_path
+from scripts.next.figure_exports import save_figure
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -282,9 +283,9 @@ def _plot_model_progression(
         f"{outcome_label}: nested preferred-cell mean-activity progression"
     )
     path = output_dir / "model_progression.png"
-    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return path
+    return outputs[0]
 
 
 def _plot_nested_contrasts(
@@ -358,9 +359,9 @@ def _plot_nested_contrasts(
         ax.grid(axis="y", alpha=0.2)
     fig.suptitle(f"{outcome_label}: sequential nested contrasts")
     path = output_dir / "nested_contrasts.png"
-    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return path
+    return outputs[0]
 
 
 def _plot_cv_progression(
@@ -406,9 +407,9 @@ def _plot_cv_progression(
         "Error bars show empirical 95% intervals across shuffles"
     )
     path = output_dir / "cv_model_progression.png"
-    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return path
+    return outputs[0]
 
 
 def _write_log_header(

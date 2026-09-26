@@ -18,6 +18,7 @@ if __package__ in (None, ""):
 
 
 from scripts.next.cache_paths import stage_path
+from scripts.next.figure_exports import save_figure
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -326,9 +327,9 @@ def _plot_model_metrics(
         ax.grid(axis="y", alpha=0.2)
     fig.suptitle(f"{outcome_label}: nested cell-count model metrics")
     path = output_dir / "model_metric_overview.png"
-    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return path
+    return outputs[0]
 
 
 def _plot_nested_contrasts(
@@ -403,9 +404,9 @@ def _plot_nested_contrasts(
         ax.grid(axis="y", alpha=0.2)
     fig.suptitle(f"{outcome_label}: full-versus-reduced contrasts")
     path = output_dir / "nested_contrasts.png"
-    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return path
+    return outputs[0]
 
 
 def _cv_contrast_repeat_metrics(
@@ -631,9 +632,9 @@ def _plot_cv_contrasts(
         ax.grid(axis="y", alpha=0.2)
     fig.suptitle(f"{outcome_label}: paired held-out-trial comparisons")
     path = output_dir / "cv_nested_contrasts.png"
-    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return path
+    return outputs[0]
 
 
 def _write_fit_log_header(

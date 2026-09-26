@@ -7,13 +7,13 @@
     "check_baseline_variance": false,
     "check_baseline_drift": true,
     "check_selectivity": true,
-    "check_preferred_drift": false,
-    "t_test_window": 50,
+    "check_preferred_cue_drift": false,
+    "selectivity_bin_width_ms": 50,
     "min_presence_ratio": 0.9,
-    "temp_dep_r_threshold_baseline": 0.3,
-    "sig_pev_threshold": 2.5,
+    "max_abs_baseline_drift_r": 0.3,
+    "selectivity_pev_threshold_pct": 2.5,
     "save_extended_diagnostics": false,
-    "diagnostics_figure_config": "configs/diagnostic_figure_config.json"
+    "diagnostics_figure_config": "configs/next/diagnostic_figures.json"
   },
   "decode": {
     "n_decode_shuffle": 100,

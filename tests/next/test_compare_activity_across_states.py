@@ -4,6 +4,8 @@ import numpy as np
 
 from scripts.next.compare_activity_across_states import (
     Config,
+    CellActivityDimensions,
+    PrincipalComponentDimensions,
     SessionActivity,
     activity_point_categories,
     apply_activity_normalization,
@@ -18,6 +20,7 @@ from scripts.next.compare_activity_across_states import (
     plot_session_activity,
     plot_session_activity_marginal_histograms,
     plot_session_activity_pairwise,
+    population_mean_point_categories,
     preferred_pev_cells,
     principal_component_session_activity,
     session_cell_groups,
@@ -31,8 +34,8 @@ class TopPreferredPevCellsTest(unittest.TestCase):
             "session": "example",
             "cell_properties": {
                 "cell_idx": np.asarray([10, 11, 12, 13, 14, 15]),
-                "mean_pref_test": np.asarray([7, 3, 7, 7, 7, 3]),
-                "mean_pev_test": np.asarray([4.0, 99.0, 8.0, 6.0, 2.0, 98.0]),
+                "preferred_cue": np.asarray([7, 3, 7, 7, 7, 3]),
+                "mean_selectivity_pev_pct": np.asarray([4.0, 99.0, 8.0, 6.0, 2.0, 98.0]),
             },
         }
 
@@ -49,8 +52,8 @@ class TopPreferredPevCellsTest(unittest.TestCase):
             "session": "example",
             "cell_properties": {
                 "cell_idx": np.asarray([1, 2, 3]),
-                "mean_pref_test": np.asarray([7, 7, 3]),
-                "mean_pev_test": np.asarray([3.0, 2.0, 100.0]),
+                "preferred_cue": np.asarray([7, 7, 3]),
+                "mean_selectivity_pev_pct": np.asarray([3.0, 2.0, 100.0]),
             },
         }
 
@@ -64,8 +67,8 @@ class TopPreferredPevCellsTest(unittest.TestCase):
             "session": "example",
             "cell_properties": {
                 "cell_idx": np.asarray([1, 2]),
-                "mean_pref_test": np.asarray([3, 3]),
-                "mean_pev_test": np.asarray([5.0, 4.0]),
+                "preferred_cue": np.asarray([3, 3]),
+                "mean_selectivity_pev_pct": np.asarray([5.0, 4.0]),
             },
         }
 
@@ -80,8 +83,8 @@ class TopPreferredPevCellsTest(unittest.TestCase):
             "cell_idx_stationary": np.asarray([10, 11, 12, 13, 20, 21]),
             "cell_properties": {
                 "cell_idx": np.asarray([10, 11, 12, 13]),
-                "mean_pref_test": np.asarray([7, 3, 7, 5]),
-                "mean_pev_test": np.asarray([2.0, 9.0, 4.0, 8.0]),
+                "preferred_cue": np.asarray([7, 3, 7, 5]),
+                "mean_selectivity_pev_pct": np.asarray([2.0, 9.0, 4.0, 8.0]),
             },
         }
 
@@ -269,8 +272,10 @@ class PreferredCellPrincipalComponentsTest(unittest.TestCase):
             session="example",
             preferred_cue=7,
             opposite_cue=3,
-            cell_ids=np.asarray([10, 20]),
-            cell_pev=np.asarray([8.0, 7.0]),
+            dimensions=CellActivityDimensions(
+                cell_ids=np.asarray([10, 20]),
+                selectivity_pev_pct=np.asarray([8.0, 7.0]),
+            ),
             delay_bin_starts=np.asarray([500, 550, 600]),
             preferred_activity=preferred,
             opposite_activity=opposite,
@@ -291,16 +296,22 @@ class PreferredCellPrincipalComponentsTest(unittest.TestCase):
 
         self.assertFalse(Config().show_principal_components)
         self.assertEqual(pca_activity.activity_space, "principal_components")
+        self.assertIsInstance(pca_activity.dimensions, PrincipalComponentDimensions)
+        self.assertIsInstance(activity.dimensions, CellActivityDimensions)
+        self.assertFalse(hasattr(pca_activity.dimensions, "selectivity_pev_pct"))
+        self.assertFalse(hasattr(pca_activity.dimensions, "cell_ids"))
         self.assertEqual(pca_activity.activity_source_cell_count, 2)
-        np.testing.assert_array_equal(pca_activity.cell_ids, [1, 2])
+        np.testing.assert_array_equal(pca_activity.dimensions.component_numbers, [1, 2])
         np.testing.assert_allclose(
-            pca_activity.cell_pev,
-            projection.explained_variance_ratio * 100,
+            pca_activity.dimensions.explained_variance_ratio,
+            projection.explained_variance_ratio,
         )
         self.assertIn("PC1 score", fig.axes[0].get_xlabel())
         self.assertIn("explained variance", fig.axes[0].get_xlabel())
         self.assertIn("PCA of 2 preferred cells", fig.axes[0].get_title())
-        np.testing.assert_array_equal(activity.cell_ids, [10, 20])
+        np.testing.assert_array_equal(activity.dimensions.cell_ids, [10, 20])
+        np.testing.assert_array_equal(activity.dimensions.selectivity_pev_pct, [8.0, 7.0])
+        self.assertEqual(population_mean_point_categories(pca_activity), (None, 0))
         import matplotlib.pyplot as plt
 
         plt.close(fig)
@@ -344,8 +355,10 @@ class PairwisePlotTest(unittest.TestCase):
             session="example",
             preferred_cue=7,
             opposite_cue=3,
-            cell_ids=np.asarray([10, 20, 30]),
-            cell_pev=np.asarray([8.0, 7.0, 6.0]),
+            dimensions=CellActivityDimensions(
+                cell_ids=np.asarray([10, 20, 30]),
+                selectivity_pev_pct=np.asarray([8.0, 7.0, 6.0]),
+            ),
             delay_bin_starts=np.asarray([500, 510]),
             preferred_activity=np.arange(12, dtype=float).reshape(2, 2, 3),
             opposite_activity=np.arange(12, 24, dtype=float).reshape(2, 2, 3),
@@ -402,8 +415,10 @@ class PairwisePlotTest(unittest.TestCase):
                 session=f"example-{num_cells}",
                 preferred_cue=7,
                 opposite_cue=3,
-                cell_ids=np.arange(10, 10 + num_cells),
-                cell_pev=np.arange(num_cells, 0, -1, dtype=float),
+                dimensions=CellActivityDimensions(
+                    cell_ids=np.arange(10, 10 + num_cells),
+                    selectivity_pev_pct=np.arange(num_cells, 0, -1, dtype=float),
+                ),
                 delay_bin_starts=np.asarray([500, 510]),
                 preferred_activity=np.arange(
                     2 * 2 * num_cells,
@@ -471,8 +486,10 @@ class PairwisePlotTest(unittest.TestCase):
             session="example",
             preferred_cue=7,
             opposite_cue=3,
-            cell_ids=np.asarray([10, 20, 30]),
-            cell_pev=np.asarray([8.0, 7.0, 6.0]),
+            dimensions=CellActivityDimensions(
+                cell_ids=np.asarray([10, 20, 30]),
+                selectivity_pev_pct=np.asarray([8.0, 7.0, 6.0]),
+            ),
             delay_bin_starts=np.asarray([500, 510]),
             preferred_activity=np.arange(12, dtype=float).reshape(2, 2, 3),
             opposite_activity=np.arange(12, 24, dtype=float).reshape(2, 2, 3),
@@ -561,8 +578,10 @@ class PairwisePlotTest(unittest.TestCase):
             session="example",
             preferred_cue=7,
             opposite_cue=3,
-            cell_ids=np.asarray([10, 20, 30]),
-            cell_pev=np.asarray([8.0, 7.0, 6.0]),
+            dimensions=CellActivityDimensions(
+                cell_ids=np.asarray([10, 20, 30]),
+                selectivity_pev_pct=np.asarray([8.0, 7.0, 6.0]),
+            ),
             delay_bin_starts=np.asarray([500]),
             preferred_activity=np.arange(6, dtype=float).reshape(2, 1, 3),
             opposite_activity=np.arange(6, 12, dtype=float).reshape(2, 1, 3),
@@ -624,8 +643,10 @@ class PairwisePlotTest(unittest.TestCase):
             session="example",
             preferred_cue=7,
             opposite_cue=3,
-            cell_ids=np.asarray([10, 20, 30]),
-            cell_pev=np.asarray([8.0, 7.0, 6.0]),
+            dimensions=CellActivityDimensions(
+                cell_ids=np.asarray([10, 20, 30]),
+                selectivity_pev_pct=np.asarray([8.0, 7.0, 6.0]),
+            ),
             delay_bin_starts=np.asarray([500, 510]),
             preferred_activity=np.arange(12, dtype=float).reshape(2, 2, 3),
             opposite_activity=np.arange(12, 24, dtype=float).reshape(2, 2, 3),
@@ -758,15 +779,53 @@ class PairwisePlotTest(unittest.TestCase):
         )
         self.assertIn("Cell 10", fig.axes[6].get_xlabel())
         self.assertIn("Cell 30", fig.axes[8].get_xlabel())
-        self.assertIn("all 5 preferred cells", fig.axes[9].get_xlabel())
-        self.assertIn("4 selective non-preferred cells", fig.axes[10].get_xlabel())
-        self.assertIn("6 stationary non-selective cells", fig.axes[11].get_xlabel())
+        self.assertIn("5 selected preferred cells", " ".join(fig.axes[9].get_xlabel().split()))
+        self.assertIn("4 selected non-preferred cells", " ".join(fig.axes[10].get_xlabel().split()))
+        self.assertIn("6 other cells passing enabled checks", " ".join(fig.axes[11].get_xlabel().split()))
         import matplotlib.pyplot as plt
 
         plt.close(fig)
         plt.close(cue_fig)
         plt.close(hidden_opposite_fig)
         plt.close(hidden_all_preferred_fig)
+
+
+class ActivityPopulationLabelsTest(unittest.TestCase):
+    def test_population_titles_follow_recorded_checks_and_cell_pev_has_correct_units(self):
+        import matplotlib.pyplot as plt
+
+        for checks, expected_selected, expected_remainder in [
+            ({"selectivity": True}, "Selective", "Cells failing selectivity, passing other checks"),
+            ({"selectivity": False}, "Selected", "Other cells passing enabled checks"),
+            (None, "Selected", "Other cells passing enabled checks"),
+        ]:
+            with self.subTest(checks=checks):
+                activity = SessionActivity(
+                    session="example", preferred_cue=7, opposite_cue=3,
+                    dimensions=CellActivityDimensions(
+                        cell_ids=np.array([9]), selectivity_pev_pct=np.array([8.25]),
+                    ),
+                    delay_bin_starts=np.array([500, 550]),
+                    preferred_activity=np.array([[[0.0], [1.0]]]),
+                    opposite_activity=np.array([[[-1.0], [0.0]]]),
+                    on_state_mask=np.array([[True, False]]),
+                    off_state_mask=np.array([[False, True]]),
+                    preferred_trial_ids=np.array([0]), opposite_trial_ids=np.array([1]),
+                    population_mean_activities={
+                        group: (np.array([[0.0, 1.0]]), np.array([[-1.0, 0.0]]), 1)
+                        for group in ("preferred", "selective_nonpreferred", "stationary_nonselective")
+                    },
+                    screening_checks=checks,
+                )
+                figure = plot_session_activity_marginal_histograms(activity)
+                try:
+                    self.assertEqual(figure.axes[1].get_title(), f"{expected_selected} preferred cells")
+                    self.assertEqual(figure.axes[2].get_title(), f"{expected_selected} non-preferred cells")
+                    self.assertEqual(" ".join(figure.axes[3].get_title().split()), expected_remainder)
+                    self.assertIn("selectivity PEV=8.25%", figure.axes[4].get_xlabel())
+                    self.assertNotIn("delay PEV", figure.axes[4].get_xlabel())
+                finally:
+                    plt.close(figure)
 
 
 if __name__ == "__main__":

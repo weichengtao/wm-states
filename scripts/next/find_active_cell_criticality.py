@@ -16,6 +16,7 @@ if __package__ in (None, ""):
 
 
 from scripts.next.cache_paths import stage_path
+from scripts.next.figure_exports import save_figure
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -423,9 +424,9 @@ def _plot_period_criticality(
         "Dashed line marks the default 50th percentile (z=0)"
     )
     output_path = output_dir / f"criticality_{period.replace('-', '_')}.png"
-    fig.savefig(output_path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, output_path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return output_path
+    return outputs[0]
 
 
 def _plot_cv_period_criticality(
@@ -469,9 +470,9 @@ def _plot_cv_period_criticality(
         "Each point is the mean across trial-holdout shuffles"
     )
     path = output_dir / f"cv_criticality_{period.replace('-', '_')}.png"
-    fig.savefig(path, dpi=figure_dpi, bbox_inches="tight")
+    outputs = save_figure(fig, path, dpi=figure_dpi, bbox_inches="tight")
     plt.close(fig)
-    return path
+    return outputs[0]
 
 
 def _run_outcome(

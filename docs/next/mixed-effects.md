@@ -146,9 +146,18 @@ cue onset:
 | Pre-delay | [300, 500) |
 | Delay | [500, 1400) |
 
-Features distinguish preferred selective cells, selective nonpreferred cells,
-and stationary nonselective cells. PEV weighting changes selective-population
-means; it does not change active-cell fractions or stationary-nonselective weights.
+With the example screening settings, features distinguish preferred selective
+cells, selective nonpreferred cells, and stationary nonselective cells. Group
+membership comes from the same validated screening metadata used by decoding
+and activity plots. Preparation preserves cached cell order; plotting can rank
+preferred cells by finite PEV for display.
+
+When selectivity screening is disabled, membership in the selected pool does
+not establish selectivity. Recorded population labels and screening switches
+describe that distinction. Existing column names and model identifiers retain
+`selective_nonpreferred` and `stationary_nonselective` so formulas remain stable.
+PEV weighting changes selected-population means; it does not change active-cell
+fractions or weights for the remaining cells passing the other checks.
 
 The removed standalone fixed-effects regressions are not part of this workflow.
 Baseline activity and cell-count predictors remain available in these

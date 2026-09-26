@@ -32,7 +32,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import tyro
-from scipy.io import loadmat
 
 from scripts.next.activity_weighting import (
     cell_group_activity_weights,
@@ -42,6 +41,12 @@ from scripts.next.activity_weighting import (
     weighting_subdir,
 )
 from scripts.next.mixedlm_outcomes import ALL_OUTCOMES
+from scripts.next.screening_metadata import cell_groups, population_labels, validate_cue
+from scripts.next.session_inputs import (
+    load_session_inputs,
+    validate_state_trial_ids,
+    validate_trial_ids,
+)
 
 
 PERIODS = {
@@ -93,25 +98,11 @@ def _find_full_session_selection(selection_results, session, num_trials):
 def _cell_groups(
     selection_result: dict[str, Any],
     preferred_cue: int,
+    *,
+    num_cells_total: int | None = None,
 ) -> dict[str, np.ndarray]:
-    properties = selection_result["cell_properties"]
-    selective_cells = np.asarray(properties["cell_idx"], dtype=np.int64).ravel()
-    preferred_cues = np.asarray(properties["mean_pref_test"]).ravel()
-    if selective_cells.shape != preferred_cues.shape:
-        raise ValueError("cell_idx and mean_pref_test must have matching shapes.")
-
-    stationary_cells = np.asarray(
-        selection_result["cell_idx_stationary"], dtype=np.int64
-    ).ravel()
-    return {
-        "preferred": selective_cells[preferred_cues == preferred_cue],
-        "selective_nonpreferred": selective_cells[
-            preferred_cues != preferred_cue
-        ],
-        "stationary_nonselective": stationary_cells[
-            ~np.isin(stationary_cells, selective_cells)
-        ],
-    }
+    """Use the shared population definitions in cached selected-cell order."""
+    return cell_groups(selection_result, preferred_cue, num_cells_total=num_cells_total)
 
 
 def _period_firing_rates(
@@ -221,7 +212,7 @@ def _validate_off_state_result(
             "rerun on_off_states.py."
         )
 
-    trial_ids = np.asarray(state_result["trial_idx"], dtype=np.int64).ravel()
+    trial_ids = validate_trial_ids(state_result["trial_idx"], session=session)
     total_durations = np.asarray(
         state_result["off_state_duration_per_trial"], dtype=float
     ).ravel()
@@ -257,10 +248,6 @@ def _validate_off_state_result(
     trial_ids = trial_ids[order]
     total_durations = total_durations[order]
     maximum_durations = maximum_durations[order]
-    if np.any(np.diff(trial_ids) <= 0):
-        raise ValueError(
-            f"Preferred-cue trial IDs are not unique for session {session}."
-        )
     return trial_ids, total_durations, maximum_durations
 
 
@@ -273,32 +260,28 @@ def _prepare_session_rows(
     trial_ids, total_off_state_durations, maximum_off_state_durations = (
         _validate_off_state_result(state_result, session)
     )
-    preferred_cue = int(state_result["cue"])
+    preferred_cue = validate_cue(state_result["cue"], f"Session {session}: preferred cue")
 
-    data_path = config.data_dir / f"{session}.mat"
-    if not data_path.exists():
-        raise FileNotFoundError(f"Missing session data: {data_path}")
-    data = loadmat(
-        data_path,
-        variable_names=["spks", "tc", "cueAngIdx", "isCorr"],
+    session_inputs = load_session_inputs(
+        config.data_dir / f"{session}.mat", session=session,
     )
-    spikes = np.asarray(data["spks"])
-    times_ms = np.asarray(data["tc"], dtype=float).ravel()
-    cue_labels = np.asarray(data["cueAngIdx"], dtype=np.int64).ravel()
-    correct_trials = np.asarray(data["isCorr"]).ravel().astype(bool)
-    if spikes.ndim != 3 or spikes.shape[1] != times_ms.size:
-        raise ValueError(f"Unexpected spike/time shape for session {session}.")
-    if np.any(trial_ids < 0) or np.any(trial_ids >= spikes.shape[0]):
-        raise ValueError(f"Trial IDs are out of range for session {session}.")
-    if not np.all(cue_labels[trial_ids] == preferred_cue):
-        raise ValueError(f"Cached trials do not all use the preferred cue in {session}.")
-    if not np.all(correct_trials[trial_ids]):
-        raise ValueError(f"Cached trials are not all correct in session {session}.")
+    trial_ids = validate_state_trial_ids(session_inputs, trial_ids, preferred_cue)
+    spikes = session_inputs.spikes
+    times_ms = session_inputs.times_ms
 
     selection = _find_full_session_selection(
         selection_results, session, spikes.shape[0]
     )
-    groups = _cell_groups(selection, preferred_cue)
+    groups = _cell_groups(selection, preferred_cue, num_cells_total=spikes.shape[2])
+    screening_checks = selection.get("screening_checks")
+    group_labels = population_labels(screening_checks)
+    if screening_checks is not None:
+        # Detach the recorded flags from the input and keep NumPy booleans
+        # serializable in the preparation manifest as well as pickle caches.
+        screening_checks = {
+            name: enabled.item() if isinstance(enabled, np.generic) else enabled
+            for name, enabled in screening_checks.items()
+        }
     activity_weights = cell_group_activity_weights(
         selection,
         groups,
@@ -374,6 +357,8 @@ def _prepare_session_rows(
         "cell_counts": counts,
         "raw_firing_rates_hz": raw_rates_by_period,
         "activity_weights": activity_weights,
+        "screening_checks": screening_checks,
+        "population_labels": group_labels,
     }
     return rows, cv_session
 
@@ -453,6 +438,7 @@ def prepare_data(config: Config, *, output_stage: str = "prepare") -> pd.DataFra
     seen_sessions: set[str] = set()
     rows: list[dict[str, Any]] = []
     cv_sessions: list[dict[str, Any]] = []
+    session_population_metadata: dict[str, dict[str, Any]] = {}
     for state_result in off_state_results:
         session = str(state_result.get("session", "unknown_session"))
         if session in seen_sessions:
@@ -462,6 +448,10 @@ def prepare_data(config: Config, *, output_stage: str = "prepare") -> pd.DataFra
             state_result, selection_results, config
         )
         rows.extend(session_rows)
+        session_population_metadata[session] = {
+            "screening_checks": cv_session["screening_checks"],
+            "population_labels": cv_session["population_labels"],
+        }
         if config.save_cv_cache:
             cv_sessions.append(cv_session)
 
@@ -480,6 +470,7 @@ def prepare_data(config: Config, *, output_stage: str = "prepare") -> pd.DataFra
     ))
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / config.output_filename
+    frame.attrs["population_metadata"] = session_population_metadata
     frame.to_pickle(output_path)
     cv_output_path: Path | None = None
     if config.save_cv_cache:
@@ -545,6 +536,7 @@ def prepare_data(config: Config, *, output_stage: str = "prepare") -> pd.DataFra
             for name, (start, end) in PERIODS.items()
         },
         "group_names": list(GROUP_NAMES),
+        "session_population_metadata": session_population_metadata,
         "history_alpha": config.history_alpha,
         "default_active_threshold": config.active_threshold,
         "pev_weighted_average": config.pev_weighted_average,

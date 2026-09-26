@@ -128,7 +128,7 @@ class StateTest(unittest.TestCase):
                       'decoding_confidence': np.full((2, 3), 0.8),
                       'decoding_confidence_null': np.full((2, 3, 3), 0.5)}
             cache_io.save([source], cache / 'decode/decoding_confidence.pkl')
-            with patch.object(states, 'save_figure_all_formats'):
+            with patch.object(states, 'save_figure'):
                 states.main(states.Config(cache_dir=cache, cluster_size_threshold_off=1))
             result = cache_io.read(cache / 'states/on_off_states.pkl')[0]
             self.assertFalse(result['on_state_mask'].any())

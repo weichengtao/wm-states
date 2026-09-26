@@ -1,6 +1,351 @@
 # Next pipeline validation
 
-## Latest validation — 2026-09-26
+## Shared downstream contracts and activity modules — 2026-09-26
+
+The downstream refactor passed **345 Python tests** in **8.978 seconds**:
+**228 next tests** and **117 historical tests**. This includes the existing
+dashboard coverage. The full example preset also passes the runner's dry run.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python -m unittest discover -s tests -v
+
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python scripts/next/pipeline.py \
+  --settings configs/next/example_pipeline.json \
+  --data-dir data/example \
+  --cache-dir cache/test_run_054_next_downstream_refactor \
+  --stages all --dry-run
+```
+
+Coverage includes validated cell IDs and cue/PEV alignment, optional metadata
+for decoder populations, stable PEV ties and finite-value filtering, distinct
+activity/model-preparation ordering, disabled-check labels, malformed cached
+trial IDs, state-row alignment, and separate cell-selectivity/PCA metadata.
+Preparation tests also check persisted population definitions without changing
+predictor columns. Existing tests continue to cover training-only CV
+normalization and joint sorting of trial IDs and both duration outcomes.
+
+### Full pipeline and numerical comparison
+
+The full run reused the previous validation settings: the smoke preset with
+extended screening diagnostics enabled. All eleven stages completed:
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python scripts/next/pipeline.py \
+  --settings configs/next/.dashboard/validation_screening_names.json \
+  --data-dir data/example \
+  --cache-dir cache/test_run_054_next_downstream_refactor \
+  --stages all --n-jobs 1 --figure-formats png pdf
+```
+
+Recorded stage durations sum to **216.290 seconds**. The run produced **318
+PNG/PDF pairs**, including 48 cell diagnostic pairs. Every figure stem has both
+formats. Real-data marginal and PCA figures were visually checked: population
+labels wrap cleanly, cell axes identify selectivity PEV, and PC axes identify
+PCA explained variance.
+
+Comparison with `test_run_053_next_screening_names` found:
+
+- Screening still selects **32, 9, 13, and 32 cells** in sessions `210921`,
+  `211015`, `221020`, and `221024`.
+- Screening values, observed/null decoding, predictions, classifier choices,
+  evaluation, state masks/durations, and the raw CV feature cache match exactly,
+  including array dtypes and holdout assignments. The recursive comparison
+  performed **1,075 checks**, including **416 arrays**. It excludes changed
+  implementation fingerprints and normalizes run-root paths.
+- The prepared **236 × 56** table has identical columns, values, row order,
+  and dtypes. Its new per-session screening flags and population labels agree
+  with the screening cache, CV cache, and preparation manifest.
+- All **55 model CSV tables (2,847 rows)** match exactly after normalizing run
+  paths in the two `prepared_data_path` columns.
+
+A separate comparison of the preserved pre-refactor activity implementation
+against the new preparation module covered all four example sessions with
+both equal and PEV weighting. **808 recursive checks** matched exactly,
+including balanced trial IDs, cell IDs/PEV, normalized activity, population
+means, state masks, longest-off-state extraction, PCA components/scores/variance,
+and sampled display points. Scientific methods and normalization populations
+are unchanged; population metadata and figure labels are intentionally clearer.
+
+The strict MkDocs build and whitespace check pass:
+
+```bash
+.venv/bin/mkdocs build --strict
+git diff --check
+```
+
+This is a four-session smoke integration check with three null estimates and
+a coarse decoding grid, not a production-size validation or controlled
+performance benchmark. Generated settings and caches remain ignored by Git.
+Model identifiers and predictor names stay stable; see
+[downstream migration](../next/migration.md#refresh-downstream-provenance) for
+typed activity records and checkpoint regeneration after code changes.
+
+## Descriptive screening names validation — 2026-09-26
+
+The screening naming refactor passed **300 Python tests** in **8.739 seconds**:
+**183 next tests** (including **33 dashboard tests**) and **117 historical
+tests**. The strict MkDocs build and whitespace check also pass.
+
+Coverage includes the new configuration names, rejection of former JSON/CLI
+names, all seven canonical failure codes and measurement columns, unavailable
+statistics, selected/stationary cell populations, downstream cue/PEV consumers,
+and readable figure and histogram labels. Screening caches now use schema
+version **2**; tests confirm that older screening caches fail with regeneration
+instructions and that the other primary cache schemas remain at version 1.
+Legacy diagnostic reason codes are rejected before the histogram tool writes
+new output.
+
+### Full pipeline and diagnostic reports
+
+The current smoke preset was copied to
+`configs/next/.dashboard/validation_screening_names.json`, with only
+`select.save_extended_diagnostics` changed to `true`:
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python scripts/next/pipeline.py \
+  --settings configs/next/.dashboard/validation_screening_names.json \
+  --data-dir data/example \
+  --cache-dir cache/test_run_053_next_screening_names \
+  --stages all --n-jobs 1 --figure-formats png pdf
+
+MPLCONFIGDIR=/tmp/wm-next-mpl WM_STATES_FIGURE_FORMATS=png,pdf \
+  .venv/bin/python scripts/next/reject_reason_histograms.py \
+  --cache-dir cache/test_run_053_next_screening_names
+```
+
+All eleven stages completed; their recorded durations sum to **216.348
+seconds**. This is an integration check, not a controlled benchmark. The
+pipeline produced **318 PNG/PDF pairs**, including **48 cell diagnostic
+pairs**. The separate histogram command added four pairs and a 16-row summary
+containing canonical `reason` codes and readable `reason_label` text. Every
+figure stem has both formats. Representative cell and histogram PDFs were
+rendered with Poppler and visually inspected.
+
+Screening still selects **32, 9, 13, and 32 cells** in sessions `210921`,
+`211015`, `221020`, and `221024`. All **1,120 diagnostic rows × 15 columns**
+match `test_run_052_next_diagnostics` after mapping the renamed columns and
+reason codes. All scientific screening fields and selected-cell properties
+also match; only their names and configuration metadata changed.
+
+Against `test_run_051_next_pdf`, observed/null decoding, predictions, selected
+classifier C values, trial/time coordinates, evaluation, state masks and
+durations match exactly. The **236 × 56** prepared table and complete CV
+feature cache match, including holdout splits. All **55 model CSV tables**
+(**2,847 rows**) match after normalizing run-root prefixes in two
+`prepared_data_path` columns. No scientific differences were found.
+
+The refreshed dashboard exposes the new screening fields, omits the old names,
+and successfully validates the current preset with diagnostics enabled.
+Generated validation settings and caches remain ignored by Git. See
+[screening migration](../next/migration.md#screening-names-and-cache-version)
+for mappings and the required regeneration of older screening caches.
+
+## Diagnostic configuration validation — 2026-09-26
+
+The diagnostic configuration refactor passed **294 Python tests** in
+**7.824 seconds**: **177 next tests** (including **33 dashboard tests**) and
+**117 historical tests**. The strict MkDocs build and whitespace check pass.
+
+New coverage verifies versioned parsing, unknown and duplicate JSON fields,
+finite numeric values, explicit plot switches, zero-based cell lists, half-open
+ranges, session overrides, and resolved configuration snapshots. Integration
+tests cover missing/skipped sessions, cap warnings, CSV-only diagnostics,
+unchanged CSV scope and cell ordering, full-session traces, PDF-only export,
+cleanup after export failure, and early rejection of malformed configs in the
+screening CLI, pipeline dry run, and dashboard preflight. The old figure-list
+schema and the obsolete stage-level title-detail flag are rejected explicitly.
+
+### Real-data screening and diagnostic exports
+
+`configs/next/.dashboard/validation_diagnostics.json` was copied from the smoke
+preset with only `select.save_extended_diagnostics` changed to `true`. It uses
+the supplied `configs/next/diagnostic_figures.json`: all available sessions,
+all cells requested, at most 12 plots per session, and 150 DPI.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python scripts/next/pipeline.py \
+  --settings configs/next/.dashboard/validation_diagnostics.json \
+  --data-dir data/example \
+  --cache-dir cache/test_run_052_next_diagnostics \
+  --stages select --n-jobs 1 --figure-formats png pdf
+```
+
+Screening and diagnostics completed in **37.291 seconds**. The four sessions
+contained **135, 86, 183, and 716 cells**, respectively. Diagnostics retained
+all **1,120 rows and 15 columns**, while producing **48 matching PNG/PDF pairs**
+(cell indices 0–11 from each session). Four cap warnings were expected. The
+resolved configuration and actual cell targets were saved in
+`select/diagnostics/figure_config.json`. A diagnostic PDF was rendered with
+Poppler and visually inspected, including its time-window labels and complete
+trial axis.
+
+The selected populations remain **32, 9, 13, and 32 cells** for sessions
+`210921`, `211015`, `221020`, and `221024`. Every scientific screening output
+matches `test_run_051_next_pdf` exactly, including cell properties and cell/trial
+indices; configuration metadata differs as intended. Later analysis stages were
+not rerun for this diagnostic-only change.
+
+The refreshed local dashboard returned successful validation for enabled
+diagnostics using the new preset path and no longer exposed the removed
+`skip_not_applicable_reasons_in_diagnostics_figure` field. Generated validation
+settings and run artifacts remain ignored by Git.
+
+## Shared figure export and PDF validation — 2026-09-26
+
+All `next` figure writers now use one exporter, including screening diagnostics,
+decoder inspection, cross-run comparisons, state/activity plots, and model plots.
+The exporter supports PNG, TIFF, EPS, and PDF. The test suite passed **270 tests**
+in **8.698 seconds**: **153 next tests** (including **30 dashboard tests**) and
+**117 historical tests**. The **19 frontend tests**, production build, and
+formatting check also pass.
+
+Export checks cover PDF-only and mixed-format output, actual returned paths,
+unchanged DPI/layout options, invalid formats failing before any output is
+written, and restoration of environment and Matplotlib settings after a run.
+A source-level regression check prevents plot writers from bypassing the shared
+helper. PDF tests verify embedded TrueType fonts, vector-only line plots,
+transparency, and lossless Flate-compressed image streams without JPEG/JPEG 2000
+encoding. Dashboard tests cover PDF requests, artifact classification, MIME
+type, and byte-identical downloads.
+
+### Full pipeline with PNG and PDF
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python scripts/next/pipeline.py \
+  --settings configs/next/smoke_pipeline.json \
+  --data-dir data/example \
+  --cache-dir cache/test_run_051_next_pdf \
+  --stages all --n-jobs 1 --figure-formats png pdf
+```
+
+All eleven stages completed for the four example sessions. Recorded stage
+durations sum to **205.229 seconds**; this is an integration check, not a
+controlled performance comparison. The run produced **270 PNG/PDF pairs**
+with identical relative stems and no missing counterparts:
+
+| Stage | Figure pairs |
+| --- | ---: |
+| Decode | 16 |
+| States | 36 |
+| Activity | 48 |
+| Models | 72 |
+| Nested count | 30 |
+| Nested activity | 34 |
+| Criticality | 20 |
+| Interactions | 14 |
+
+Screening diagnostics are disabled in this smoke preset; focused tests exercise
+their PDF-only export. Stages that do not produce figures have no figure pairs.
+All 270 PDFs passed header/end-marker, embedded-font, and lossless-stream
+checks. Representative decoding, state-confidence, marginal-effect, and
+interaction PDFs were rendered with Poppler and visually inspected. The run
+revealed missing Unicode subscript glyphs in an existing interaction-axis label;
+that label now uses math text. The two affected outcome plots were regenerated
+from their saved comparison tables with missing-glyph warnings treated as
+errors, and the corrected PDF was visually checked.
+
+Scientific results match the previous PNG run, `test_run_048_next_dashboard`,
+exactly: all four sessions' screening, observed/null decoding, evaluation,
+state masks and durations, the **236 × 56** prepared table, and **97,348 numeric
+values across 55 model CSV tables**. All **214 CV fits** succeeded and converged
+with no fit errors.
+
+Browser checks confirmed that selecting PNG and PDF produces the corresponding
+validated command and that the result viewer lists both formats with download
+links. PDF preserves vector geometry and text; heatmaps and other image artists
+remain raster content, compressed losslessly. This check does not claim that
+every artist is vector or that the full-resolution example preset was run.
+
+## Dashboard validation — 2026-09-26
+
+The React/TypeScript dashboard and FastAPI backend passed **259 Python tests**
+(**142 next tests**, including **28 dashboard tests**, and **117 historical
+tests**) in **7.258 seconds**, plus **19 frontend unit tests**. The production
+TypeScript/Vite build, frontend formatting check, strict MkDocs build, lockfile
+check, and whitespace check pass. A clean `npm ci` installed the locked packages.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python -m unittest discover -s tests
+cd dashboard
+npm ci
+npm test
+npm run build
+npm run format:check
+cd ..
+uv lock --check --offline
+uv run --group dashboard --group docs --locked mkdocs build --strict
+```
+
+Backend coverage includes typed settings and path validation, real subprocess
+execution, WebSocket snapshots, worker cancellation, restart history,
+start/cancel races, process cleanup after metadata or log failures, safe artifact
+paths, table pagination, corrupt caches, nonfinite values, stale stage warnings,
+cache invalidation, and dashboard run names. Frontend coverage includes copied
+manifest settings, fresh run directories, explicit null values, enum display,
+JSON drafts, shared defaults, trial/time/cue comparison warnings, partial-history
+configuration comparisons, and duration formatting.
+
+### Full pipeline through the browser
+
+The service was started with:
+
+```bash
+MPLCONFIGDIR=/tmp/wm-next-mpl .venv/bin/python -m scripts.next.dashboard
+```
+
+The browser selected the smoke preset, `data/example`, one worker, PNG figures,
+and all eleven stages, validated the configuration, then launched
+`cache/test_run_048_next_dashboard`. Live stage changes and streamed logs were
+observed while other views remained usable. All stages completed; their recorded
+durations sum to **165.621 seconds**. This is a local integration check, not a
+controlled timing benchmark.
+
+- Four sessions: `210921`, `211015`, `221020`, and `221024`.
+- 240 decoded trials, five time bins, and three null estimates per session.
+- 86 cells passed selective-cell screening; the stationary-cell decoder used
+  46, 30, 73, and 208 cells respectively. These populations are distinct.
+- Prepared trial table: 236 rows and 56 columns.
+- 214 held-out model fits across both outcomes, all converged, with no fit errors:
+  68 model-family, 10 nested-count, 12 nested-activity, 68 criticality, and
+  56 interaction fits.
+- 367 browsable artifacts: 270 figures, 57 tables, 18 JSON files, and 22 logs.
+- Run and all four session APIs returned no errors or stale-data warnings.
+
+Observed/null decoding values, predictions, selected C values, trial/time
+coordinates, state masks and durations, the prepared table, and all numeric CV
+repeat metrics match `test_run_044_next` exactly. Run 044 also contains five
+extra figures from separate inspection/comparison calls; these are not missing
+pipeline outputs in run 048.
+
+Job `72769d0911564fa09b1d2586bdb1fc58` saved the exact settings at
+`configs/next/.dashboard/72769d0911564fa09b1d2586bdb1fc58.json`. Its command and
+argument vector match the pipeline manifest; shell-splitting the command recovers
+that same vector. The history manifest is byte-identical to the latest manifest.
+Generated settings, jobs, logs, and run caches remain ignored by Git.
+
+### Browser and failure-path checks
+
+Browser review verified editable example defaults, the smoke preset, validation,
+settings reuse into a fresh cache, live progress, tables, stage/session figure
+filters, figure zoom, split-screen session views, confidence overlays, and
+cross-run configuration comparisons. The interface was inspected at desktop and
+390-pixel widths. No page-wide horizontal overflow was found in the tested
+configuration and table views; wide CSV tables scroll within their viewer.
+
+Run `test_run_047_next_dashboard_backend` first checked a real evaluation-only
+subprocess against copied decoding caches. Run `test_run_049_next_dashboard_cancel`
+completed a one-session five-stage smoke run before the cancellation check was
+issued. A separate run, `test_run_050_next_dashboard_cancel`, was cancelled from
+the browser during screening. The job became `cancelled`, its screening stage
+was recorded as `interrupted`, later stages remained pending, and the process
+exited. Cancellation does not remove already-written outputs.
+
+The full-resolution example preset (100 null estimates and 50 model holdouts)
+was not run. The dashboard remains a local single-user service with one active
+job; trusted stage-layout caches are required. Manifest history preserves
+invocation metadata, not immutable copies of scientific outputs.
+
+## Command-capture validation — 2026-09-26
 
 Command capture passed **231 tests** in **6.589 seconds**: **114 next tests**
 and **117 historical tests**. Four additional tests cover exact argument values

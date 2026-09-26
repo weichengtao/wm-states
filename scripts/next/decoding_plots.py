@@ -4,7 +4,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-from scripts.next.figure_exports import save_figure_png_only
+from scripts.next.figure_exports import save_figure
 
 
 def plot_session(result, cache_dir, actual_trial_id=False):
@@ -35,5 +35,5 @@ def plot_session(result, cache_dir, actual_trial_id=False):
             axes[1].plot(times, result['decoding_accuracy'], label='Accuracy')
         axes[1].legend(); axes[1].set_xlabel('Time (ms)')
         fig.suptitle(f'{result["session"]}: {title}')
-        save_figure_png_only(fig, directory / f'{result["session"]}_{key}.png')
+        save_figure(fig, directory / f'{result["session"]}_{key}.png')
         plt.close(fig)

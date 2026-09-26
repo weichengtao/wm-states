@@ -20,7 +20,7 @@ import seaborn as sns
 import tyro
 from scipy.ndimage import label
 
-from scripts.next.figure_exports import configure_figure_style, save_figure_all_formats
+from scripts.next.figure_exports import configure_figure_style, save_figure
 
 matplotlib.use('Agg')
 configure_figure_style(matplotlib)
@@ -444,7 +444,7 @@ def main(config: Config):
             plt.xlim(0, len(bin_starts)) # ensure all time bins are shown
             plt.ylim(decoding_confidence.shape[0], 0) # ensure all trials are shown
             # save figure to fig_dir with session and cue in filename
-            save_figure_all_formats(fig, fig_dir / 'confidence' / f'decoding_confidence_{session}_{cue}.png', dpi=300)
+            save_figure(fig, fig_dir / 'confidence' / f'decoding_confidence_{session}_{cue}.png', dpi=300)
             plt.close(fig)
 
             # save on-state mask if exists
@@ -467,7 +467,7 @@ def main(config: Config):
                 plt.xlim(0, len(bin_starts)) # ensure all time bins are shown
                 plt.ylim(decoding_confidence.shape[0], 0) # ensure all trials are shown
                 # save figure to fig_dir with session and cue in filename
-                save_figure_all_formats(fig, fig_dir / 'masks' / f'on_state_mask_{session}_{cue}.png', dpi=300)
+                save_figure(fig, fig_dir / 'masks' / f'on_state_mask_{session}_{cue}.png', dpi=300)
                 plt.close(fig)
 
             # save off-state mask if exists
@@ -486,7 +486,7 @@ def main(config: Config):
                 plt.yticks(yticks, yticklabels)
                 plt.xlim(0, len(bin_starts))
                 plt.ylim(decoding_confidence.shape[0], 0)
-                save_figure_all_formats(fig, fig_dir / 'masks' / f'off_state_mask_{session}_{cue}.png', dpi=300)
+                save_figure(fig, fig_dir / 'masks' / f'off_state_mask_{session}_{cue}.png', dpi=300)
                 plt.close(fig)
 
             # save on off state duration histograms
@@ -544,7 +544,7 @@ def main(config: Config):
                 plt.ylabel('Count')
                 plt.title(f'On-State Duration\nSession: {session}, Cue: {cue_to_deg(cue)}°')
                 plt.xlim(*on_xlim)
-                save_figure_all_formats(fig, fig_dir / 'durations' / f'on_state_duration_{session}_{cue}.png', dpi=300)
+                save_figure(fig, fig_dir / 'durations' / f'on_state_duration_{session}_{cue}.png', dpi=300)
                 plt.close(fig)
 
             compare_off = compare_with_cc_skipped_off and cc_method_off != 'skipped'
@@ -647,7 +647,7 @@ def main(config: Config):
                 plt.ylabel('Count')
                 plt.title(f'Off-State Duration\nSession: {session}, Cue: {cue_to_deg(cue)}°')
                 plt.xlim(*off_xlim)
-                save_figure_all_formats(fig, fig_dir / 'durations' / f'off_state_duration_{session}_{cue}.png', dpi=300)
+                save_figure(fig, fig_dir / 'durations' / f'off_state_duration_{session}_{cue}.png', dpi=300)
                 plt.close(fig)
 
             # Unlike the state-level histogram, this includes one value for
@@ -682,7 +682,7 @@ def main(config: Config):
                 f'Session: {session}, Cue: {cue_to_deg(cue)}°'
             )
             plt.xlim(*off_xlim)
-            save_figure_all_formats(
+            save_figure(
                 fig,
                 fig_dir / 'durations' / f'off_state_duration_per_trial_{session}_{cue}.png',
                 dpi=300,
@@ -721,7 +721,7 @@ def main(config: Config):
                 f'Session: {session}, Cue: {cue_to_deg(cue)}°'
             )
             plt.xlim(*off_xlim)
-            save_figure_all_formats(
+            save_figure(
                 fig,
                 fig_dir / 'durations' / f'max_off_state_duration_per_trial_{session}_{cue}.png',
                 dpi=300,
@@ -742,7 +742,7 @@ def main(config: Config):
                     plt.title(f'Off-State Null Cluster Masses\nSession: {session}, Cue: {cue_to_deg(cue)}°')
                     if off_cluster_mass_cutoffs.size:
                         ax.legend()
-                    save_figure_all_formats(fig, fig_dir / 'cluster_masses' / f'off_state_null_cluster_masses_{session}_{cue}.png', dpi=300)
+                    save_figure(fig, fig_dir / 'cluster_masses' / f'off_state_null_cluster_masses_{session}_{cue}.png', dpi=300)
                     plt.close(fig)
 
             # save histgram of off-state candidate cluster masses
@@ -784,7 +784,7 @@ def main(config: Config):
                     plt.xlabel('Cluster Mass')
                     plt.ylabel('Count')
                     plt.title(f'Off-State Candidate Cluster Masses\nSession: {session}, Cue: {cue_to_deg(cue)}°')
-                    save_figure_all_formats(fig, fig_dir / 'cluster_masses' / f'off_state_candidate_cluster_masses_{session}_{cue}.png', dpi=300)
+                    save_figure(fig, fig_dir / 'cluster_masses' / f'off_state_candidate_cluster_masses_{session}_{cue}.png', dpi=300)
                     plt.close(fig)
 
             state_results.append({

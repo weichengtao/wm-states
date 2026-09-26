@@ -28,6 +28,7 @@ from scripts.next.decoder_models import (
     CLASSIFIER_C_GRID, CLASSIFIER_C_GRID_SEARCH_CV,
 )
 from scripts.next.decoding_plots import plot_session
+from scripts.next.screening_metadata import ScreeningMetadata
 
 save_pickle_atomic = cache_io.save
 
@@ -168,7 +169,8 @@ def decode_session(path, selection, config):
     spikes, times, cues, correct = load_session(path)
     if selection['num_trials'] != spikes.shape[0]:
         raise ValueError(f'{path.stem}: selection and dataset trial counts differ.')
-    cue = preferred_cue_from_cells(np.asarray(selection['cell_properties']['mean_pref_test']))
+    screening_metadata = ScreeningMetadata(selection, num_cells_total=spikes.shape[2])
+    cue = preferred_cue_from_cells(screening_metadata.preferred_cues)
     if cue is None:
         raise ValueError(f'{path.stem}: no preferred cue.')
     opposite = (int(cue) + 3) % 8 + 1

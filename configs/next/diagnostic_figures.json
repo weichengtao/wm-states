@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "targets": {
+    "sessions": "available",
+    "cells": "all",
+    "cells_by_session": {}
+  },
+  "plots": {
+    "enabled": true,
+    "max_cells_per_session": 12,
+    "size_inches": [8, 5],
+    "dpi": 150,
+    "show_not_applicable_reasons": false
+  }
+}

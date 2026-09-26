@@ -24,7 +24,7 @@ import numpy as np
 import tyro
 from scipy.stats import t
 
-from scripts.next.figure_exports import configure_figure_style, save_figure_png_only
+from scripts.next.figure_exports import configure_figure_style, save_figure
 
 configure_figure_style(matplotlib)
 
@@ -241,9 +241,10 @@ def main(config: Config):
         try:
             for output_dir in output_dirs:
                 output_path = output_dir / f'{safe_session}_confidence_scores.png'
-                save_figure_png_only(fig, output_path)
-                output_paths.append(output_path)
-                print(f'Saved {output_path}')
+                outputs = save_figure(fig, output_path)
+                output_paths.extend(outputs)
+                for path in outputs:
+                    print(f'Saved {path}')
         finally:
             plt.close(fig)
     return output_paths

@@ -17,7 +17,7 @@ class CellGroupActivityWeightsTest(unittest.TestCase):
         self.selection = {
             "cell_properties": {
                 "cell_idx": np.asarray([10, 11, 12, 13]),
-                "mean_pev_test": np.asarray([2.0, 8.0, 6.0, 4.0]),
+                "mean_selectivity_pev_pct": np.asarray([2.0, 8.0, 6.0, 4.0]),
             }
         }
         self.groups = {
@@ -39,7 +39,12 @@ class CellGroupActivityWeightsTest(unittest.TestCase):
         )
         self.assertIsNone(weights["stationary_nonselective"])
         self.assertEqual(
-            weighting_policy(True)["stationary_nonselective"], "equal"
+            weighting_policy(True),
+            {
+                "preferred": "mean_selectivity_pev_pct",
+                "selective_nonpreferred": "mean_selectivity_pev_pct",
+                "stationary_nonselective": "equal",
+            },
         )
 
     def test_equal_mode_does_not_require_pev(self):
@@ -48,7 +53,7 @@ class CellGroupActivityWeightsTest(unittest.TestCase):
         self.assertTrue(all(value is None for value in weights.values()))
 
     def test_rejects_invalid_selective_pev(self):
-        self.selection["cell_properties"]["mean_pev_test"][2] = np.nan
+        self.selection["cell_properties"]["mean_selectivity_pev_pct"][2] = np.nan
 
         with self.assertRaisesRegex(ValueError, "Non-finite"):
             cell_group_activity_weights(self.selection, self.groups, True)
