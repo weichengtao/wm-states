@@ -6,7 +6,9 @@ import {
   manifestSeed,
   nonNullValue,
   parseSettings,
+  parameterMatchesQuery,
   presetName,
+  sameFieldValue,
 } from "./configuration";
 import type { Field, Manifest, Schema } from "./types";
 
@@ -141,6 +143,45 @@ describe("configuration defaults and manual overrides", () => {
     expect(
       presetName({ decode: { grid_search_for_c: true, seed: 7 } }, schema),
     ).toBe("custom");
+  });
+
+  it("finds parameters by natural words, CLI names, and descriptions", () => {
+    const searchable: Field = {
+      name: "preserve_null_time_structure",
+      type: "boolean",
+      default: false,
+      description: "Reuse label permutations across time bins.",
+    };
+    for (const query of [
+      "null time",
+      "preserve_null",
+      " time-structure ",
+      "PERMUTATIONS bins",
+      "",
+    ]) {
+      expect(parameterMatchesQuery(searchable, query)).toBe(true);
+    }
+    expect(parameterMatchesQuery(searchable, "null accuracy")).toBe(false);
+  });
+
+  it("compares example values without mislabeling enum spelling or object key order as changes", () => {
+    const option: Field = {
+      name: "model",
+      type: "string",
+      default: "svm",
+      choices: ["svm", "logistic_regression"],
+    };
+    expect(
+      sameFieldValue(option, "LOGISTIC_REGRESSION", "logistic_regression"),
+    ).toBe(true);
+    expect(sameFieldValue(option, "svm", "logistic_regression")).toBe(false);
+    expect(sameFieldValue(option, null, "")).toBe(false);
+    expect(sameFieldValue(field, null, 0)).toBe(false);
+    expect(sameFieldValue(field, false, 0)).toBe(false);
+    expect(sameFieldValue(field, { a: 1, b: false }, { b: false, a: 1 })).toBe(
+      true,
+    );
+    expect(sameFieldValue(field, [1, 2], [2, 1])).toBe(false);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowDownToLine,
@@ -16,6 +16,7 @@ import {
   Search,
   Terminal,
   Users,
+  X,
 } from "lucide-react";
 import type {
   Run,
@@ -27,10 +28,18 @@ import type {
 import { api, errorMessage, runPath } from "@/lib/api";
 import { duration, formatDate, formatNumber, humanize } from "@/lib/utils";
 import { manifestSeed } from "@/lib/configuration";
+import { filterRuns, runStatuses, type RunSort } from "@/lib/run-library";
 import { Button } from "./ui/button";
 import { CopyButton, Empty, Loading, Notice, Stat, Status } from "./shared";
 import ConfidenceChart from "./ConfidenceChart";
 import { FigureGallery, SupportingFiles, TableBrowser } from "./Artifacts";
+
+const resultTabs = [
+  { id: "overview", label: "Overview", icon: BarChart3 },
+  { id: "figures", label: "Figures", icon: Files },
+  { id: "tables", label: "Tables", icon: Layers3 },
+  { id: "history", label: "Run history", icon: Terminal },
+];
 export function useRunDetail(id: string | null) {
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [error, setError] = useState("");
@@ -51,9 +60,18 @@ export function useRunDetail(id: string | null) {
       stopped = true;
     };
   }, [id, version]);
-  return { detail, error, reload: () => setVersion((v) => v + 1) };
+  return {
+    detail,
+    error,
+    revision: version,
+    reload: () => setVersion((v) => v + 1),
+  };
 }
-export function useSession(runId: string | null, session: string | null) {
+export function useSession(
+  runId: string | null,
+  session: string | null,
+  revision = 0,
+) {
   const [data, setData] = useState<SessionData | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -73,7 +91,7 @@ export function useSession(runId: string | null, session: string | null) {
     return () => {
       stopped = true;
     };
-  }, [runId, session]);
+  }, [runId, session, revision]);
   return { data, error };
 }
 export function SessionSelect({
@@ -94,6 +112,7 @@ export function SessionSelect({
         aria-label={label}
         className="select-control"
         value={value}
+        disabled={!sessions.length}
         onChange={(e) => onChange(e.target.value)}
       >
         {!sessions.length && <option value="">No sessions yet</option>}
@@ -160,10 +179,22 @@ export default function Results({
   onCompare: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const searchInput = useRef<HTMLInputElement>(null);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sort, setSort] = useState<RunSort>("recent");
   const [tab, setTab] = useState("overview");
   const [session, setSession] = useState("");
-  const { detail, error: detailError, reload } = useRunDetail(selectedId);
-  const { data, error: sessionError } = useSession(selectedId, session);
+  const {
+    detail,
+    error: detailError,
+    revision,
+    reload,
+  } = useRunDetail(selectedId);
+  const { data, error: sessionError } = useSession(
+    selectedId,
+    session,
+    revision,
+  );
   useEffect(() => {
     setSession("");
     setTab("overview");
@@ -176,9 +207,13 @@ export default function Results({
           : (detail.sessions[0]?.id ?? ""),
       );
   }, [detail]);
-  const filtered = runs.filter((r) =>
-    `${r.id} ${r.name}`.toLowerCase().includes(query.toLowerCase()),
-  );
+  const filtered = filterRuns(runs, query, statusFilter, sort);
+  const hasFilters = Boolean(query.trim()) || statusFilter !== "all";
+  const statuses = runStatuses(runs, statusFilter);
+  function resetFilters() {
+    setQuery("");
+    setStatusFilter("all");
+  }
   const last = detail?.manifests[0];
   function reuse() {
     if (last) onConfigure(manifestSeed(last, detail?.run.name ?? "Analysis"));
@@ -237,20 +272,37 @@ export default function Results({
             </h2>
             <p>Choose a run to explore its sessions and outputs.</p>
           </div>
-          <div className="heading-actions">
+          <div className="heading-actions library-toolbar">
             <div className="search-field">
               <Search size={15} />
               <input
+                ref={searchInput}
+                type="search"
                 aria-label="Search runs"
-                placeholder="Find a run…"
+                placeholder="Search name or cache…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
+              {query && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Clear run search"
+                  onClick={() => {
+                    setQuery("");
+                    searchInput.current?.focus();
+                  }}
+                >
+                  <X size={14} />
+                </Button>
+              )}
             </div>
             <Button
               variant="ghost"
               size="icon"
               aria-label="Refresh runs"
+              title="Refresh runs and selected results"
+              disabled={loading}
               onClick={() => {
                 onRefresh();
                 reload();
@@ -260,20 +312,68 @@ export default function Results({
             </Button>
           </div>
         </div>
+        {runs.length > 0 && (
+          <div className="library-filters">
+            <div className="library-summary" role="status" aria-live="polite">
+              {hasFilters
+                ? `${filtered.length} of ${runs.length}`
+                : runs.length}{" "}
+              {runs.length === 1 ? "run" : "runs"}
+              {selectedId && !filtered.some((run) => run.id === selectedId) && (
+                <span> · Selected run is shown below</span>
+              )}
+            </div>
+            <div className="heading-actions">
+              <select
+                className="select-control"
+                aria-label="Filter runs by latest invocation status"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+              >
+                <option value="all">All statuses</option>
+                {statuses.map((status) => (
+                  <option key={status} value={status}>
+                    {humanize(status)}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="select-control"
+                aria-label="Sort runs"
+                value={sort}
+                onChange={(e) => setSort(e.target.value as RunSort)}
+              >
+                <option value="recent">Newest first</option>
+                <option value="name">Name A–Z</option>
+              </select>
+              {hasFilters && (
+                <Button variant="ghost" size="sm" onClick={resetFilters}>
+                  Reset filters
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
         {error ? (
           <Notice>{error}</Notice>
         ) : loading && !runs.length ? (
           <Loading label="Discovering analysis runs…" />
         ) : !filtered.length ? (
           <Empty
-            title={query ? "No matching runs" : "Your first result starts here"}
+            title={
+              hasFilters ? "No matching runs" : "Your first result starts here"
+            }
           >
             <p>
-              {query
-                ? "Try another name."
+              {hasFilters
+                ? "Try a different name or status, or reset the filters to see every run."
                 : "Launch an analysis using the example configuration, or browse an existing next pipeline cache."}
             </p>
-            {!query && (
+            {hasFilters ? (
+              <Button variant="outline" onClick={resetFilters}>
+                Reset filters
+              </Button>
+            ) : (
               <Button onClick={() => onConfigure()}>
                 <Plus />
                 Set up analysis
@@ -286,6 +386,8 @@ export default function Results({
               <button
                 className={`run-row ${selectedId === run.id ? "selected" : ""}`}
                 key={run.id}
+                aria-label={`Explore ${run.name}, ${run.id}, ${run.session_count} sessions, ${humanize(run.status)}`}
+                aria-pressed={selectedId === run.id}
                 onClick={() => onSelect(run.id)}
               >
                 <span className="run-icon">
@@ -301,7 +403,15 @@ export default function Results({
                 </span>
                 <span className="run-date">{formatDate(run.updated_at)}</span>
                 <Status value={run.status} />
-                <ArrowRight size={16} className="run-arrow" />
+                {selectedId === run.id ? (
+                  <Check size={16} className="run-arrow" aria-hidden="true" />
+                ) : (
+                  <ArrowRight
+                    size={16}
+                    className="run-arrow"
+                    aria-hidden="true"
+                  />
+                )}
               </button>
             ))}
           </div>
@@ -351,18 +461,33 @@ export default function Results({
               ))}
               <div className="result-toolbar">
                 <div className="tabs" role="tablist" aria-label="Run results">
-                  {[
-                    { id: "overview", label: "Overview", icon: BarChart3 },
-                    { id: "figures", label: "Figures", icon: Files },
-                    { id: "tables", label: "Tables", icon: Layers3 },
-                    { id: "history", label: "Run history", icon: Terminal },
-                  ].map((t) => (
+                  {resultTabs.map((t, index) => (
                     <button
                       role="tab"
+                      id={`result-tab-${t.id}`}
+                      aria-controls="result-tab-panel"
                       aria-selected={tab === t.id}
+                      tabIndex={tab === t.id ? 0 : -1}
                       key={t.id}
                       className={tab === t.id ? "active" : ""}
                       onClick={() => setTab(t.id)}
+                      onKeyDown={(event) => {
+                        let next = index;
+                        if (event.key === "ArrowRight")
+                          next = (index + 1) % resultTabs.length;
+                        else if (event.key === "ArrowLeft")
+                          next =
+                            (index - 1 + resultTabs.length) % resultTabs.length;
+                        else if (event.key === "Home") next = 0;
+                        else if (event.key === "End")
+                          next = resultTabs.length - 1;
+                        else return;
+                        event.preventDefault();
+                        setTab(resultTabs[next].id);
+                        document
+                          .getElementById(`result-tab-${resultTabs[next].id}`)
+                          ?.focus();
+                      }}
                     >
                       <t.icon size={15} />
                       {t.label}
@@ -377,7 +502,7 @@ export default function Results({
                     </button>
                   ))}
                 </div>
-                {tab !== "history" && (
+                {(tab === "overview" || tab === "figures") && (
                   <SessionSelect
                     sessions={detail.sessions}
                     value={session}
@@ -385,7 +510,13 @@ export default function Results({
                   />
                 )}
               </div>
-              <div className="result-content" role="tabpanel">
+              <div
+                className="result-content"
+                role="tabpanel"
+                id="result-tab-panel"
+                aria-labelledby={`result-tab-${tab}`}
+                tabIndex={0}
+              >
                 {tab === "overview" && (
                   <>
                     {sessionError ? (

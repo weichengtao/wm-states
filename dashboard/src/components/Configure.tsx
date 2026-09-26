@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -12,6 +12,8 @@ import {
   RotateCcw,
   Search,
   SlidersHorizontal,
+  Undo2,
+  X,
 } from "lucide-react";
 import type {
   Field,
@@ -29,7 +31,9 @@ import {
   initialRun,
   nonNullValue,
   parseSettings,
+  parameterMatchesQuery,
   presetName,
+  sameFieldValue,
 } from "@/lib/configuration";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -40,31 +44,47 @@ function FieldEditor({
   stageId,
   field,
   value,
+  exampleValue,
   onChange,
 }: {
   stageId: string;
   field: Field;
   value: Json;
+  exampleValue: Json;
   onChange: (value: Json) => void;
 }) {
-  const id = `field-${field.name}`;
+  const id = `field-${stageId}-${field.name}`;
   const selectedChoice = choiceValue(field, value);
   const helpPath = fieldHelpPath(stageId, field.name);
+  const changed = !sameFieldValue(field, value, exampleValue);
   return (
-    <div className="parameter">
+    <div className={`parameter ${changed ? "parameter-changed" : ""}`}>
       <div className="parameter-label">
         <label htmlFor={id}>{humanize(field.name)}</label>
-        {field.nullable && (
-          <button
-            type="button"
-            className="text-button"
-            onClick={() =>
-              onChange(value === null ? nonNullValue(field) : null)
-            }
-          >
-            {value === null ? "Set value" : "Use none"}
-          </button>
-        )}
+        <div className="parameter-actions">
+          {changed && (
+            <button
+              type="button"
+              className="text-button parameter-reset"
+              title={`Example: ${JSON.stringify(exampleValue)}`}
+              aria-label={`Reset ${humanize(field.name)} to example value`}
+              onClick={() => onChange(structuredClone(exampleValue))}
+            >
+              <RotateCcw size={12} /> Use example
+            </button>
+          )}
+          {field.nullable && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() =>
+                onChange(value === null ? nonNullValue(field) : null)
+              }
+            >
+              {value === null ? "Set value" : "Use none"}
+            </button>
+          )}
+        </div>
       </div>
       {field.type === "boolean" ? (
         <label className="switch-row" htmlFor={id}>
@@ -72,6 +92,7 @@ function FieldEditor({
             id={id}
             type="checkbox"
             role="switch"
+            aria-describedby={`${id}-description`}
             checked={value === true}
             onChange={(e) => onChange(e.target.checked)}
           />
@@ -80,6 +101,7 @@ function FieldEditor({
       ) : field.choices?.length ? (
         <select
           id={id}
+          aria-describedby={`${id}-description`}
           className="select-control"
           value={selectedChoice}
           onChange={(e) =>
@@ -101,6 +123,7 @@ function FieldEditor({
       ) : ["integer", "number"].includes(field.type) ? (
         <Input
           id={id}
+          aria-describedby={`${id}-description`}
           type="number"
           step={field.type === "integer" ? 1 : "any"}
           value={value === null ? "" : String(value)}
@@ -118,6 +141,7 @@ function FieldEditor({
       ) : (
         <Input
           id={id}
+          aria-describedby={`${id}-description`}
           value={
             value === null
               ? ""
@@ -143,7 +167,12 @@ function FieldEditor({
           }}
         />
       )}
-      <p>{field.description || field.name.replaceAll("_", " ")}</p>
+      <p id={`${id}-description`}>
+        {field.description || field.name.replaceAll("_", " ")}
+      </p>
+      {changed && (
+        <span className="parameter-difference">Changed from example</span>
+      )}
       {helpPath && (
         <GuideLink
           path={helpPath}
@@ -171,6 +200,7 @@ export default function Configure({
   const [form, setForm] = useState(initial);
   const [active, setActive] = useState(schema.stages[0].id);
   const [query, setQuery] = useState("");
+  const [changedOnly, setChangedOnly] = useState(false);
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState(
     JSON.stringify(initial.settings, null, 2),
@@ -178,25 +208,62 @@ export default function Configure({
   const [jsonDirty, setJsonDirty] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const revision = useRef(0);
+  const [undo, setUndo] = useState<{
+    label: string;
+    form: RunRequest;
+    jsonText: string;
+    jsonDirty: boolean;
+    jsonMode: boolean;
+  } | null>(null);
   const [validation, setValidation] = useState<{
     command: string;
     resolved: Settings;
   } | null>(null);
   const update = (patch: Partial<RunRequest>) => {
+    revision.current += 1;
     setForm((v) => ({ ...v, ...patch }));
+    setUndo(null);
     setValidation(null);
     setError("");
   };
   const stage = schema.stages.find((s) => s.id === active)!;
   const preset = presetName(form.settings, schema);
-  const filtered = stage.fields.filter((f) =>
-    `${f.name} ${f.description}`.toLowerCase().includes(query.toLowerCase()),
+  const exampleForm = { ...form, settings: schema.presets.example };
+  const changedFields = (stageId: string, fields: Field[]) =>
+    fields.filter(
+      (field) =>
+        !sameFieldValue(
+          field,
+          fieldValue(form, stageId, field),
+          fieldValue(exampleForm, stageId, field),
+        ),
+    );
+  const changes = changedFields(stage.id, stage.fields);
+  const filtered = stage.fields.filter(
+    (field) =>
+      parameterMatchesQuery(field, query) &&
+      (!changedOnly || changes.includes(field)),
   );
+  const replaceDraft = (next: RunRequest, label: string) => {
+    const previous = structuredClone({
+      label,
+      form,
+      jsonText,
+      jsonDirty,
+      jsonMode,
+    });
+    update(next);
+    setJsonText(JSON.stringify(next.settings, null, 2));
+    setJsonDirty(false);
+    setUndo(previous);
+  };
   const presetChange = (value: "example" | "smoke") => {
     const settings = structuredClone(schema.presets[value]);
-    update({ settings });
-    setJsonText(JSON.stringify(settings, null, 2));
-    setJsonDirty(false);
+    replaceDraft(
+      { ...form, settings },
+      `${value === "example" ? "Example pipeline" : "Smoke test"} settings loaded. Your run details and stage selection are unchanged.`,
+    );
   };
   const applyJson = () => {
     try {
@@ -219,6 +286,7 @@ export default function Configure({
     }
   };
   async function submit(launch: boolean) {
+    const requestedRevision = revision.current;
     setBusy(launch ? "launch" : "validate");
     setError("");
     try {
@@ -234,15 +302,19 @@ export default function Configure({
             body: JSON.stringify(form),
           }),
         );
-      } else
-        setValidation(
-          await api("/validate", {
+      } else {
+        const result = await api<{ command: string; resolved: Settings }>(
+          "/validate",
+          {
             method: "POST",
             body: JSON.stringify(form),
-          }),
+          },
         );
+        if (revision.current === requestedRevision) setValidation(result);
+      }
     } catch (e) {
-      setError(errorMessage(e));
+      if (launch || revision.current === requestedRevision)
+        setError(errorMessage(e));
     } finally {
       setBusy("");
     }
@@ -255,24 +327,33 @@ export default function Configure({
             <ArrowLeft size={14} /> Run library
           </button>
           <h1>Set up your analysis</h1>
-          <p>Start with a considered preset. Make every parameter your own.</p>
+          <p>
+            Choose your data, select stages, and fine-tune the example pipeline.
+          </p>
         </div>
         <div className="heading-actions">
           <Button
             variant="outline"
-            onClick={() => {
-              setForm(structuredClone(initial));
-              setJsonText(JSON.stringify(initial.settings, null, 2));
-              setJsonDirty(false);
-              setValidation(null);
-              setError("");
-            }}
+            disabled={!!busy}
+            onClick={() =>
+              replaceDraft(
+                structuredClone(initial),
+                "Setup restored to its initial values.",
+              )
+            }
           >
             <RotateCcw />
-            Reset
+            Reset setup
           </Button>
-          <Button onClick={() => submit(true)} disabled={!!busy || jsonDirty}>
-            <Play />
+          <Button
+            onClick={() => submit(true)}
+            disabled={!!busy || jsonDirty || !form.stages.length}
+          >
+            {busy === "launch" ? (
+              <LoaderCircle className="animate-spin" />
+            ) : (
+              <Play />
+            )}
             {busy === "launch" ? "Starting…" : "Start pipeline"}
           </Button>
         </div>
@@ -295,7 +376,7 @@ export default function Configure({
           <select
             className="select-control"
             aria-label="Analysis preset"
-            disabled={jsonDirty}
+            disabled={jsonDirty || !!busy}
             value={preset}
             onChange={(e) =>
               presetChange(e.target.value as "example" | "smoke")
@@ -309,6 +390,25 @@ export default function Configure({
           </select>
         </div>
       </div>
+      {undo && (
+        <div className="configuration-feedback" role="status">
+          <span>
+            <Check size={16} /> {undo.label}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              update(undo.form);
+              setJsonText(undo.jsonText);
+              setJsonDirty(undo.jsonDirty);
+              setJsonMode(undo.jsonMode);
+            }}
+          >
+            <Undo2 /> Undo
+          </Button>
+        </div>
+      )}
       <section className="panel run-setup">
         <div className="section-heading">
           <div>
@@ -330,9 +430,13 @@ export default function Configure({
             <label htmlFor="cache-dir">Cache directory</label>
             <Input
               id="cache-dir"
+              aria-describedby="cache-dir-help"
               value={form.cache_dir}
               onChange={(e) => update({ cache_dir: e.target.value })}
             />
+            <p id="cache-dir-help" className="field-hint">
+              A unique folder keeps this run easy to compare later.
+            </p>
           </div>
           <div className="field">
             <label htmlFor="data-dir">
@@ -356,22 +460,30 @@ export default function Configure({
             </label>
             <Input
               id="session-list"
+              aria-describedby="session-list-help"
               placeholder="All available sessions"
               value={form.session_list_file ?? ""}
               onChange={(e) =>
                 update({ session_list_file: e.target.value || null })
               }
             />
+            <p id="session-list-help" className="field-hint">
+              Only listed sessions found in the recording directory are used.
+            </p>
           </div>
           <div className="field">
             <label htmlFor="workers">Parallel workers</label>
             <Input
               id="workers"
+              aria-describedby="workers-help"
               type="number"
               step={1}
               value={form.n_jobs}
               onChange={(e) => update({ n_jobs: Number(e.target.value) })}
             />
+            <p id="workers-help" className="field-hint">
+              Use 1 for a single worker or −1 for all available CPUs.
+            </p>
           </div>
           <div className="field">
             <label htmlFor="max-sessions">
@@ -441,6 +553,7 @@ export default function Configure({
           <Button
             variant="outline"
             size="sm"
+            aria-pressed={form.stages.length === schema.stages.length}
             onClick={() => update({ stages: schema.stages.map((s) => s.id) })}
           >
             Select all
@@ -448,6 +561,10 @@ export default function Configure({
           <Button
             variant="outline"
             size="sm"
+            aria-pressed={
+              form.stages.length === 5 &&
+              schema.stages.slice(0, 5).every((s) => form.stages.includes(s.id))
+            }
             onClick={() =>
               update({ stages: schema.stages.slice(0, 5).map((s) => s.id) })
             }
@@ -479,17 +596,30 @@ export default function Configure({
                   })
                 }
               />
-              <button onClick={() => setActive(item.id)}>
+              <button
+                aria-current={active === item.id ? "step" : undefined}
+                aria-controls="stage-parameters"
+                onClick={() => setActive(item.id)}
+              >
                 <span className="stage-index">
                   {String(index + 1).padStart(2, "0")}
                 </span>
                 <span>{item.label || humanize(item.id)}</span>
+                {changedFields(item.id, item.fields).length > 0 && (
+                  <span
+                    className="stage-change-count"
+                    title="Parameters changed from the example"
+                    aria-label={`${changedFields(item.id, item.fields).length} parameters changed from example`}
+                  >
+                    {changedFields(item.id, item.fields).length}
+                  </span>
+                )}
                 <ChevronRight size={14} />
               </button>
             </div>
           ))}
         </aside>
-        <section className="panel parameters-panel">
+        <section id="stage-parameters" className="panel parameters-panel">
           <div className="section-heading">
             <div>
               <h2>
@@ -502,6 +632,13 @@ export default function Configure({
                   ? "Edit stage overrides directly; unknown parameters are rejected."
                   : stage.description}
               </p>
+              {!jsonMode && (
+                <span className="stage-selection-state">
+                  {form.stages.includes(stage.id)
+                    ? "Included in this run"
+                    : "Not included · select this stage to run it"}
+                </span>
+              )}
             </div>
             <div className="parameter-heading-actions">
               <GuideLink
@@ -525,9 +662,11 @@ export default function Configure({
                 spellCheck={false}
                 value={jsonText}
                 onChange={(e) => {
+                  revision.current += 1;
                   setJsonText(e.target.value);
                   setJsonDirty(true);
                   setValidation(null);
+                  setUndo(null);
                 }}
               />
               <div className="json-actions">
@@ -544,23 +683,49 @@ export default function Configure({
             </>
           ) : (
             <>
-              <div className="search-field parameter-search">
-                <Search size={16} />
-                <input
-                  aria-label="Search parameters"
-                  placeholder="Find a parameter…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-                <span>{filtered.length} fields</span>
+              <div className="parameter-toolbar">
+                <div className="search-field parameter-search">
+                  <Search size={16} />
+                  <input
+                    aria-label="Search parameters"
+                    aria-controls="parameter-fields"
+                    placeholder="Find a parameter…"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                  {query && (
+                    <button
+                      type="button"
+                      className="search-clear"
+                      aria-label="Clear parameter search"
+                      onClick={() => setQuery("")}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <Button
+                  className="parameter-filter"
+                  variant={changedOnly ? "secondary" : "outline"}
+                  size="sm"
+                  aria-pressed={changedOnly}
+                  onClick={() => setChangedOnly((value) => !value)}
+                >
+                  <SlidersHorizontal /> Changed ({changes.length})
+                </Button>
               </div>
-              <div className="parameters-grid">
+              <p className="parameter-results-count" aria-live="polite">
+                {filtered.length} of {stage.fields.length} parameters
+                {changedOnly ? " · differences from the example" : ""}
+              </p>
+              <div id="parameter-fields" className="parameters-grid">
                 {filtered.map((field) => (
                   <FieldEditor
                     key={`${stage.id}-${field.name}`}
                     stageId={stage.id}
                     field={field}
                     value={fieldValue(form, stage.id, field)}
+                    exampleValue={fieldValue(exampleForm, stage.id, field)}
                     onChange={(value) =>
                       update({
                         settings: {
@@ -575,6 +740,31 @@ export default function Configure({
                   />
                 ))}
               </div>
+              {!filtered.length && (
+                <div className="parameter-empty">
+                  <Search size={24} />
+                  <h3>
+                    {query
+                      ? "No matching parameters"
+                      : "No changes from the example"}
+                  </h3>
+                  <p>
+                    {query
+                      ? `Try a shorter search in ${stage.label || humanize(stage.id)}${changedOnly ? ", or show all parameters" : ""}.`
+                      : "The parameters in this stage match the example pipeline."}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setQuery("");
+                      setChangedOnly(false);
+                    }}
+                  >
+                    Show all parameters
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </section>
@@ -584,14 +774,18 @@ export default function Configure({
           <div className="eyebrow">READY WHEN YOU ARE</div>
           <h2>Check the configuration, then let it run.</h2>
           <p>
-            Progress and logs stay available while you explore previous results.
+            {jsonDirty
+              ? "Apply your JSON edits to validate or start this run."
+              : !form.stages.length
+                ? "Select at least one stage to continue."
+                : `${form.stages.length} stages · ${form.figure_formats.map((format) => format.toUpperCase()).join(" + ") || "No figure format selected"} · ${form.max_sessions_to_run ? `up to ${form.max_sessions_to_run} sessions` : "all eligible sessions"}`}
           </p>
         </div>
         <div className="heading-actions">
           <Button
             variant="outline"
             onClick={() => submit(false)}
-            disabled={!!busy || jsonDirty}
+            disabled={!!busy || jsonDirty || !form.stages.length}
           >
             {busy === "validate" ? (
               <LoaderCircle className="animate-spin" />
@@ -600,9 +794,16 @@ export default function Configure({
             )}
             Validate & preview
           </Button>
-          <Button onClick={() => submit(true)} disabled={!!busy || jsonDirty}>
-            Start pipeline
-            <ArrowRight />
+          <Button
+            onClick={() => submit(true)}
+            disabled={!!busy || jsonDirty || !form.stages.length}
+          >
+            {busy === "launch" ? "Starting…" : "Start pipeline"}
+            {busy === "launch" ? (
+              <LoaderCircle className="animate-spin" />
+            ) : (
+              <ArrowRight />
+            )}
           </Button>
         </div>
       </section>

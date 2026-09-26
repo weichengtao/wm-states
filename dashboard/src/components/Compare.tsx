@@ -7,7 +7,12 @@ import {
   Plus,
 } from "lucide-react";
 import type { Artifact, Run, RunDetail, SessionData } from "@/lib/types";
-import { comparisonWarnings, settingsDifferences } from "@/lib/comparison";
+import {
+  chooseComparisonSession,
+  comparisonWarnings,
+  matchingSession,
+  settingsDifferences,
+} from "@/lib/comparison";
 import { humanize } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Empty, Loading, Notice } from "./shared";
@@ -74,6 +79,7 @@ function FigureChoice({
       <select
         id={`figure-${side}`}
         className="select-control"
+        disabled={!figures.length}
         value={selected}
         onChange={(e) => setSelected(e.target.value)}
       >
@@ -160,7 +166,7 @@ export default function Compare({
   initialRun: string | null;
   onNewRun: () => void;
 }) {
-  const [mode, setMode] = useState("sessions");
+  const [mode, setMode] = useState<"sessions" | "runs">("sessions");
   const [view, setView] = useState("split");
   const [leftRun, setLeftRun] = useState(initialRun ?? runs[0]?.id ?? "");
   const [rightRun, setRightRun] = useState(initialRun ?? runs[0]?.id ?? "");
@@ -170,6 +176,27 @@ export default function Compare({
   const right = useRunDetail(rightRun || null);
   const a = useSession(leftRun, leftSession);
   const b = useSession(rightRun, rightSession);
+  const selectedLeft = left.detail?.sessions.find(
+    (session) => session.id === leftSession,
+  );
+  const matchedRight = matchingSession(
+    selectedLeft,
+    right.detail?.sessions ?? [],
+  );
+  useEffect(() => {
+    if (!runs.length) return;
+    const primary = runs.some((run) => run.id === leftRun)
+      ? leftRun
+      : (runs.find((run) => run.id === initialRun)?.id ?? runs[0].id);
+    if (primary !== leftRun) setLeftRun(primary);
+    const secondary =
+      mode === "sessions"
+        ? primary
+        : runs.some((run) => run.id === rightRun)
+          ? rightRun
+          : (runs.find((run) => run.id !== primary)?.id ?? primary);
+    if (secondary !== rightRun) setRightRun(secondary);
+  }, [runs, initialRun, leftRun, rightRun, mode]);
   useEffect(() => {
     if (left.detail)
       setLeftSession((previous) =>
@@ -181,14 +208,16 @@ export default function Compare({
   useEffect(() => {
     if (right.detail)
       setRightSession((previous) =>
-        right.detail!.sessions.some((s) => s.id === previous)
-          ? previous
-          : (right.detail!.sessions[mode === "sessions" ? 1 : 0]?.id ??
-            right.detail!.sessions[0]?.id ??
-            ""),
+        chooseComparisonSession(
+          right.detail!.sessions,
+          previous,
+          selectedLeft ?? left.detail?.sessions[0],
+          mode,
+        ),
       );
   }, [right.detail, mode]);
-  function changeMode(value: string) {
+  function changeMode(value: "sessions" | "runs") {
+    if (value === mode) return;
     setMode(value);
     if (value === "sessions") setRightRun(leftRun);
     else
@@ -220,14 +249,18 @@ export default function Compare({
             the result.
           </p>
         </div>
-        <div className="segmented">
+        <div className="segmented" role="group" aria-label="Comparison mode">
           <button
+            type="button"
+            aria-pressed={mode === "sessions"}
             onClick={() => changeMode("sessions")}
             className={mode === "sessions" ? "active" : ""}
           >
             Across sessions
           </button>
           <button
+            type="button"
+            aria-pressed={mode === "runs"}
             onClick={() => changeMode("runs")}
             className={mode === "runs" ? "active" : ""}
           >
@@ -248,6 +281,41 @@ export default function Compare({
         </Empty>
       ) : (
         <>
+          <div className="comparison-context">
+            <div>
+              <strong>
+                {mode === "sessions"
+                  ? "Two sessions, one analysis run"
+                  : "Compare results across analysis runs"}
+              </strong>
+              <p>
+                {mode === "sessions"
+                  ? "Choose a run and two sessions below. Both sides use the same run."
+                  : "Choose a run for each side. Match the session to compare the same recording, or choose sessions independently."}
+              </p>
+            </div>
+            {mode === "runs" && left.detail && right.detail && (
+              <div className="comparison-match">
+                {matchedRight && matchedRight.id === rightSession ? (
+                  <span className="chart-tag">
+                    Same session · {matchedRight.session}
+                  </span>
+                ) : matchedRight ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setRightSession(matchedRight.id)}
+                  >
+                    <GitCompareArrows /> Match session A
+                  </Button>
+                ) : (
+                  <span className="muted">
+                    Session A is not available in run B
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
           <section className="panel comparison-controls">
             <div className="comparison-picker">
               <span className="comparison-letter">A</span>
@@ -265,6 +333,7 @@ export default function Compare({
                   {runs.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
+                      {r.name !== r.id ? ` · ${r.id}` : ""}
                     </option>
                   ))}
                 </select>
@@ -281,13 +350,17 @@ export default function Compare({
               variant="outline"
               onClick={swap}
               aria-label="Swap comparison sides"
+              title="Swap comparison sides"
+              disabled={!leftSession || !rightSession}
             >
               <ArrowLeftRight />
             </Button>
             <div className="comparison-picker pane-b">
               <span className="comparison-letter">B</span>
               <label className="field">
-                <span>Analysis run</span>
+                <span>
+                  {mode === "sessions" ? "Same analysis run" : "Analysis run"}
+                </span>
                 <select
                   className="select-control"
                   aria-label="Run B"
@@ -298,6 +371,7 @@ export default function Compare({
                   {runs.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
+                      {r.name !== r.id ? ` · ${r.id}` : ""}
                     </option>
                   ))}
                 </select>
@@ -315,8 +389,14 @@ export default function Compare({
               <span className="tiny-dot" />
               Shared confidence scale · independent figure viewers
             </p>
-            <div className="segmented">
+            <div
+              className="segmented"
+              role="group"
+              aria-label="Comparison layout"
+            >
               <button
+                type="button"
+                aria-pressed={view === "split"}
                 onClick={() => setView("split")}
                 className={view === "split" ? "active" : ""}
               >
@@ -324,6 +404,8 @@ export default function Compare({
                 Split screen
               </button>
               <button
+                type="button"
+                aria-pressed={view === "overlay"}
                 onClick={() => setView("overlay")}
                 className={view === "overlay" ? "active" : ""}
               >

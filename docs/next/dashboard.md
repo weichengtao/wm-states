@@ -165,6 +165,14 @@ preset's scientific choices and [Pipeline stages](pipeline.md) for dependencies.
    to the form applies valid JSON and keeps invalid drafts available to correct.
 4. Validate the configuration, review the generated command, and start the run.
 
+Search within a stage by parameter name or description; spaces and underscores
+both work. **Changed** shows only parameters that differ from the example
+pipeline. The badges and stage counts compare effective values: the example
+JSON plus Python defaults for omitted fields. They always use this reference,
+including when you start from the smoke preset or copied settings. **Use example**
+restores one parameter without resetting the rest of your setup. Changing which
+stage you are viewing does not change whether that stage is included in the run.
+
 Validation catches unknown settings, incorrect types, and configuration errors
 that can be checked before execution. Loading session data, checking cache
 provenance, and fitting models still happen in the pipeline; a valid form does
@@ -182,16 +190,19 @@ for the schema, template, and full-session trace behavior.
 Use the smoke preset for an integration check, with the four sessions prepared
 in [Getting started](getting-started.md). It reduces decoding and model work;
 it is not a substitute for the example preset's analysis settings. Selecting a
-preset changes the stage settings, so review shared paths and worker counts as
-well.
+preset replaces the stage settings while keeping your run details and stage
+selection. Review the shared paths and worker counts before starting.
 
 To start from a previous invocation, choose **Reuse settings** in the run
 library. This copies its resolved analysis settings and shared run arguments
 into a new form with a fresh output directory. It does not copy existing output
 files. A copied partial invocation still requires upstream results: choose the
 required stages for a new run, or deliberately reuse the existing directory.
-**Reset** restores the form's initial preset or copied settings. Edited settings
-are labeled **Custom settings**.
+**Reset setup** restores the form's initial values, including its run details
+and initial preset or copied settings. After switching a preset or resetting,
+**Undo** restores the previous draft, including any unapplied JSON text. Undo is
+available until the next configuration edit or replacement; it is not a full
+edit history. Edited stage settings are labeled **Custom settings**.
 
 Paths entered in the form are resolved from the repository root. Data and
 session-list files can be outside the repository. Dashboard run outputs belong
@@ -222,9 +233,10 @@ stages, not an estimate of total runtime: decoding and mixed-effects fits can
 take much longer than other stages. The dashboard does not invent a percentage
 for an unfinished stage.
 
-One dashboard job runs at a time. You can cancel a job from the interface; the
-server interrupts its process group, including pipeline workers. Existing
-completed outputs and decoding checkpoints remain on disk. Review the log and
+One dashboard job runs at a time. Click **Stop run** to open its confirmation,
+then **Yes, stop run** to interrupt its process group, including pipeline workers.
+Choose **Keep running**, or press Escape while in the confirmation, to dismiss
+it. Completed outputs and decoding checkpoints remain on disk. Review the log and
 follow [resume guidance](configuration.md#resume-and-rerun) before reusing them.
 
 Live updates use WebSocket messages. The visible log is bounded to its latest
@@ -234,6 +246,15 @@ exact stage settings submitted for each job are retained in
 `configs/next/.dashboard/<job-id>.json`, and the pipeline manifest records the
 Python command, working directory, and resolved settings. These generated
 files are ignored by Git.
+
+Use **Filter log lines** to find messages, **Wrap lines** to read long entries,
+and **Copy log** or **Save log** to export the currently displayed buffered
+lines. With a filter active, those exports contain only matching lines; they do
+not retrieve the complete log file. **Follow output** keeps the latest output
+visible. Scrolling upward pauses following so you can read earlier messages;
+scroll to the bottom or enable it again to resume. Filtering temporarily pauses
+following. If the live connection is interrupted, the view checks the API every
+five seconds while reconnecting.
 
 After a service restart, previous job records remain available. An unfinished
 job is marked failed with an explanation; restarting the dashboard does not
@@ -270,7 +291,11 @@ folder names.
 
 Open the run library or click its **Refresh runs** icon after adding a run or
 finishing a command-line analysis. The library also loads when the dashboard
-first opens. Select a run to inspect sessions, invocation history, and artifacts.
+first opens. Refresh also reloads the selected run and session results. Search
+by run name or cache path, filter by latest invocation status, and sort by
+**Newest first** or **Name A–Z**. **Reset filters** shows all runs again. Filtering
+the library keeps an already selected run open below it. Select a run to inspect
+sessions, invocation history, and artifacts.
 
 ## Inspect and compare results
 
@@ -287,13 +312,25 @@ shuffle-specific trial means. This descriptive band is **not** the corrected
 state-detection threshold or a confidence interval for the observed curve. See
 [decoding methods](methods.md#decode) and [state methods](methods.md#states).
 
+Switch between **Overview**, **Figures**, **Tables**, and **Run history** to
+explore a selected run. When a tab has keyboard focus, use the arrow keys to
+move between tabs, or Home and End to jump to the first or last tab. Session
+selectors apply to Overview and Figures. Tables and Run history browse outputs
+and invocation records for the whole run.
+
 Use the comparison workspace to place two session/run selections side by side:
 
-- Compare sessions within one run to inspect differences in cue populations,
-  confidence, performance, and state durations.
-- Select the same session from two run directories to compare analysis choices.
+- Choose **Across sessions** within one run to inspect differences in cue
+  populations, confidence, performance, and state durations.
+- Choose **Across runs** and use **Match session A** to select the same recording
+  on the right when it is available. Matching prefers the same cue; if only a
+  different cue is available, the comparison warns about that difference. You
+  can still select both sessions independently.
 - Compare saved figures through their stage and session filters, and inspect
   CSV results in the table viewer or download the original artifact.
+
+Use **Split screen** for separate session views or **Overlay curves** to compare their
+confidence curves on one chart. The swap button exchanges the two sides.
 
 Comparison warnings identify different preferred cues, different trial sets for
 the same session, and different time grids. Trials are compared by their saved

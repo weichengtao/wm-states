@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowUpRight,
   BookOpen,
   Code2,
   ChevronRight,
-  Command,
   FlaskConical,
   GitCompareArrows,
   Layers3,
@@ -43,8 +42,53 @@ export default function App() {
   const [error, setError] = useState("");
   const [schemaError, setSchemaError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [online, setOnline] = useState(false);
+  const [online, setOnline] = useState<boolean | null>(null);
   const [menu, setMenu] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const menuRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const sidebar = sidebarRef.current;
+    const focusable = () =>
+      Array.from(
+        sidebar?.querySelectorAll<HTMLElement>(
+          "a[href], button:not(:disabled)",
+        ) ?? [],
+      ).filter((element) => element.getClientRects().length > 0);
+    focusable()[0]?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMenu(false);
+      }
+      if (event.key === "Tab") {
+        const elements = focusable();
+        const first = elements[0],
+          last = elements.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    const breakpoint = window.matchMedia("(min-width: 761px)");
+    const onResize = () => {
+      if (breakpoint.matches) setMenu(false);
+    };
+    document.addEventListener("keydown", onKey);
+    breakpoint.addEventListener("change", onResize);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKey);
+      breakpoint.removeEventListener("change", onResize);
+      menuRef.current?.focus();
+    };
+  }, [menu]);
   const refreshRuns = useCallback(() => {
     setLoading(true);
     api<{ runs: Run[] }>("/runs")
@@ -117,12 +161,30 @@ export default function App() {
   }
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#workspace-content">
+        Skip to workspace
+      </a>
       <button
         className={`mobile-shade ${menu ? "visible" : ""}`}
         aria-label="Close navigation"
+        tabIndex={-1}
         onClick={() => setMenu(false)}
       />
-      <aside className={`sidebar ${menu ? "open" : ""}`}>
+      <aside
+        ref={sidebarRef}
+        id="workspace-navigation"
+        aria-label="Workspace navigation"
+        className={`sidebar ${menu ? "open" : ""}`}
+      >
+        <Button
+          className="mobile-nav-close"
+          variant="ghost"
+          size="icon"
+          aria-label="Close navigation"
+          onClick={() => setMenu(false)}
+        >
+          <X />
+        </Button>
         <a
           href="#"
           className="brand"
@@ -154,6 +216,7 @@ export default function App() {
             <button
               key={item.id}
               className={page === item.id ? "active" : ""}
+              aria-current={page === item.id ? "page" : undefined}
               onClick={() => navigate(item.id)}
             >
               <item.icon size={18} />
@@ -169,10 +232,11 @@ export default function App() {
             <span className="icon-tile small">
               <Layers3 size={17} />
             </span>
-            <strong>Built for your workflow</strong>
+            <strong>From recording to result</strong>
             <p>
-              One observed estimate.
-              <br />A distribution of possibilities.
+              Configure, inspect, compare.
+              <br />
+              All in one local workspace.
             </p>
           </div>
           <GuideLink className="help-link guide-sidebar-link">
@@ -190,23 +254,29 @@ export default function App() {
             <ArrowUpRight size={14} />
             <span className="sr-only"> (opens in a new tab)</span>
           </a>
-          <div className="connection-status">
+          <div className="connection-status" role="status">
             <span className={`connection-dot ${online ? "online" : ""}`} />
             <div>
-              {online ? "Backend connected" : "Backend unavailable"}
+              {online === null
+                ? "Connecting to backend…"
+                : online
+                  ? "Backend connected"
+                  : "Backend unavailable"}
               <small>Local Python engine</small>
             </div>
-            <Command size={15} />
           </div>
         </div>
       </aside>
-      <main className="main-shell">
+      <main className="main-shell" inert={menu}>
         <header className="topbar">
           <Button
             className="mobile-menu"
             variant="ghost"
             size="icon"
             aria-label="Toggle navigation"
+            ref={menuRef}
+            aria-expanded={menu}
+            aria-controls="workspace-navigation"
             onClick={() => setMenu(!menu)}
           >
             {menu ? <X /> : <Menu />}
@@ -237,7 +307,7 @@ export default function App() {
             <span className="avatar">WS</span>
           </div>
         </header>
-        <div className="main-content">
+        <div className="main-content" id="workspace-content" tabIndex={-1}>
           {page === "results" && (
             <Results
               runs={runs}

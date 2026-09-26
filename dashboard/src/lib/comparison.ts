@@ -1,4 +1,37 @@
-import type { SessionData } from "./types";
+import type { Session, SessionData } from "./types";
+
+/** Preserve the recording identity across runs, preferring an identical cue. */
+export function matchingSession(
+  source: Session | undefined,
+  sessions: Session[],
+) {
+  if (!source) return undefined;
+  return (
+    sessions.find(
+      (candidate) =>
+        candidate.session === source.session && candidate.cue === source.cue,
+    ) ?? sessions.find((candidate) => candidate.session === source.session)
+  );
+}
+
+export function chooseComparisonSession(
+  sessions: Session[],
+  previous: string,
+  source: Session | undefined,
+  mode: "sessions" | "runs",
+) {
+  if (sessions.some((session) => session.id === previous)) return previous;
+  // In one-run mode both requests return the same session list. Its first
+  // session is also A's default even if B's response arrives first.
+  const preferred =
+    mode === "sessions"
+      ? sessions.find(
+          (session) => session.id !== (source?.id ?? sessions[0]?.id),
+        )
+      : matchingSession(source, sessions);
+  return preferred?.id ?? sessions[0]?.id ?? "";
+}
+
 export function comparisonWarnings(a: SessionData, b: SessionData): string[] {
   const warnings: string[] = [];
   if (a.cue !== b.cue)

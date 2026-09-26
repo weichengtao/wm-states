@@ -89,7 +89,7 @@ export function Empty({
 }
 export function Loading({ label = "Loading results…" }: { label?: string }) {
   return (
-    <div className="loading-state">
+    <div className="loading-state" role="status" aria-live="polite">
       <LoaderCircle className="animate-spin" size={22} />
       {label}
     </div>
@@ -98,9 +98,11 @@ export function Loading({ label = "Loading results…" }: { label?: string }) {
 export function CopyButton({
   text,
   label = "Copy",
+  disabled = false,
 }: {
   text: string;
   label?: string;
+  disabled?: boolean;
 }) {
   const [state, setState] = useState("");
   useEffect(() => {
@@ -112,6 +114,8 @@ export function CopyButton({
     <Button
       size="sm"
       variant="outline"
+      disabled={disabled}
+      aria-live="polite"
       onClick={() =>
         navigator.clipboard
           .writeText(text)

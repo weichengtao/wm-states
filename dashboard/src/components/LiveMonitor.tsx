@@ -1,15 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ArrowRight,
   Check,
   Circle,
   Clock3,
+  Download,
   LoaderCircle,
   Plus,
   Radio,
+  Search,
   Square,
   Terminal,
   WifiOff,
+  X,
+  XCircle,
 } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
 import type { Job } from "@/lib/types";
@@ -44,14 +49,22 @@ export default function LiveMonitor({
     "connecting" | "live" | "polling" | "finished"
   >("connecting");
   const [cancelling, setCancelling] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const [followLog, setFollowLog] = useState(true);
+  const [logQuery, setLogQuery] = useState("");
+  const [wrapLog, setWrapLog] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
+  const stopButtonRef = useRef<HTMLButtonElement>(null);
+  const keepRunningRef = useRef<HTMLButtonElement>(null);
   const jobsChangedRef = useRef(onJobsChanged);
   jobsChangedRef.current = onJobsChanged;
 
   useEffect(() => {
     if (selectedId) setActiveId(selectedId);
   }, [selectedId]);
+  useEffect(() => {
+    if (confirmCancel && !cancelling) keepRunningRef.current?.focus();
+  }, [confirmCancel, cancelling]);
   useEffect(() => {
     if (!activeId && jobs.length) setActiveId(jobs[0].id);
   }, [activeId, jobs]);
@@ -65,6 +78,9 @@ export default function LiveMonitor({
     let previousStatus = "";
     setSnapshot(null);
     setError("");
+    setConfirmCancel(false);
+    setLogQuery("");
+    setFollowLog(true);
     setConnection("connecting");
     const accept = (job: Job) => {
       if (disposed) return;
@@ -91,7 +107,7 @@ export default function LiveMonitor({
         `${protocol}//${window.location.host}/api/jobs/${encodeURIComponent(activeId)}/events`,
       );
       socket.onopen = () => {
-        if (!disposed) {
+        if (!disposed && !done) {
           retryDelay = 1500;
           setConnection("live");
         }
@@ -135,12 +151,12 @@ export default function LiveMonitor({
       ? snapshot
       : jobs.find((item) => item.id === activeId);
   useEffect(() => {
-    if (followLog && logRef.current)
+    if (followLog && !logQuery.trim() && logRef.current)
       logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [job?.logs, followLog]);
+  }, [job?.logs, followLog, logQuery, wrapLog]);
 
   const cancel = async () => {
-    if (!job) return;
+    if (!job || terminal(job.status) || job.status === "cancelling") return;
     setCancelling(true);
     setError("");
     try {
@@ -149,12 +165,17 @@ export default function LiveMonitor({
           method: "POST",
         }),
       );
+      setConfirmCancel(false);
       jobsChangedRef.current();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
       setCancelling(false);
     }
+  };
+  const dismissCancel = () => {
+    setConfirmCancel(false);
+    stopButtonRef.current?.focus();
   };
 
   if (!activeId)
@@ -181,13 +202,36 @@ export default function LiveMonitor({
   const count = job?.requested_stages.length ?? 0;
   const activeStage = job?.stages.find((stage) => stage.status === "running");
   const cancelPending = cancelling || job?.status === "cancelling";
+  const connectionStatus =
+    job && terminal(job.status) ? "finished" : connection;
+  const query = logQuery.trim().toLocaleLowerCase();
+  const visibleLogs =
+    job?.logs.filter(
+      (line) => !query || line.toLocaleLowerCase().includes(query),
+    ) ?? [];
+  const logText = visibleLogs.join("\n");
+  const downloadLog = () => {
+    if (!job || !visibleLogs.length) return;
+    const url = URL.createObjectURL(
+      new Blob([`${logText}\n`], { type: "text/plain;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${job.name.replace(/[^a-zA-Z0-9_-]+/g, "-") || "pipeline"}-${job.id}${query ? "-filtered" : ""}-log.txt`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   return (
     <div className="monitor-layout">
       <div className="section-heading">
         <div>
           <p className="eyebrow">PROCESSING</p>
-          <h2>Watch the work unfold</h2>
-          <p>Live stage status and the full story in the log.</p>
+          <h2>Follow your analysis</h2>
+          <p>
+            Track each stage and inspect the processing log as results arrive.
+          </p>
         </div>
         <div className="heading-actions">
           <label className="sr-only" htmlFor="monitor-job">
@@ -201,7 +245,8 @@ export default function LiveMonitor({
           >
             {jobs.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.name} · {formatDate(item.created_at)}
+                {item.name} · {humanize(item.status)} ·{" "}
+                {formatDate(item.created_at)}
               </option>
             ))}
             {!jobs.some((item) => item.id === activeId) && (
@@ -231,16 +276,19 @@ export default function LiveMonitor({
               <div className="heading-actions">
                 {!terminal(job.status) && (
                   <Button
+                    ref={stopButtonRef}
                     variant="outline"
                     disabled={cancelPending}
-                    onClick={() => void cancel()}
+                    aria-expanded={confirmCancel}
+                    aria-controls="cancel-run-confirmation"
+                    onClick={() => setConfirmCancel((value) => !value)}
                   >
                     {cancelPending ? (
                       <LoaderCircle className="animate-spin" />
                     ) : (
                       <Square />
                     )}
-                    {cancelPending ? "Stopping workers…" : "Cancel run"}
+                    {cancelPending ? "Stopping workers…" : "Stop run"}
                   </Button>
                 )}
                 <Button onClick={() => onViewRun(job.cache_dir)}>
@@ -249,16 +297,60 @@ export default function LiveMonitor({
                 </Button>
               </div>
             </div>
+            {confirmCancel && !terminal(job.status) && !cancelPending && (
+              <div
+                id="cancel-run-confirmation"
+                className="monitor-cancel-confirmation"
+                role="region"
+                aria-label="Confirm stopping this run"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") dismissCancel();
+                }}
+              >
+                <AlertTriangle size={19} aria-hidden="true" />
+                <div>
+                  <strong>Stop this run?</strong>
+                  <p>
+                    Running workers will stop. Files already saved remain in the
+                    run folder.
+                  </p>
+                </div>
+                <div className="monitor-cancel-actions">
+                  <Button
+                    ref={keepRunningRef}
+                    variant="outline"
+                    size="sm"
+                    onClick={dismissCancel}
+                  >
+                    Keep running
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => void cancel()}
+                  >
+                    <Square />
+                    Yes, stop run
+                  </Button>
+                </div>
+              </div>
+            )}
             <div className="monitor-progress-caption">
               <span>
                 <strong>{complete}</strong> / {count} stages complete
               </span>
-              <span>
-                {activeStage
-                  ? humanize(activeStage.stage)
-                  : terminal(job.status)
-                    ? "Processing finished"
-                    : "Waiting for the first stage"}
+              <span className="monitor-progress-detail">
+                {cancelPending
+                  ? "Waiting for workers to stop"
+                  : job.status === "complete"
+                    ? "All requested stages finished"
+                    : job.status === "failed"
+                      ? "Run stopped with an error"
+                      : job.status === "cancelled"
+                        ? "Run stopped by request"
+                        : activeStage
+                          ? `Now: ${humanize(activeStage.stage)}`
+                          : "Waiting for the first stage"}
               </span>
             </div>
             <div
@@ -268,6 +360,7 @@ export default function LiveMonitor({
               aria-valuenow={complete}
               aria-valuemin={0}
               aria-valuemax={count || 1}
+              aria-valuetext={`${complete} of ${count} stages complete${activeStage ? `, ${humanize(activeStage.stage)} running` : ""}`}
             >
               <span
                 style={{ width: `${count ? (complete / count) * 100 : 0}%` }}
@@ -276,7 +369,9 @@ export default function LiveMonitor({
             <div className="monitor-metadata">
               <span>
                 <Clock3 size={13} />
-                Started {formatDate(job.started_at)}
+                {job.started_at
+                  ? `Started ${formatDate(job.started_at)}`
+                  : `Queued ${formatDate(job.created_at)}`}
               </span>
               <span>
                 Stages have different runtimes; this is not a time estimate.
@@ -298,6 +393,9 @@ export default function LiveMonitor({
                 {job.stages.map((stage, index) => (
                   <li
                     key={stage.stage}
+                    aria-current={
+                      stage.status === "running" ? "step" : undefined
+                    }
                     className={cn(
                       "monitor-stage",
                       `monitor-stage-${stage.status}`,
@@ -308,6 +406,8 @@ export default function LiveMonitor({
                         <Check size={15} />
                       ) : stage.status === "running" ? (
                         <LoaderCircle className="animate-spin" size={15} />
+                      ) : ["failed", "cancelled"].includes(stage.status) ? (
+                        <XCircle size={15} />
                       ) : (
                         <Circle size={13} />
                       )}
@@ -318,7 +418,7 @@ export default function LiveMonitor({
                         {humanize(stage.stage)}
                       </span>
                       <span className="monitor-stage-state">
-                        {stage.status}
+                        {humanize(stage.status)}
                         {stage.error ? ` · ${stage.error}` : ""}
                       </span>
                     </div>
@@ -336,48 +436,125 @@ export default function LiveMonitor({
                   Processing log
                 </h3>
                 <span
+                  role="status"
                   className={cn(
                     "monitor-connection",
-                    connection === "live" && "monitor-connection-live",
+                    connectionStatus === "live" && "monitor-connection-live",
                   )}
                 >
-                  {connection === "live" ? (
+                  {connectionStatus === "live" ? (
                     <Radio size={13} />
-                  ) : connection === "polling" ? (
+                  ) : connectionStatus === "polling" ? (
                     <WifiOff size={13} />
                   ) : (
                     <Circle size={10} />
                   )}
-                  {connection === "live"
+                  {connectionStatus === "live"
                     ? "Live"
-                    : connection === "polling"
+                    : connectionStatus === "polling"
                       ? "Reconnecting · API updates"
-                      : connection === "finished"
+                      : connectionStatus === "finished"
                         ? "Saved log"
                         : "Connecting"}
                 </span>
+              </div>
+              {connectionStatus === "polling" && (
+                <p className="monitor-connection-note">
+                  Live connection interrupted. Checking every 5 seconds while
+                  reconnecting; your analysis can continue.
+                </p>
+              )}
+              <div className="monitor-log-toolbar">
+                <div className="monitor-log-search">
+                  <Search size={15} aria-hidden="true" />
+                  <input
+                    type="search"
+                    aria-label="Filter log lines"
+                    placeholder="Filter log lines…"
+                    value={logQuery}
+                    onChange={(event) => setLogQuery(event.target.value)}
+                  />
+                  {logQuery && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Clear log filter"
+                      onClick={() => setLogQuery("")}
+                    >
+                      <X />
+                    </Button>
+                  )}
+                </div>
+                <div className="monitor-log-actions">
+                  <CopyButton
+                    text={logText}
+                    label="Copy log"
+                    disabled={!visibleLogs.length}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!visibleLogs.length}
+                    onClick={downloadLog}
+                    title="Download the lines currently shown"
+                  >
+                    <Download />
+                    Save log
+                  </Button>
+                </div>
               </div>
               <pre
                 ref={logRef}
                 className="monitor-log"
                 aria-label="Processing log"
                 tabIndex={0}
+                style={
+                  wrapLog
+                    ? { whiteSpace: "pre-wrap", overflowWrap: "anywhere" }
+                    : undefined
+                }
+                onScroll={(event) => {
+                  if (query) return;
+                  const element = event.currentTarget;
+                  setFollowLog(
+                    element.scrollHeight -
+                      element.scrollTop -
+                      element.clientHeight <
+                      36,
+                  );
+                }}
               >
                 {job.logs.length
-                  ? job.logs.join("\n")
-                  : "Waiting for pipeline output…"}
+                  ? logText || "No log lines match this filter."
+                  : terminal(job.status)
+                    ? "No processing output was recorded."
+                    : "Waiting for pipeline output…"}
               </pre>
               <div className="monitor-log-footer">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={followLog}
-                    onChange={(event) => setFollowLog(event.target.checked)}
-                  />
-                  Follow latest output
-                </label>
-                <span>
-                  Latest {job.logs.length} lines · full log saved locally
+                <div className="monitor-log-options">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={followLog && !query}
+                      disabled={Boolean(query)}
+                      onChange={(event) => setFollowLog(event.target.checked)}
+                    />
+                    Follow output
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={wrapLog}
+                      onChange={(event) => setWrapLog(event.target.checked)}
+                    />
+                    Wrap lines
+                  </label>
+                </div>
+                <span className="monitor-log-count">
+                  {query
+                    ? `${visibleLogs.length} of ${job.logs.length} lines`
+                    : `Latest ${job.logs.length} lines`}{" "}
+                  · full log saved locally
                 </span>
               </div>
             </section>

@@ -1,5 +1,44 @@
 # Next pipeline validation
 
+## Dashboard visual and workflow refinement — 2026-09-26
+
+The dashboard passed **40 frontend tests**, TypeScript checking, the production
+Vite build, and Prettier verification. The guide passed a strict MkDocs build.
+The changes are confined to the frontend and documentation: analysis settings,
+Python code, cache formats, and dependency versions are unchanged. No scientific
+integration rerun was needed for this change.
+
+```bash
+npm --prefix dashboard test
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
+Browser review used existing local results at **1440 × 960** and **390 × 844**:
+
+- Reviewed the new button, input, navigation, card, comparison, and help styling.
+  The mobile library, configuration, comparison, and help views had no horizontal
+  page overflow. Mobile navigation locks background scrolling, keeps keyboard
+  focus inside the menu, closes with Escape, and restores focus to its opener.
+- Changed a screening threshold, filtered to changed parameters, restored its
+  example value, switched presets and undid the switch. Parameter search accepts
+  underscores. A draft run name survived navigation to another workspace.
+- Checked run search, status filtering, reset, and keyboard navigation between
+  result tabs. Refresh now reloads selected session metrics as well as run details.
+- Compared recordings across runs and verified **Match session A**. Regression
+  tests cover comparison defaults when requests resolve in either order and a
+  selected status whose last matching run disappears after refresh.
+- Inspected a saved job log and verified an empty search disables copy/download
+  and pauses following. Tests cover terminal-state controls, stage progress,
+  and empty-log exports. No analysis jobs were started or stopped for UI review.
+- No browser console warnings or errors appeared during the checked workflows.
+
+The production assets were rebuilt for the existing local dashboard server.
+The guide documents change indicators, reset/undo, run filters, comparisons,
+buffered-log exports, and the stop-run confirmation.
+
 ## Methods references and cross-surface alignment — 2026-09-26
 
 The documentation/help refinement passed **409 Python tests** in **11.022

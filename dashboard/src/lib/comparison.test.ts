@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { comparisonWarnings } from "./comparison";
+import {
+  chooseComparisonSession,
+  comparisonWarnings,
+  matchingSession,
+} from "./comparison";
 import type { SessionData } from "./types";
 
 function session(overrides: Partial<SessionData> = {}): SessionData {
@@ -27,6 +31,40 @@ function session(overrides: Partial<SessionData> = {}): SessionData {
     ...overrides,
   };
 }
+
+it("matches recording identity across runs and prefers the same cue when available", () => {
+  const differentCue = session({ id: "other-cue", cue: 7 });
+  const sameCue = session({ id: "same-cue" });
+  const otherRecording = session({ id: "other", session: "211015" });
+  expect(
+    matchingSession(session(), [differentCue, sameCue, otherRecording]),
+  ).toBe(sameCue);
+  expect(matchingSession(session(), [differentCue, otherRecording])).toBe(
+    differentCue,
+  );
+  expect(matchingSession(session(), [otherRecording])).toBeUndefined();
+  expect(matchingSession(undefined, [sameCue])).toBeUndefined();
+});
+
+it("initializes distinct same-run sessions regardless of which details response arrives first", () => {
+  const first = session();
+  const second = session({ id: "211015", session: "211015" });
+  const sessions = [first, second];
+  expect(chooseComparisonSession(sessions, "", undefined, "sessions")).toBe(
+    second.id,
+  );
+  expect(chooseComparisonSession(sessions, "", first, "sessions")).toBe(
+    second.id,
+  );
+  // Keep a user's explicit selection, including an intentional same-session comparison.
+  expect(chooseComparisonSession(sessions, first.id, first, "sessions")).toBe(
+    first.id,
+  );
+  expect(chooseComparisonSession([first], "", undefined, "sessions")).toBe(
+    first.id,
+  );
+  expect(chooseComparisonSession([], "", undefined, "sessions")).toBe("");
+});
 
 describe("comparisonWarnings", () => {
   it("allows directly comparable results and trial reordering without modifying inputs", () => {

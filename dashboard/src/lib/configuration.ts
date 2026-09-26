@@ -68,6 +68,22 @@ export function choiceValue(field: Field, value: Json): string {
   );
 }
 
+export function sameFieldValue(field: Field, left: Json, right: Json): boolean {
+  if (left === null || right === null) return left === right;
+  if (field.choices?.length)
+    return choiceValue(field, left) === choiceValue(field, right);
+  return canonical(left) === canonical(right);
+}
+
+export function parameterMatchesQuery(field: Field, query: string): boolean {
+  const normalize = (text: string) =>
+    text.toLowerCase().replaceAll(/[_-]/g, " ").trim();
+  const text = normalize(`${field.name} ${field.description ?? ""}`);
+  return normalize(query)
+    .split(/\s+/)
+    .every((word) => text.includes(word));
+}
+
 export function nonNullValue(field: Field): Json {
   if (field.default !== null) return field.default;
   if (field.choices?.length) return field.choices[0];
