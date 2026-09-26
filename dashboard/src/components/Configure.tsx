@@ -37,6 +37,7 @@ import {
 } from "@/lib/configuration";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Select } from "./ui/select";
 import { CopyButton, Notice } from "./shared";
 import GuideLink from "./GuideLink";
 import { fieldHelpPath, stageMethodsPath } from "@/lib/help";
@@ -99,27 +100,25 @@ function FieldEditor({
           <span>{value ? "Enabled" : "Disabled"}</span>
         </label>
       ) : field.choices?.length ? (
-        <select
+        <Select
           id={id}
           aria-describedby={`${id}-description`}
           className="select-control"
           value={selectedChoice}
-          onChange={(e) =>
-            onChange(
-              e.target.value === "" && field.nullable ? null : e.target.value,
-            )
+          onValueChange={(selected) =>
+            onChange(selected === "" && field.nullable ? null : selected)
           }
-        >
-          {field.nullable && <option value="">None</option>}
-          {selectedChoice && !field.choices.includes(selectedChoice) && (
-            <option value={selectedChoice}>Invalid: {selectedChoice}</option>
-          )}
-          {field.choices.map((v) => (
-            <option value={v} key={v}>
-              {v}
-            </option>
-          ))}
-        </select>
+          options={[
+            ...(field.nullable ? [{ value: "", label: "None" }] : []),
+            ...(selectedChoice && !field.choices.includes(selectedChoice)
+              ? [{ value: selectedChoice, label: `Invalid: ${selectedChoice}` }]
+              : []),
+            ...field.choices.map((choice) => ({
+              value: choice,
+              label: choice,
+            })),
+          ]}
+        />
       ) : ["integer", "number"].includes(field.type) ? (
         <Input
           id={id}
@@ -373,21 +372,28 @@ export default function Configure({
                   : "Custom settings · review your stage arguments"}
             </p>
           </div>
-          <select
+          <Select
             className="select-control"
             aria-label="Analysis preset"
             disabled={jsonDirty || !!busy}
             value={preset}
-            onChange={(e) =>
-              presetChange(e.target.value as "example" | "smoke")
-            }
-          >
-            <option value="custom" disabled>
-              Custom settings
-            </option>
-            <option value="example">Example pipeline</option>
-            <option value="smoke">Smoke test</option>
-          </select>
+            onValueChange={(value) => {
+              if (value === "example" || value === "smoke") presetChange(value);
+            }}
+            options={[
+              { value: "custom", label: "Custom settings", disabled: true },
+              {
+                value: "example",
+                label: "Example pipeline",
+                description: "Full example analysis settings",
+              },
+              {
+                value: "smoke",
+                label: "Smoke test",
+                description: "Reduced settings for an integration check",
+              },
+            ]}
+          />
         </div>
       </div>
       {undo && (

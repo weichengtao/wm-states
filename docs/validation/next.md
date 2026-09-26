@@ -1,5 +1,42 @@
 # Next pipeline validation
 
+## Shared dropdowns and common controls — 2026-09-26
+
+The control refinement passed **47 frontend tests** across **8 files**, TypeScript
+checking, the production Vite build, and Prettier verification. A shared Radix
+Select component now serves every dashboard dropdown. Its dependency and lockfile
+were updated together; installation reported no known npm vulnerabilities.
+The guide passed a strict MkDocs build and `git diff --check` passed.
+
+```bash
+npm --prefix dashboard test
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
+- Seven new component tests cover explicitly selected empty-string values,
+  punctuation and prefix-like identifiers, label/help associations, disabled and
+  empty controls, and stale values without silently selecting a replacement.
+- Browser review at **1440 × 960** and **390 × 844** covered status selection,
+  preset typeahead, End/Enter navigation, Escape dismissal with focus restoration,
+  analysis enum selection/reset, long table menus, saved-job selection, and
+  session selection in comparisons.
+- Long option descriptions wrap inside the available viewport and are linked
+  with `aria-describedby`. Artifact paths distinguish identical filenames;
+  job choices show names, status, and timestamps. Disabled controls and selected
+  options retain visible states.
+- Reviewed the checkbox styling and figure dialog. The zoom slider responded to
+  arrow keys, announced its percentage, and returned to 100% with **Reset zoom**.
+  The mobile figure dialog, dropdowns, and comparison view stayed within the
+  viewport. No browser console warnings or errors were observed.
+
+This change updates frontend controls, their dependency, and documentation.
+Python analysis code, presets, cache formats, and scientific behavior are
+unchanged. Review used saved results; no analysis jobs were started or stopped.
+Temporary dashboard and Vite preview servers were stopped after review.
+
 ## Dashboard visual and workflow refinement — 2026-09-26
 
 The dashboard passed **40 frontend tests**, TypeScript checking, the production

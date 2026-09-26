@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   Activity,
   ArrowDownToLine,
@@ -30,6 +30,7 @@ import { duration, formatDate, formatNumber, humanize } from "@/lib/utils";
 import { manifestSeed } from "@/lib/configuration";
 import { filterRuns, runStatuses, type RunSort } from "@/lib/run-library";
 import { Button } from "./ui/button";
+import { Select } from "./ui/select";
 import { CopyButton, Empty, Loading, Notice, Stat, Status } from "./shared";
 import ConfidenceChart from "./ConfidenceChart";
 import { FigureGallery, SupportingFiles, TableBrowser } from "./Artifacts";
@@ -105,23 +106,27 @@ export function SessionSelect({
   onChange: (id: string) => void;
   label?: string;
 }) {
+  const id = useId();
   return (
-    <label className="session-selector">
+    <label className="session-selector" htmlFor={id}>
       <span>{label}</span>
-      <select
+      <Select
+        id={id}
         aria-label={label}
         className="select-control"
         value={value}
         disabled={!sessions.length}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {!sessions.length && <option value="">No sessions yet</option>}
-        {sessions.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.session} · cue {s.cue ?? "—"}
-          </option>
-        ))}
-      </select>
+        onValueChange={onChange}
+        placeholder="Choose a session"
+        options={
+          sessions.length
+            ? sessions.map((session) => ({
+                value: session.id,
+                label: `${session.session} · cue ${session.cue ?? "—"}`,
+              }))
+            : [{ value: "", label: "No sessions yet" }]
+        }
+      />
     </label>
   );
 }
@@ -324,28 +329,29 @@ export default function Results({
               )}
             </div>
             <div className="heading-actions">
-              <select
+              <Select
                 className="select-control"
                 aria-label="Filter runs by latest invocation status"
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                <option value="all">All statuses</option>
-                {statuses.map((status) => (
-                  <option key={status} value={status}>
-                    {humanize(status)}
-                  </option>
-                ))}
-              </select>
-              <select
+                onValueChange={setStatusFilter}
+                options={[
+                  { value: "all", label: "All statuses" },
+                  ...statuses.map((status) => ({
+                    value: status,
+                    label: humanize(status),
+                  })),
+                ]}
+              />
+              <Select
                 className="select-control"
                 aria-label="Sort runs"
                 value={sort}
-                onChange={(e) => setSort(e.target.value as RunSort)}
-              >
-                <option value="recent">Newest first</option>
-                <option value="name">Name A–Z</option>
-              </select>
+                onValueChange={(value) => setSort(value as RunSort)}
+                options={[
+                  { value: "recent", label: "Newest first" },
+                  { value: "name", label: "Name A–Z" },
+                ]}
+              />
               {hasFilters && (
                 <Button variant="ghost" size="sm" onClick={resetFilters}>
                   Reset filters

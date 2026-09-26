@@ -1,9 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
-import { Download, Image, Search, Table2, ZoomIn } from "lucide-react";
+import { useEffect, useId, useMemo, useState, type CSSProperties } from "react";
+import {
+  Download,
+  Image,
+  RotateCcw,
+  Search,
+  Table2,
+  ZoomIn,
+} from "lucide-react";
 import type { Artifact, TableData } from "@/lib/types";
 import { api, errorMessage, runPath } from "@/lib/api";
 import { humanize } from "@/lib/utils";
 import { Button } from "./ui/button";
+import { Select } from "./ui/select";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +28,7 @@ export function FigurePreview({
   compact?: boolean;
 }) {
   const [zoom, setZoom] = useState(100);
+  const zoomId = useId();
   const preview = /\.(png|jpe?g|webp|svg)$/i.test(artifact.path);
   return (
     <Dialog>
@@ -68,19 +77,41 @@ export function FigurePreview({
         <DialogTitle>{artifact.name}</DialogTitle>
         <DialogDescription>{artifact.path}</DialogDescription>
         <div className="figure-tools">
-          <label>
-            Zoom{" "}
-            <input
-              aria-label="Figure zoom"
-              type="range"
-              min={50}
-              max={250}
-              step={10}
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
-            />
-            {zoom}%
-          </label>
+          {preview && (
+            <div className="figure-zoom-controls">
+              <label htmlFor={zoomId}>
+                Zoom
+                <input
+                  id={zoomId}
+                  aria-label="Figure zoom"
+                  aria-valuetext={`${zoom}%`}
+                  type="range"
+                  min={50}
+                  max={250}
+                  step={10}
+                  value={zoom}
+                  style={
+                    {
+                      "--range-progress": `${(zoom - 50) / 2}%`,
+                    } as CSSProperties
+                  }
+                  onChange={(e) => setZoom(Number(e.target.value))}
+                />
+              </label>
+              <output htmlFor={zoomId} className="figure-zoom-value">
+                {zoom}%
+              </output>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={zoom === 100}
+                onClick={() => setZoom(100)}
+              >
+                <RotateCcw />
+                Reset zoom
+              </Button>
+            </div>
+          )}
           <Button asChild variant="outline" size="sm">
             <a href={artifact.url} download>
               <Download />
@@ -137,29 +168,27 @@ export function FigureGallery({
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <select
+        <Select
           className="select-control"
           aria-label="Figure stage"
           value={stage}
-          onChange={(e) => setStage(e.target.value)}
-        >
-          <option value="all">All stages</option>
-          {stages.map((s) => (
-            <option key={s} value={s}>
-              {humanize(s)}
-            </option>
-          ))}
-        </select>
+          onValueChange={setStage}
+          options={[
+            { value: "all", label: "All stages" },
+            ...stages.map((value) => ({ value, label: humanize(value) })),
+          ]}
+        />
         {session && (
-          <select
+          <Select
             className="select-control"
             aria-label="Figure session scope"
             value={scope}
-            onChange={(e) => setScope(e.target.value)}
-          >
-            <option value="session">Session {session} & shared</option>
-            <option value="all">All sessions</option>
-          </select>
+            onValueChange={setScope}
+            options={[
+              { value: "session", label: `Session ${session} & shared` },
+              { value: "all", label: "All sessions" },
+            ]}
+          />
         )}
         <span className="muted">{filtered.length} figures</span>
       </div>
@@ -238,21 +267,20 @@ export function TableBrowser({
   return (
     <>
       <div className="filter-bar">
-        <select
+        <Select
           className="select-control table-select"
           aria-label="Result table"
           value={selected}
-          onChange={(e) => {
-            setSelected(e.target.value);
+          onValueChange={(value) => {
+            setSelected(value);
             setPage(0);
           }}
-        >
-          {tables.map((a) => (
-            <option key={a.path} value={a.path}>
-              {a.path}
-            </option>
-          ))}
-        </select>
+          options={tables.map((a) => ({
+            value: a.path,
+            label: a.name,
+            description: a.path,
+          }))}
+        />
         {artifact && (
           <Button variant="outline" size="sm" asChild>
             <a download href={artifact.url}>

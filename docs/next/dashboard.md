@@ -165,6 +165,14 @@ preset's scientific choices and [Pipeline stages](pipeline.md) for dependencies.
    to the form applies valid JSON and keeps invalid drafts available to correct.
 4. Validate the configuration, review the generated command, and start the run.
 
+Dropdowns use the same controls throughout the dashboard. Focus one and press
+Enter or Space to open it. With the menu open, use the up/down arrows to move,
+Home/End to reach the first/last option, or type the start of an option's label
+to jump to it. Enter confirms; Escape closes the menu without changing the
+selection and returns focus to the control. Menu descriptions show full paths
+or identifying metadata where names need context. Hover over a selected control
+to see its full label and description if the displayed text is shortened.
+
 Search within a stage by parameter name or description; spaces and underscores
 both work. **Changed** shows only parameters that differ from the example
 pipeline. The badges and stage counts compare effective values: the example
@@ -352,6 +360,12 @@ PNG figures display directly. PDF-only runs are supported and their figures
 remain available through **Download original**, without conversion. TIFF and
 EPS also use downloads for an external viewer. Existing output files in formats
 not selected for a rerun remain on disk.
+
+Open a previewable figure to inspect it, then drag the **Zoom** slider or use its
+arrow keys. The percentage shows the current zoom; **Reset zoom** returns it to
+100%. Zoom changes only the preview, and **Download original** retains the saved
+figure unchanged.
+
 CSV tables can be paged through and downloaded from the Tables view. Its
 **Supporting files** section downloads saved JSON and log artifacts within the
 run directory. Manifest records are also readable in Run history. Dashboard
@@ -440,9 +454,13 @@ the Python backend. If you change that backend port, update the proxy targets in
 `dashboard/vite.config.ts` to match.
 
 The frontend uses React, TypeScript, Vite, Tailwind CSS, and shadcn-style Radix
-components. The backend lives in `scripts/next/dashboard/` and uses FastAPI and
-Pydantic. The pipeline guide is at `/docs/`; the developer API reference is at
-`/api/docs`, with OpenAPI JSON at `/api/openapi.json` and ReDoc at `/api/redoc`.
+components. The shared dropdown wraps
+[Radix Select](https://www.radix-ui.com/primitives/docs/components/select), which
+provides keyboard navigation, typeahead, and focus handling; keep these behaviors
+when changing its appearance. The backend lives in `scripts/next/dashboard/`
+and uses FastAPI and Pydantic. The pipeline guide is at `/docs/`; the developer
+API reference is at `/api/docs`, with OpenAPI JSON at `/api/openapi.json` and
+ReDoc at `/api/redoc`.
 Tests and a
 production build can be run with:
 

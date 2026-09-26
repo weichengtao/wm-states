@@ -20,6 +20,7 @@ import { api, errorMessage } from "@/lib/api";
 import type { Job } from "@/lib/types";
 import { cn, duration, formatDate, humanize } from "@/lib/utils";
 import { Button } from "./ui/button";
+import { Select } from "./ui/select";
 import { CopyButton, Empty, Loading, Notice, Status } from "./shared";
 
 const terminal = (status: string) =>
@@ -237,22 +238,28 @@ export default function LiveMonitor({
           <label className="sr-only" htmlFor="monitor-job">
             Pipeline job
           </label>
-          <select
+          <Select
             id="monitor-job"
             className="monitor-job-select"
             value={activeId}
-            onChange={(event) => setActiveId(event.target.value)}
-          >
-            {jobs.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name} · {humanize(item.status)} ·{" "}
-                {formatDate(item.created_at)}
-              </option>
-            ))}
-            {!jobs.some((item) => item.id === activeId) && (
-              <option value={activeId}>{job?.name ?? "Current run"}</option>
-            )}
-          </select>
+            onValueChange={setActiveId}
+            options={[
+              ...jobs.map((item) => ({
+                value: item.id,
+                label: `${item.name} · ${humanize(item.status)}`,
+                description: formatDate(item.created_at),
+              })),
+              ...(!jobs.some((item) => item.id === activeId)
+                ? [
+                    {
+                      value: activeId,
+                      label: job?.name ?? "Current run",
+                      description: job ? formatDate(job.created_at) : undefined,
+                    },
+                  ]
+                : []),
+            ]}
+          />
           <Button variant="outline" onClick={onNewRun}>
             <Plus />
             New run

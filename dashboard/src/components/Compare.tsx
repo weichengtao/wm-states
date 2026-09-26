@@ -15,6 +15,7 @@ import {
 } from "@/lib/comparison";
 import { humanize } from "@/lib/utils";
 import { Button } from "./ui/button";
+import { Select } from "./ui/select";
 import { Empty, Loading, Notice } from "./shared";
 import {
   SessionSelect,
@@ -63,33 +64,34 @@ function FigureChoice({
   return (
     <div className="comparison-figure">
       <label htmlFor={`figure-${side}`}>Compare an output figure</label>
-      <select
+      <Select
         className="select-control"
         aria-label={`Figure stage ${side}`}
         value={activeStage}
-        onChange={(e) => setStage(e.target.value)}
-      >
-        <option value="all">All stages</option>
-        {stages.map((value) => (
-          <option key={value} value={value}>
-            {humanize(value)}
-          </option>
-        ))}
-      </select>
-      <select
+        onValueChange={setStage}
+        options={[
+          { value: "all", label: "All stages" },
+          ...stages.map((value) => ({ value, label: humanize(value) })),
+        ]}
+      />
+      <Select
         id={`figure-${side}`}
+        aria-label={`Output figure ${side}`}
         className="select-control"
         disabled={!figures.length}
         value={selected}
-        onChange={(e) => setSelected(e.target.value)}
-      >
-        {!figures.length && <option value="">No figures yet</option>}
-        {figures.map((a) => (
-          <option key={a.path} value={a.path}>
-            {a.path}
-          </option>
-        ))}
-      </select>
+        onValueChange={setSelected}
+        placeholder="Choose an output figure"
+        options={
+          figures.length
+            ? figures.map((figure) => ({
+                value: figure.path,
+                label: figure.name.replaceAll("_", " "),
+                description: figure.path,
+              }))
+            : [{ value: "", label: "No figures yet" }]
+        }
+      />
       {artifact && <FigurePreview compact artifact={artifact} />}
     </div>
   );
@@ -319,24 +321,23 @@ export default function Compare({
           <section className="panel comparison-controls">
             <div className="comparison-picker">
               <span className="comparison-letter">A</span>
-              <label className="field">
+              <label className="field" htmlFor="comparison-run-a">
                 <span>Analysis run</span>
-                <select
+                <Select
+                  id="comparison-run-a"
                   className="select-control"
                   aria-label="Run A"
                   value={leftRun}
-                  onChange={(e) => {
-                    setLeftRun(e.target.value);
-                    if (mode === "sessions") setRightRun(e.target.value);
+                  onValueChange={(value) => {
+                    setLeftRun(value);
+                    if (mode === "sessions") setRightRun(value);
                   }}
-                >
-                  {runs.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                      {r.name !== r.id ? ` · ${r.id}` : ""}
-                    </option>
-                  ))}
-                </select>
+                  options={runs.map((run) => ({
+                    value: run.id,
+                    label: `${run.name}${run.name !== run.id ? ` · ${run.id}` : ""}`,
+                    description: run.path,
+                  }))}
+                />
               </label>
               <SessionSelect
                 label="Session A"
@@ -357,24 +358,23 @@ export default function Compare({
             </Button>
             <div className="comparison-picker pane-b">
               <span className="comparison-letter">B</span>
-              <label className="field">
+              <label className="field" htmlFor="comparison-run-b">
                 <span>
                   {mode === "sessions" ? "Same analysis run" : "Analysis run"}
                 </span>
-                <select
+                <Select
+                  id="comparison-run-b"
                   className="select-control"
                   aria-label="Run B"
                   disabled={mode === "sessions"}
                   value={rightRun}
-                  onChange={(e) => setRightRun(e.target.value)}
-                >
-                  {runs.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                      {r.name !== r.id ? ` · ${r.id}` : ""}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={setRightRun}
+                  options={runs.map((run) => ({
+                    value: run.id,
+                    label: `${run.name}${run.name !== run.id ? ` · ${run.id}` : ""}`,
+                    description: run.path,
+                  }))}
+                />
               </label>
               <SessionSelect
                 label="Session B"
