@@ -102,6 +102,33 @@ class Selectivity:
     has_finite_pev: np.ndarray
 
 
+def circular_preferred_cue(preferred_cues_by_bin):
+    """Round the circular mean to a cue, or return NaN when it is undefined.
+
+    Cancellation of opposing directions leaves only floating-point roundoff.
+    The tolerance is the standard accumulation bound gamma_n = n*u/(1-n*u),
+    plus four rounding units for forming each two-component unit vector. It is
+    a numerical-zero test, not a minimum directional-selectivity threshold.
+    Defined means retain the existing circular-mean and cue-rounding policy.
+    """
+    preferred_cues_by_bin = np.asarray(preferred_cues_by_bin, dtype=np.float64)
+    if preferred_cues_by_bin.size == 0 or not np.all(np.isfinite(preferred_cues_by_bin)):
+        return np.nan
+    preferred_angles_radians = np.deg2rad((preferred_cues_by_bin - 1) * 45 - 135)
+    resultant_length = abs(np.exp(1j * preferred_angles_radians).mean())
+    rounding_unit = np.finfo(np.float64).eps / 2
+    accumulated_roundoff = preferred_angles_radians.size * rounding_unit
+    cancellation_tolerance = (
+        accumulated_roundoff / (1 - accumulated_roundoff) + 4 * rounding_unit
+    )
+    if resultant_length <= cancellation_tolerance:
+        return np.nan
+    mean_preferred_angle_degrees = np.rad2deg(
+        circmean(preferred_angles_radians, high=np.pi, low=-np.pi)
+    )
+    return (np.round((mean_preferred_angle_degrees + 135) / 45 + 1).astype(int) - 1) % 8 + 1
+
+
 def selectivity(data, config):
     """Measure PEV and cue preference even when their rejection gate is disabled.
 
@@ -129,9 +156,9 @@ def selectivity(data, config):
         metadata_bin_mask = (qualifying_bin_mask[cell_index] if qualifying_bin_mask[cell_index].any()
                              else np.isfinite(pev_pct_by_bin[cell_index]))
         mean_pev_pct[cell_index] = pev_pct_by_bin[cell_index, metadata_bin_mask].mean()
-        preferred_angles_radians = np.deg2rad((preferred_cues_by_bin[cell_index, metadata_bin_mask] - 1) * 45 - 135)
-        mean_preferred_angle_degrees = np.rad2deg(circmean(preferred_angles_radians, high=np.pi, low=-np.pi))
-        preferred_cues[cell_index] = (np.round((mean_preferred_angle_degrees + 135) / 45 + 1).astype(int) - 1) % 8 + 1
+        preferred_cues[cell_index] = circular_preferred_cue(
+            preferred_cues_by_bin[cell_index, metadata_bin_mask]
+        )
     return Selectivity(mean_pev_pct, preferred_cues, qualifying_bin_mask,
                        qualifying_bin_mask.any(axis=1), has_finite_pev)
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from typing import Any
+import warnings
 
 import numpy as np
 from sklearn.decomposition import PCA
@@ -311,7 +312,11 @@ def compute_preferred_cell_principal_components(
             *opposite_activity.shape[:2],
             component_count,
         ),
-        max_off_state_activity=pca.transform(max_off_state_activity),
+        max_off_state_activity=(
+            pca.transform(max_off_state_activity)
+            if max_off_state_activity.shape[0]
+            else np.empty((0, component_count), dtype=float)
+        ),
         components=pca.components_.copy(),
         center=pca.mean_.copy(),
         explained_variance_ratio=explained_variance_ratio,
@@ -369,13 +374,23 @@ def prepare_session_activity(
         session_inputs, state_result.get("trial_idx", []), preferred_cue,
     )
     time_bins = np.asarray(state_result["time_bins"], dtype=float).ravel()
-    on_state_mask = np.asarray(state_result["on_state_mask"], dtype=bool)
-    off_state_mask = np.asarray(state_result["off_state_mask"], dtype=bool)
+    if (not np.all(np.isfinite(time_bins)) or np.any(np.diff(time_bins) <= 0)):
+        raise ValueError(f"Session {session} time bins must be finite and strictly increasing.")
+    on_state_mask = np.asarray(state_result["on_state_mask"])
+    off_state_mask = np.asarray(state_result["off_state_mask"])
     expected_mask_shape = (preferred_trial_ids.size, time_bins.size)
     if on_state_mask.shape != expected_mask_shape or off_state_mask.shape != expected_mask_shape:
         raise ValueError(
             f"Session {session} state masks must have shape {expected_mask_shape}."
         )
+    for state_name, state_mask in (("on", on_state_mask), ("off", off_state_mask)):
+        if state_mask.dtype.kind not in "biuf" or not np.all(np.isin(state_mask, [0, 1])):
+            raise ValueError(
+                f"Session {session} {state_name}-state mask must contain only "
+                "finite Boolean or 0/1 values."
+            )
+    on_state_mask = on_state_mask.astype(bool)
+    off_state_mask = off_state_mask.astype(bool)
     if np.any(on_state_mask & off_state_mask):
         raise ValueError(f"Session {session} has bins marked as both on and off state.")
     delay_start = float(state_result.get("off_state_duration_delay_start", 500))
@@ -472,6 +487,14 @@ def prepare_session_activity(
         max_off_state_delay_mask
     ):
         raise RuntimeError("Maximum off-state activity extraction lost delay bins.")
+    if max_off_state_trial_id is None:
+        warnings.warn(
+            f"Session {session}: no cached off-state bins occur in the delay period. "
+            "Activity and PCA comparisons continue without maximum-off-state points; "
+            "review the states output and thresholds if this is unexpected.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     principal_component_activity = None
     if config.show_principal_components:
         preferred_cell_count = int(group_cell_ids["preferred"].size)

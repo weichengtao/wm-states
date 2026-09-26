@@ -34,17 +34,22 @@ import {
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { CopyButton, Notice } from "./shared";
+import GuideLink from "./GuideLink";
+import { fieldHelpPath, stageMethodsPath } from "@/lib/help";
 function FieldEditor({
+  stageId,
   field,
   value,
   onChange,
 }: {
+  stageId: string;
   field: Field;
   value: Json;
   onChange: (value: Json) => void;
 }) {
   const id = `field-${field.name}`;
   const selectedChoice = choiceValue(field, value);
+  const helpPath = fieldHelpPath(stageId, field.name);
   return (
     <div className="parameter">
       <div className="parameter-label">
@@ -139,6 +144,15 @@ function FieldEditor({
         />
       )}
       <p>{field.description || field.name.replaceAll("_", " ")}</p>
+      {helpPath && (
+        <GuideLink
+          path={helpPath}
+          className="parameter-help-link"
+          label={`Learn more about ${humanize(field.name)}`}
+        >
+          Learn more
+        </GuideLink>
+      )}
     </div>
   );
 }
@@ -489,10 +503,19 @@ export default function Configure({
                   : stage.description}
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={toggleJson}>
-              {jsonMode ? <SlidersHorizontal /> : <Code2 />}
-              {jsonMode ? "Form" : "JSON"}
-            </Button>
+            <div className="parameter-heading-actions">
+              <GuideLink
+                path={
+                  jsonMode ? "next/configuration/" : stageMethodsPath(stage.id)
+                }
+              >
+                {jsonMode ? "Configuration guide" : "Stage methods"}
+              </GuideLink>
+              <Button variant="outline" size="sm" onClick={toggleJson}>
+                {jsonMode ? <SlidersHorizontal /> : <Code2 />}
+                {jsonMode ? "Form" : "JSON"}
+              </Button>
+            </div>
           </div>
           {jsonMode ? (
             <>
@@ -535,6 +558,7 @@ export default function Configure({
                 {filtered.map((field) => (
                   <FieldEditor
                     key={`${stage.id}-${field.name}`}
+                    stageId={stage.id}
                     field={field}
                     value={fieldValue(form, stage.id, field)}
                     onChange={(value) =>

@@ -309,6 +309,8 @@ def _fit_model(
         groups=frame[SESSION],
         re_formula="1",
     )
+    if np.linalg.matrix_rank(model.exog) < model.exog.shape[1]:
+        raise RuntimeError(f"{spec.name} has a rank-deficient fixed-effect design.")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = model.fit(
@@ -325,7 +327,71 @@ def _fit_model(
         raise RuntimeError(f"{spec.name} produced non-finite fit statistics.")
     if not np.all(np.isfinite(np.asarray(result.fe_params, dtype=float))):
         raise RuntimeError(f"{spec.name} produced non-finite fixed effects.")
+    inference_errors = _inference_errors(result, warning_messages)
+    result.inference_valid = not inference_errors
+    result.inference_error = "; ".join(inference_errors)
+    if inference_errors:
+        message = f"{spec.name}: inference withheld: {result.inference_error}"
+        warning_messages.append(message)
+        warnings.warn(message, RuntimeWarning, stacklevel=2)
     return result, warning_messages
+
+
+def _inference_errors(result: Any, warning_messages: list[str]) -> list[str]:
+    """Check final inference without rejecting harmless optimizer retries."""
+    errors = []
+    if any("hessian" in message.lower() and "not positive definite" in message.lower()
+           for message in warning_messages):
+        errors.append("final Hessian is not positive definite")
+    try:
+        covariance = np.asarray(result.cov_params(), dtype=float)
+        if (covariance.ndim != 2 or covariance.shape[0] != covariance.shape[1]
+                or not np.all(np.isfinite(covariance))
+                or not np.allclose(covariance, covariance.T)):
+            raise ValueError("nonfinite or asymmetric covariance")
+        # Scale to a correlation matrix before factorization so parameter units
+        # do not decide the numerical positive-definiteness check.
+        if np.any(np.diag(covariance) <= 0):
+            raise ValueError("nonpositive parameter variance")
+        scales = np.sqrt(np.diag(covariance))
+        np.linalg.cholesky(covariance / np.outer(scales, scales))
+    except (ValueError, np.linalg.LinAlgError, AttributeError) as error:
+        errors.append(f"final parameter covariance is unavailable or not positive definite ({error})")
+    try:
+        standard_errors = np.asarray(result.bse_fe, dtype=float)
+        if (standard_errors.shape != np.asarray(result.fe_params).shape
+                or not np.all(np.isfinite(standard_errors)) or np.any(standard_errors <= 0)):
+            raise ValueError("nonfinite or nonpositive standard errors")
+    except (ValueError, AttributeError) as error:
+        errors.append(f"fixed-effect standard errors are unavailable ({error})")
+    return errors
+
+
+def _nested_likelihood_ratio(
+    full_log_likelihood: float,
+    reduced_log_likelihood: float,
+    degrees_of_freedom: float,
+    *,
+    context: str,
+) -> tuple[float, float]:
+    """Reject impossible nested improvements; tolerate only floating roundoff."""
+    values = np.asarray([full_log_likelihood, reduced_log_likelihood, degrees_of_freedom])
+    if not np.all(np.isfinite(values)) or degrees_of_freedom <= 0:
+        raise RuntimeError(f"{context}: invalid nested likelihood statistics or degrees of freedom.")
+    likelihood_ratio = 2.0 * (full_log_likelihood - reduced_log_likelihood)
+    tolerance = 1e-8 * max(1.0, abs(full_log_likelihood), abs(reduced_log_likelihood))
+    if likelihood_ratio < -tolerance:
+        raise RuntimeError(
+            f"{context}: full model has a materially lower log likelihood than its nested "
+            f"reduced model (LR={likelihood_ratio:.8g}); refit before comparing models."
+        )
+    if likelihood_ratio < 0:
+        warnings.warn(
+            f"{context}: tiny negative likelihood ratio ({likelihood_ratio:.8g}) "
+            "was clamped to zero as floating-point roundoff.", RuntimeWarning, stacklevel=2,
+        )
+        likelihood_ratio = 0.0
+    return likelihood_ratio, float(chi2.sf(likelihood_ratio, degrees_of_freedom))
 
 
 def _predictions_and_r2(
@@ -383,22 +449,25 @@ def _fixed_effect_rows(
     spec: ModelSpec,
     significance_alpha: float,
 ) -> list[dict[str, Any]]:
-    confidence_intervals = result.conf_int().loc[result.fe_params.index]
+    inference_valid = bool(getattr(result, "inference_valid", True))
+    confidence_intervals = result.conf_int().loc[result.fe_params.index] if inference_valid else None
     rows = []
     for term in result.fe_params.index:
-        p_value = float(result.pvalues[term])
+        p_value = float(result.pvalues[term]) if inference_valid else np.nan
         rows.append(
             {
                 "model": spec.name,
                 "outcome": spec.outcome,
                 "term": str(term),
                 "coefficient": float(result.fe_params[term]),
-                "std_error": float(result.bse_fe[term]),
-                "z_value": float(result.tvalues[term]),
+                "std_error": float(result.bse_fe[term]) if inference_valid else np.nan,
+                "z_value": float(result.tvalues[term]) if inference_valid else np.nan,
                 "p_value": p_value,
-                "ci_95_lower": float(confidence_intervals.loc[term, 0]),
-                "ci_95_upper": float(confidence_intervals.loc[term, 1]),
-                "significant": bool(p_value < significance_alpha),
+                "ci_95_lower": float(confidence_intervals.loc[term, 0]) if inference_valid else np.nan,
+                "ci_95_upper": float(confidence_intervals.loc[term, 1]) if inference_valid else np.nan,
+                "significant": bool(inference_valid and p_value < significance_alpha),
+                "inference_valid": inference_valid,
+                "inference_error": getattr(result, "inference_error", ""),
             }
         )
     return rows
@@ -415,14 +484,19 @@ def _comparison_row(
     likelihood_ratio = np.nan
     likelihood_ratio_df = np.nan
     likelihood_ratio_p_value = np.nan
+    likelihood_ratio_valid = False
+    likelihood_ratio_error = "parent model unavailable" if spec.parent and parent_result is None else ""
     if parent_result is not None:
-        likelihood_ratio = 2.0 * (float(result.llf) - float(parent_result.llf))
         likelihood_ratio_df = int(result.df_modelwc - parent_result.df_modelwc)
-        if likelihood_ratio_df <= 0:
-            raise RuntimeError(f"Invalid likelihood-ratio df for {spec.name}.")
-        likelihood_ratio_p_value = float(
-            chi2.sf(max(likelihood_ratio, 0.0), likelihood_ratio_df)
+        likelihood_ratio, candidate_p_value = _nested_likelihood_ratio(
+            float(result.llf), float(parent_result.llf), likelihood_ratio_df, context=spec.name,
         )
+        likelihood_ratio_valid = all(bool(getattr(fit, "inference_valid", True))
+                                    for fit in (result, parent_result))
+        if likelihood_ratio_valid:
+            likelihood_ratio_p_value = candidate_p_value
+        else:
+            likelihood_ratio_error = "inference unavailable for full or reduced model"
 
     fixed_p_values = {
         row["term"]: row["p_value"] for row in fixed_effect_rows
@@ -445,12 +519,18 @@ def _comparison_row(
         "n_sessions": int(np.unique(result.model.groups).size),
         "n_fixed_effects": int(result.fe_params.size),
         "converged": bool(result.converged),
+        "fit_success": True,
+        "fit_error": "",
+        "inference_valid": bool(getattr(result, "inference_valid", True)),
+        "inference_error": getattr(result, "inference_error", ""),
         "log_likelihood": float(result.llf),
         "aic": float(result.aic),
         "bic": float(result.bic),
         "likelihood_ratio_vs_parent": likelihood_ratio,
         "likelihood_ratio_df": likelihood_ratio_df,
         "likelihood_ratio_p_value": likelihood_ratio_p_value,
+        "likelihood_ratio_valid": likelihood_ratio_valid,
+        "likelihood_ratio_error": likelihood_ratio_error,
         "marginal_r2": float(variance_metrics["marginal_r2"]),
         "conditional_r2": float(variance_metrics["conditional_r2"]),
         "icc": float(variance_metrics["icc"]),
@@ -480,8 +560,60 @@ def _comparison_row(
     return row
 
 
+def _fit_model_summary(
+    frame: pd.DataFrame, spec: ModelSpec, results: dict[str, Any], config: Any,
+) -> tuple[Any | None, dict[str, Any], list[dict[str, Any]], list[str]]:
+    """Retain each failed model explicitly without discarding independent fits."""
+    try:
+        result, messages = _fit_model(frame, spec, config.max_iterations)
+        metrics = _predictions_and_r2(result, frame, spec.outcome)
+        fixed_rows = _fixed_effect_rows(result, spec, config.significance_alpha)
+        row = _comparison_row(
+            result, spec, metrics, fixed_rows, results.get(spec.parent), messages,
+        )
+        return result, row, fixed_rows, messages
+    except Exception as error:
+        message = f"{type(error).__name__}: {error}"
+        warnings.warn(f"{spec.name}: model failed: {message}", RuntimeWarning, stacklevel=2)
+        numeric_fields = (
+            "log_likelihood aic bic likelihood_ratio_vs_parent likelihood_ratio_df "
+            "likelihood_ratio_p_value marginal_r2 conditional_r2 icc fixed_effect_variance "
+            "random_intercept_variance residual_variance marginal_rmse_ms conditional_rmse_ms "
+            "marginal_mae_ms conditional_mae_ms intercept intercept_p_value"
+        ).split()
+        row = {
+            **dict.fromkeys(numeric_fields, np.nan),
+            "model": spec.name, "outcome": spec.outcome, "description": spec.description,
+            "parent_model": spec.parent or "", "formula": spec.formula,
+            "n_observations": len(frame), "n_sessions": frame[SESSION].nunique(),
+            "n_fixed_effects": len(spec.predictors) + 1,
+            "converged": False, "fit_success": False, "fit_error": message,
+            "inference_valid": False, "inference_error": message,
+            "likelihood_ratio_valid": False, "likelihood_ratio_error": message,
+            "n_significant_predictors": 0, "significant_predictors": "",
+            "fixed_effect_p_values": "{}", "n_fit_warnings": 1, "fit_warnings": message,
+        }
+        fixed_rows = [
+            {"model": spec.name, "outcome": spec.outcome, "term": term,
+             **dict.fromkeys(("coefficient", "std_error", "z_value", "p_value",
+                              "ci_95_lower", "ci_95_upper"), np.nan),
+             "significant": False, "inference_valid": False, "inference_error": message}
+            for term in ("Intercept", *spec.predictors)
+        ]
+        return None, row, fixed_rows, [message]
+
+
 def _safe_filename(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).replace("-", "_").lower()
+
+
+def _require_usable_models(comparison: pd.DataFrame, output_dir: Path) -> None:
+    """Fail an unusable analysis only after its diagnostic tables are saved."""
+    if comparison.empty or not comparison["fit_success"].any():
+        raise RuntimeError(
+            f"All model fits failed; no usable analysis was produced. "
+            f"Inspect fit_error in the saved tables and logs under {output_dir}."
+        )
 
 
 def _plot_observed_vs_fitted(
@@ -546,9 +678,11 @@ def _plot_predictor_effect(
     ax.plot(x_line, fitted_line, color="C3", linewidth=2)
     ax.set_xlabel(textwrap.fill(predictor.replace("_", " "), width=32))
     ax.set_ylabel(f"Adjusted {outcome.replace('_', ' ')}")
-    ax.set_title(
-        f"β={coefficient:.3g}, p={float(result.pvalues[predictor]):.3g}"
+    inference_label = (
+        f"p={float(result.pvalues[predictor]):.3g}"
+        if getattr(result, "inference_valid", True) else "inference unavailable"
     )
+    ax.set_title(f"β={coefficient:.3g}, {inference_label}")
 
 
 def _save_model_plot(
@@ -637,10 +771,13 @@ def _save_coefficient_forest(
             capsize=3,
             linewidth=1.3,
         )
-        colors = np.where(rows["significant"].to_numpy(dtype=bool), "C3", "C0")
+        valid_inference = rows.get("inference_valid", pd.Series(True, index=rows.index)).to_numpy(dtype=bool)
+        colors = np.where(~valid_inference, "0.5", np.where(rows["significant"].to_numpy(dtype=bool), "C3", "C0"))
         ax.scatter(coefficients, y, c=colors, zorder=3)
         ax.scatter([], [], color="C3", label="p < significance alpha")
         ax.scatter([], [], color="C0", label="not significant")
+        if not np.all(valid_inference):
+            ax.scatter([], [], color="0.5", label="inference unavailable")
         ax.axvline(0, color="black", linestyle="--", linewidth=1)
         ax.set_yticks(y, rows["term"].str.replace("_", " "))
         ax.set_xlabel("Fixed-effect coefficient (95% Wald CI)")
@@ -728,7 +865,10 @@ def _append_model_log(
     ):
         handle.write(f"  {key}: {comparison_row[key]}\n")
     handle.write("\nStatsmodels fit summary:\n")
-    handle.write(result.summary().as_text())
+    if getattr(result, "inference_valid", True):
+        handle.write(result.summary().as_text())
+    else:
+        handle.write(f"Inferential summary withheld: {result.inference_error}")
     handle.write("\n\n")
 
 
@@ -774,22 +914,15 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
             print(
                 f"[{outcome.name}] Fitting {index}/{len(specs)}: {spec.name}"
             )
-            result, warning_messages = _fit_model(
-                frame, spec, config.max_iterations
+            result, comparison_row, fixed_effect_rows, warning_messages = _fit_model_summary(
+                frame, spec, results, config,
             )
+            if result is None:
+                log_handle.write(f"{spec.name}: FAILED: {comparison_row['fit_error']}\n")
+                comparison_rows.append(comparison_row)
+                all_fixed_effect_rows.extend(fixed_effect_rows)
+                continue
             variance_metrics = _predictions_and_r2(result, frame, spec.outcome)
-            fixed_effect_rows = _fixed_effect_rows(
-                result, spec, config.significance_alpha
-            )
-            parent_result = results.get(spec.parent) if spec.parent else None
-            comparison_row = _comparison_row(
-                result,
-                spec,
-                variance_metrics,
-                fixed_effect_rows,
-                parent_result,
-                warning_messages,
-            )
             plot_path = _save_model_plot(
                 frame,
                 result,
@@ -822,8 +955,9 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
     print(f"Saved detailed log to {log_path}")
     print(f"Saved model comparison table to {comparison_csv_path}")
     print(f"Saved fixed-effect table to {fixed_effects_csv_path}")
-    print(f"Saved {len(specs)} marginal-effect figures to {figure_dir}")
+    print(f"Saved {int(comparison['fit_success'].sum())} marginal-effect figures to {figure_dir}")
 
+    _require_usable_models(comparison, output_dir)
     if config.run_cv:
         try:
             from scripts.next.mixedlm_trial_holdout_cv import (

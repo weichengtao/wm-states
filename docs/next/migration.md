@@ -18,7 +18,7 @@ locations. Start each migrated analysis with a fresh cache directory.
 | Population ISI analysis | Removed; no optional next implementation |
 | Pipeline-level `--n-decode-shuffle` | Set `decode.n_decode_shuffle` in JSON |
 
-Null estimates still independently permute training-trial labels after the
+Null estimates still permute training-trial labels after the
 outer train/test split. Mixed-effects trial-holdout repetitions and baseline/
 cell-count predictors remain supported.
 

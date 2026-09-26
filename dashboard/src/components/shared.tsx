@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
+import GuideLink from "./GuideLink";
+import { troubleshootingPath } from "@/lib/help";
 export function Status({ value }: { value: string }) {
   const running = ["running", "queued", "cancelling"].includes(value);
   const success = ["complete", "completed"].includes(value);
@@ -52,7 +54,19 @@ export function Notice({
       className={cn("notice", tone === "info" && "notice-info")}
     >
       <AlertCircle size={17} />
-      <div>{children}</div>
+      <div>
+        {children}
+        {tone === "error" && (
+          <GuideLink
+            path={troubleshootingPath(
+              typeof children === "string" ? children : "",
+            )}
+            className="notice-guide-link"
+          >
+            Troubleshooting guide
+          </GuideLink>
+        )}
+      </div>
     </div>
   );
 }

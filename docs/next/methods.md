@@ -21,6 +21,7 @@ retain the corresponding `manifests/<run_id>.json` records with reported results
 | Decoder | Logistic regression; training-class balancing; five-fold C search; sigmoid calibration; seed 42 |
 | Decoding time grid | 50 ms windows starting −200 through 1400 ms, every 10 ms: 161 bins |
 | Estimates | One observed estimate and 100 training-label null estimates per tested trial/bin |
+| Null time structure | `preserve_null_time_structure=false`: independently permuted training labels at each bin |
 | State detection | One-tailed on and off cluster rules, alpha 0.05; off clusters may contain one bin |
 | Duration outcomes | Total and longest contiguous off-state duration from bin starts 500 through 1400 ms inclusive |
 | Activity plots | PEV-weighted selective-population means; PCA and longest-off-state views enabled |
@@ -140,6 +141,13 @@ The example applies three cell checks:
     define the cell's cue by their circular-mean preference, rounded to a cue
     index. PEV is an effect-size criterion, not a per-bin significance test.
 
+Opposing or symmetric bin preferences can cancel the circular resultant. A
+numerically undefined circular mean remains unavailable rather than being
+rounded into an arbitrary cue. Otherwise selected cells with unavailable cue
+metadata stop screening with a diagnostic error; cells already rejected by
+enabled checks produce a warning. Inspect their cue responses and configured
+test window before changing the analysis.
+
 Bin starts include `test_end_ms`; each half-open window can extend beyond that
 last start. Enabled checks reject unavailable statistics. Disabled checks
 perform no rejection or applicability exclusion, replacing the old sentinel
@@ -188,7 +196,8 @@ optional `select/diagnostics/`.
 
 **Example choices.** Decode stationary cells with logistic regression,
 five-fold C search, sigmoid calibration requesting five folds, and seed 42.
-Fit one observed estimate and 100 null estimates per tested trial/bin.
+Fit one observed estimate and 100 null estimates per tested trial/bin, with
+`preserve_null_time_structure=false` as explicitly set in the preset.
 Windows are 50 ms wide; inherited defaults set bin starts from −200 through
 1400 ms every 10 ms (161 bins) and enable balanced training classes.
 
@@ -223,14 +232,38 @@ reselected within each calibration fold. The held-out test trial enters neither
 step. `svm_kernel=LINEAR` is present in the preset but has no effect because the
 selected decoder is logistic regression.
 
-The observed fit uses the original training labels. Each null fit independently
-permutes those labels after the outer split, for each bin and shuffle. It uses
-the same training activity and repeats C selection and calibration as configured.
-The seed determines balancing and permutations; increasing N preserves the
-existing shuffle prefix and does not create additional observed fits.
+Before launching session fit workers, validate the correct-trial class counts:
+the example's C search needs at least six preferred-cue and five opposite-cue
+trials, leaving five of each after each preferred-trial holdout and balancing.
+Calibration warns when available training counts reduce its requested folds;
+insufficient counts for the configured procedure are an error.
+
+The observed fit uses the original training labels. In the example's default
+null policy, each null fit independently permutes those labels after the outer
+split and training-trial balancing, for each bin and shuffle. It uses the same
+training activity and repeats C selection and calibration as configured.
+
+The optional `decode.preserve_null_time_structure=true` policy instead uses one
+training-label permutation per held-out trial and shuffle across all time bins.
+It also reuses that permutation's inner C-search and calibration fold indices
+across bins. Scaling, C selection, model fitting, and calibration remain
+separate at every bin; time bins are not pooled. Permutations remain independent
+across held-out trials, whose training sets differ. This preserves the label
+assignment through time within each trial's null trajectory; it does not create
+a joint session-wide permutation test or correct for full-session selection.
+
+With the seed and other settings fixed, increasing N preserves the existing
+shuffle prefix in either policy and does not create additional observed fits.
+Changing only this boolean preserves the observed calculation. It does not
+restore pre-split shuffles, cell-wise label-preserving shuffles, or seed repeats.
+The [configuration reference](configuration.md#null-shuffle-time-structure)
+compares the policies and provides JSON and CLI examples.
 
 Outputs include preferred-cue probabilities, observed class predictions,
-selected C values, original test-trial IDs, and provenance. Observed arrays
+selected C values, original test-trial IDs, and provenance. Caches also record
+`preserve_null_time_structure`, the resolved `config`, and `null_policy`.
+Changing the policy invalidates resume checkpoints and requires regenerated
+decoding and dependent outputs. Observed arrays
 have shape `(trial, 161)` and null arrays `(trial, 161, 100)` with the example's
 resolved time grid. Since only preferred-cue trials are tested, the resulting scores describe that class;
 they are not estimates of balanced two-class test performance.
@@ -253,12 +286,16 @@ This stage scores cached predictions without refitting. For preferred-cue
 probability `p` and target `y`, it calculates Brier score `(p − y)²`, natural-log
 loss `−y log(p) − (1 − y) log(1 − p)`, accuracy, and mean decoding confidence.
 Probabilities are clipped to float64 epsilon bounds only for log loss.
-Observed accuracy uses cached class predictions; null accuracy thresholds
-probabilities at `p >= 0.5`. Because every tested label is 1, accuracy is
-the fraction of preferred-cue trials classified as preferred.
+Observed and null accuracy both threshold probabilities at `p >= 0.5`.
+Because every tested label is 1, accuracy is the fraction of preferred-cue
+trials whose preferred-cue probability reaches 0.5. Native classifier
+predictions remain in the decoding cache; if they disagree with this rule,
+evaluation warns and uses the probability threshold for both estimates.
+Such disagreement can occur with SVM probability estimates. The cached native
+predictions and native decoding accuracy are not overwritten.
 
 Metrics are aggregated overall, by time bin, by estimate, and by time bin and
-estimate. Missing predictions are excluded with warnings and valid-entry
+estimate. Missing probabilities are excluded with warnings and valid-entry
 counts; aggregations with no valid entries are NaN. Each null shuffle remains
 a separate estimate, while observed data have a single estimate. Results are
 retained separately within each session; the stage does not compute a pooled
@@ -267,7 +304,9 @@ supported as an alternative, but is not used by the example.
 
 The separate cross-run plotting tool aligns common session IDs. It warns when
 preferred cues or trial sets differ, or comparison metadata is missing, and
-continues plotting. Its percentile bands summarize null estimates, not
+continues plotting. It also warns about different null time-structure policies
+or observed-accuracy decision rules; rerun evaluation to align old accuracy
+results with the current rule. Its percentile bands summarize null estimates, not
 uncertainty across independently recorded sessions.
 
 **Outputs:** `evaluate/eval_confidence.pkl` and `evaluate/tables/eval_confidence.csv`;
@@ -288,7 +327,25 @@ At least two finite null estimates and uniformly spaced time-bin starts are
 required. Each observed probability is standardized against the mean and
 population standard deviation (`ddof=0`) of its trial/bin null estimates:
 `z = (observed − null_mean) / null_std`. Each shuffled map is standardized
-against the same null moments. Zero-null-variance bins are unclassified.
+against the same null moments. Zero-null-variance bins are unclassified in
+both masks and produce a warning. Nonfinite/out-of-range probabilities,
+incompatible time axes, no bin starts in the delay interval, and overlapping
+on/off candidate thresholds are errors.
+
+The example's independent per-bin null permutations do not preserve the
+permutation across adjacent time bins. Cluster correction warns about this
+limitation. The alternative shared-across-time policy preserves that assignment
+within each held-out trial, but trials still use independently generated
+permutations and different training sets; full-session screening is unchanged.
+It therefore does not by itself validate joint session-wide or
+selection-corrected cluster inference.
+
+Small null counts also warn. Under the current in-sample null standardization,
+each standardized null value is bounded above by `sqrt(N − 1)`. With the smoke
+preset's N=3, no null value can exceed the default on threshold 1.645, so its
+on-cluster cutoff is necessarily zero. Those outputs check integration only.
+Other small counts can have poor Monte Carlo precision in the configured tails;
+increase N before interpreting the cluster results.
 
 Candidate clusters connect adjacent time bins within a trial, never across
 trials. Clustering uses the full decoded time grid, before extracting delay
@@ -303,6 +360,12 @@ definitions use different null summaries:
   cluster meets the example's one-bin minimum. Pool all off-cluster masses
   from the 100 shuffles, then retain observed masses at or below the 95th
   percentile of this pooled distribution.
+
+If observed off candidates need correction but there are no usable null off
+clusters after the size filter, the stage raises an error with guidance to
+review null count, thresholds, and cluster size. It does not substitute a
+fabricated zero cutoff. An absence of observed off candidates can legitimately
+produce an empty off-state mask.
 
 Thus off states identify the implemented low/null-compatible confidence
 criterion, not necessarily significantly below-chance decoding, and the
@@ -368,6 +431,12 @@ cue groups, rather than a further held-out decoding evaluation. Activity-state
 associations are descriptive: the state labels themselves were derived from
 activity in the stationary population.
 
+A session with no cached delay off-state bins emits a warning and continues
+without maximum-off-state points. Its PCA still fits the balanced cue groups
+and returns an empty maximum-off-state projection. Malformed/nonfinite masks
+or nonfinite/non-increasing time bins are errors, rather than being treated as
+an empty state population.
+
 **Outputs:** `activity/figures/pev_weighted/` in this example, split into activity
 and principal-component views, then state and cue comparisons.
 
@@ -399,7 +468,11 @@ Compute each cell's firing rate in four half-open periods:
 For the full-data descriptive table, z-normalize each cell within its session
 and period across cached preferred-cue trials, using `ddof=0`. Zero-mean or
 zero-variance cells map to zero. Compute group mean normalized activity and
-the fraction of cells strictly above zero. Empty groups produce zero features.
+the fraction of cells strictly above zero. Empty groups produce zero features
+and a session-level warning listing the absent populations. These zeros denote
+an unavailable population, not measured average activity; inspect group counts
+before interpreting models. Populated groups with zero activity do not trigger
+that warning.
 Group means use equal weights in this preset. PEV weighting is an alternative
 that must be enabled consistently for preparation and compatible analyses;
 it changes selective means, not active fractions or raw group cell counts.
@@ -439,7 +512,9 @@ failures and convergence information must be checked in the outputs.
 
 Nested comparisons use `2 × (logLik_full − logLik_reduced)` against a chi-square
 distribution with degrees of freedom equal to the parameter-count difference;
-negative numerical differences are clipped to zero for the p-value calculation.
+only tiny negative differences within floating-point tolerance are clipped to
+zero, with a warning. A materially lower likelihood for the full nested model
+invalidates the comparison and records an error instead of a p-value.
 Outputs include coefficient estimates, standard errors, 95% intervals, AIC/BIC,
 variance components, and marginal/conditional R². Marginal R² attributes
 variance to fixed effects; conditional R² also includes random-intercept
@@ -447,6 +522,21 @@ variance. These variance-component R² values describe fitted models and are
 different from the held-out predictive R² below. Reported coefficient and
 model-comparison p-values are not adjusted across all fitted models, outcomes,
 or thresholds.
+
+Optimization success and inferential validity are recorded separately.
+Rank-deficient fixed-effect designs, nonconvergence, or nonfinite point estimates
+are model failures. A converged model with usable point estimates but an invalid
+final Hessian, parameter covariance, or fixed-effect standard errors warns and
+sets `inference_valid=false`. Its point estimates remain available, but Wald
+standard errors, z statistics, p-values, and confidence intervals are withheld.
+Comparisons involving such a model also withhold their likelihood-ratio p-value.
+A withheld result does not establish a nonsignificant effect. Boundary warnings
+alone do not invalidate inference when the final numerical checks pass.
+Inspect `fit_success`, `fit_error`, `inference_valid`, `inference_error`,
+`likelihood_ratio_valid`, and `likelihood_ratio_error` in the result tables.
+Individual model failures retain diagnostic rows and allow other models to run.
+An outcome with no usable model fits, or a CV analysis with no successful fits,
+saves its diagnostics and then raises an error rather than reporting success.
 
 ### Repeated trial holdouts
 
@@ -482,7 +572,12 @@ standard deviations, medians, and 2.5th/97.5th percentiles describe variation
 across overlapping random holdouts; they are not confidence intervals based on
 50 independent datasets. Pairwise CV changes use matched model/parent fits
 within a repeat. Check both fit-success counts and warnings before comparing
-models. A completed pipeline is not evidence that every requested model fitted
+models. Ranked CV tables and plots admit only models with all requested fits
+successful and finite held-out RMSE; excluded models warn and remain in the raw
+and summary tables with `rank_eligible` and `rank_exclusion_reason`. This prevents
+rankings based on different subsets of successful holdouts. Usable predictive
+fits can remain in CV even when their coefficient inference is withheld.
+A completed pipeline is not evidence that every requested model fitted
 successfully.
 
 ## 7. Mixed-effects model families {#models}

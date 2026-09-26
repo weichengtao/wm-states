@@ -41,9 +41,8 @@ from scripts.next.compare_mixed_effect_models import (
     OUTCOME,
     SESSION,
     ModelSpec,
-    _comparison_row,
-    _fit_model,
-    _fixed_effect_rows,
+    _fit_model_summary,
+    _require_usable_models,
     _load_and_validate_data,
     _predictions_and_r2,
     _save_coefficient_forest,
@@ -192,6 +191,8 @@ def _nested_contrast_table(
                 "likelihood_ratio_p_value": full[
                     "likelihood_ratio_p_value"
                 ],
+                "inference_valid": bool(full.get("likelihood_ratio_valid", True)),
+                "inference_error": full.get("likelihood_ratio_error", ""),
                 "delta_marginal_r2": float(
                     full["marginal_r2"] - reduced["marginal_r2"]
                 ),
@@ -480,7 +481,10 @@ def _append_model_log(
     else:
         handle.write("Fit warnings: none\n")
     handle.write("\nStatsmodels fit summary:\n")
-    handle.write(result.summary().as_text())
+    if getattr(result, "inference_valid", True):
+        handle.write(result.summary().as_text())
+    else:
+        handle.write(f"Inferential summary withheld: {result.inference_error}")
     handle.write("\n\n")
 
 
@@ -574,22 +578,15 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
         _write_log_header(log, config, input_path, frame, outcome)
         for index, spec in enumerate(specs, start=1):
             print(f"[{outcome.name}] Fitting {index}/{len(specs)}: {spec.name}")
-            result, warning_messages = _fit_model(
-                frame, spec, config.max_iterations
+            result, row, fixed_effect_rows, warning_messages = _fit_model_summary(
+                frame, spec, results, config,
             )
+            if result is None:
+                log.write(f"{spec.name}: FAILED: {row['fit_error']}\n")
+                comparison_rows.append(row)
+                all_fixed_effect_rows.extend(fixed_effect_rows)
+                continue
             variance_metrics = _predictions_and_r2(result, frame, spec.outcome)
-            fixed_effect_rows = _fixed_effect_rows(
-                result, spec, config.significance_alpha
-            )
-            parent_result = results.get(spec.parent) if spec.parent else None
-            row = _comparison_row(
-                result,
-                spec,
-                variance_metrics,
-                fixed_effect_rows,
-                parent_result,
-                warning_messages,
-            )
             plot_path = _save_model_plot(
                 frame,
                 result,
@@ -665,6 +662,7 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
         config.significance_alpha,
     )
     print(f"Saved nested mean-normalized-activity comparison to {output_dir}")
+    _require_usable_models(comparison, output_dir)
     if config.run_cv:
         _run_cross_validation(config, outcome, specs, output_dir)
 

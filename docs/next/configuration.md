@@ -335,6 +335,7 @@ and its dependents. This also applies to caches generated before a code change.
 | `max_sessions_to_run` | Runner CLI or selection/decoding JSON | Cap sessions, without partitioning their trials |
 | `n_jobs` | Runner CLI | Supply worker counts to applicable stages |
 | `n_decode_shuffle` | `decode` JSON | Number of null estimates per trial/bin |
+| `preserve_null_time_structure` | `decode` JSON; dashboard decoding controls | Reuse a training-label permutation across time bins when `true`; default `false` |
 | `seed` | `decode` JSON | Reproduce trial balancing, null permutations, and model randomness |
 | `resume` | `decode` JSON | Reuse matching per-session checkpoints |
 | `cv_shuffles` | Mixed-effects stage JSON | Number of trial-holdout repetitions |
@@ -361,3 +362,79 @@ to zero enables observed-only decoding and evaluation. State detection requires
 at least two null estimates, so run only `select decode evaluate` for an
 observed-only analysis. Preserve the other preset settings when editing this
 field; unspecified values revert to script defaults.
+
+## Null shuffle time structure
+
+`decode.preserve_null_time_structure` is a boolean, defaulting to `false`.
+Both supplied presets explicitly use `false`. Set it within the existing
+`decode` object in a copy of the example preset; preserve the other settings.
+
+| Behavior | `false` (default and example) | `true` |
+| --- | --- | --- |
+| Null labels | Independently permuted for every held-out trial, shuffle, and time bin | One permutation for each held-out trial and shuffle, reused across all its time bins |
+| When labels are permuted | After holding out the test trial and selecting/balancing the training trials | Same |
+| Inner C-search/calibration folds | Constructed from each bin's permuted labels | The same folds are reused across bins for that trial and shuffle |
+| Fitted models | A separate model, scaler, C search, and calibration at each bin | Same; only the label assignment and folds are shared |
+| Across held-out trials | Independent permutations | Still independent permutations |
+| Observed estimate | One fit using original training labels per trial/bin | Unchanged when the seed and other settings match |
+| Null array | `(trial, bin, N)` | Same shape |
+| Temporal-cluster interpretation | Independent permutations do not preserve the permutation across adjacent bins; states emits a warning when applying cluster correction | Preserves the assignment across a trial's bins; does not create a joint session-wide permutation test |
+
+For example, edit these values **inside the existing preset**:
+
+```json
+{
+  "decode": {
+    "n_decode_shuffle": 100,
+    "preserve_null_time_structure": true,
+    "seed": 42
+  }
+}
+```
+
+The fragment above shows only the fields to change; using it as the entire
+settings file would restore defaults for every omitted field. Save the edited
+full preset as, for example, `configs/next/my_pipeline.json`, then run:
+
+```bash
+uv run python scripts/next/pipeline.py \
+  --settings configs/next/my_pipeline.json \
+  --data-dir data/nature --cache-dir cache/next_shared_null \
+  --stages all
+```
+
+The runner accepts this option through stage JSON, not a
+`--preserve-null-time-structure` runner flag. The dashboard automatically exposes
+it as a boolean control in the decoding settings, with the same default and
+saved JSON value.
+
+For a standalone decoder, enable it with:
+
+```bash
+uv run python scripts/next/decoding_confidence.py \
+  --data-dir data/nature --cache-dir cache/next_shared_null \
+  --n-decode-shuffle 100 --seed 42 --preserve-null-time-structure
+```
+
+Run screening into that cache first. Replace the last flag with
+`--no-preserve-null-time-structure` to explicitly choose independent per-bin
+permutations. Standalone commands use decoder defaults for options not supplied;
+they do not read the example JSON automatically.
+
+With a fixed seed and unchanged settings, increasing N preserves the existing
+null prefix in either mode and does not add observed estimates. Toggling the
+mode changes null estimates but preserves the observed calculation. Neither
+mode restores pre-split shuffling, cell-wise label-preserving shuffles, pooled
+delay decoding, or random-seed decoding repeats.
+
+Decoder caches record `preserve_null_time_structure`, the resolved `config`,
+and a readable `null_policy`; state caches retain the originating policy.
+Changing this option invalidates decoder checkpoint reuse. Regenerate
+`decode evaluate states activity prepare` and the dependent model stages;
+use separate run roots to compare policies.
+
+The shared permutation is limited to each held-out trial. Training sets differ
+between held-out trials, cell screening remains a full-session procedure, and
+the state-stage cluster summaries retain their existing definitions. This
+option alone does not establish joint session-wide or selection-corrected
+inference; see [state methods](methods.md#states).

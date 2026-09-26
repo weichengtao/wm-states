@@ -31,16 +31,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tyro
-from scipy.stats import chi2
+import warnings
 
 from scripts.next.compare_mixed_effect_models import (
     COUNT_PREDICTORS,
     OUTCOME,
     SESSION,
     ModelSpec,
-    _comparison_row,
-    _fit_model,
-    _fixed_effect_rows,
+    _fit_model_summary,
+    _nested_likelihood_ratio,
+    _require_usable_models,
     _load_and_validate_data,
     _predictions_and_r2,
     _save_coefficient_forest,
@@ -188,28 +188,32 @@ def _nested_contrast_rows(
     for contrast in contrasts:
         full = rows_by_model.loc[contrast.full_model]
         reduced = rows_by_model.loc[contrast.reduced_model]
-        full_result = results[contrast.full_model]
-        reduced_result = results[contrast.reduced_model]
-        full_predictors = set(full_result.model.exog_names) - {"Intercept"}
-        reduced_predictors = set(reduced_result.model.exog_names) - {"Intercept"}
-        tested = full_predictors - reduced_predictors
-        if not reduced_predictors.issubset(full_predictors):
-            raise RuntimeError(f"Models in {contrast.name} are not nested.")
-        if tested != set(contrast.tested_predictors):
-            raise RuntimeError(
-                f"Unexpected tested predictors for {contrast.name}: {sorted(tested)}"
-            )
-        degrees_of_freedom = int(
-            full_result.df_modelwc - reduced_result.df_modelwc
-        )
-        if degrees_of_freedom <= 0:
-            raise RuntimeError(f"Invalid LRT degrees of freedom for {contrast.name}.")
-        likelihood_ratio = 2.0 * (
-            float(full_result.llf) - float(reduced_result.llf)
-        )
-        p_value = float(
-            chi2.sf(max(likelihood_ratio, 0.0), degrees_of_freedom)
-        )
+        full_result = results.get(contrast.full_model)
+        reduced_result = results.get(contrast.reduced_model)
+        likelihood_ratio = degrees_of_freedom = p_value = np.nan
+        inference_valid = False
+        inference_error = "full or reduced model failed"
+        if full_result is not None and reduced_result is not None:
+            full_predictors = set(full_result.model.exog_names) - {"Intercept"}
+            reduced_predictors = set(reduced_result.model.exog_names) - {"Intercept"}
+            tested = full_predictors - reduced_predictors
+            if not reduced_predictors.issubset(full_predictors):
+                raise RuntimeError(f"Models in {contrast.name} are not nested.")
+            if tested != set(contrast.tested_predictors):
+                raise RuntimeError(f"Unexpected tested predictors for {contrast.name}: {sorted(tested)}")
+            degrees_of_freedom = int(full_result.df_modelwc - reduced_result.df_modelwc)
+            try:
+                likelihood_ratio, candidate_p = _nested_likelihood_ratio(
+                    float(full_result.llf), float(reduced_result.llf), degrees_of_freedom,
+                    context=contrast.name,
+                )
+                inference_valid = all(getattr(fit, "inference_valid", True)
+                                      for fit in (full_result, reduced_result))
+                inference_error = "" if inference_valid else "inference unavailable for full or reduced model"
+                p_value = candidate_p if inference_valid else np.nan
+            except RuntimeError as error:
+                inference_error = str(error)
+                warnings.warn(inference_error, RuntimeWarning, stacklevel=2)
         rows.append(
             {
                 "contrast": contrast.name,
@@ -222,6 +226,8 @@ def _nested_contrast_rows(
                 "likelihood_ratio_df": degrees_of_freedom,
                 "likelihood_ratio_p_value": p_value,
                 "significant": bool(p_value < significance_alpha),
+                "inference_valid": bool(inference_valid),
+                "inference_error": inference_error,
                 "delta_marginal_r2": float(
                     full["marginal_r2"] - reduced["marginal_r2"]
                 ),
@@ -463,17 +469,20 @@ def _cv_contrast_repeat_metrics(
                 degrees_of_freedom = int(
                     full["train_df_modelwc"] - reduced["train_df_modelwc"]
                 )
-                if degrees_of_freedom <= 0:
-                    raise RuntimeError(
-                        f"Invalid CV LRT degrees of freedom for {contrast.name}."
+                likelihood_ratio = p_value = np.nan
+                inference_valid = False
+                inference_error = ""
+                try:
+                    likelihood_ratio, candidate_p = _nested_likelihood_ratio(
+                        float(full["train_log_likelihood"]), float(reduced["train_log_likelihood"]),
+                        degrees_of_freedom, context=f"CV repeat {repeat}, {contrast.name}",
                     )
-                likelihood_ratio = 2.0 * (
-                    float(full["train_log_likelihood"])
-                    - float(reduced["train_log_likelihood"])
-                )
-                p_value = float(
-                    chi2.sf(max(likelihood_ratio, 0.0), degrees_of_freedom)
-                )
+                    inference_valid = bool(full.get("inference_valid", True)) and bool(reduced.get("inference_valid", True))
+                    p_value = candidate_p if inference_valid else np.nan
+                    inference_error = "" if inference_valid else "inference unavailable for full or reduced model"
+                except RuntimeError as error:
+                    inference_error = str(error)
+                    warnings.warn(inference_error, RuntimeWarning, stacklevel=2)
                 row.update(
                     {
                         "train_likelihood_ratio": likelihood_ratio,
@@ -482,6 +491,8 @@ def _cv_contrast_repeat_metrics(
                         "train_lrt_significant": bool(
                             p_value < significance_alpha
                         ),
+                        "train_lrt_valid": inference_valid,
+                        "train_lrt_error": inference_error,
                     }
                 )
                 for metric in (*heldout_metrics, *train_metrics):
@@ -526,6 +537,16 @@ def _summarize_cv_contrasts(repeat_metrics: pd.DataFrame) -> pd.DataFrame:
         for column in successful.select_dtypes(include=[np.number]).columns
         if column not in excluded
     ]
+    # Partial CV can produce usable individual models but no successful
+    # full/reduced pair. Keep report columns present with unavailable values.
+    for column in (
+        "heldout_delta_marginal_r2", "heldout_delta_conditional_r2",
+        "conditional_rmse_ms_improvement_reduced_minus_full",
+        "conditional_mae_ms_improvement_reduced_minus_full",
+        "train_likelihood_ratio", "train_likelihood_ratio_p_value",
+    ):
+        if column not in metric_columns:
+            metric_columns.append(column)
     rows: list[dict[str, Any]] = []
     for contrast, all_rows in repeat_metrics.groupby("contrast", sort=False):
         model_rows = successful[successful["contrast"] == contrast]
@@ -540,14 +561,18 @@ def _summarize_cv_contrasts(repeat_metrics: pd.DataFrame) -> pd.DataFrame:
             "n_successful_pairs": int(len(model_rows)),
             "n_failed_pairs": int(len(all_rows) - len(model_rows)),
         }
-        if len(model_rows):
+        valid_lrt_rows = model_rows[model_rows.get(
+            "train_lrt_valid", pd.Series(True, index=model_rows.index)
+        ).fillna(False).astype(bool)]
+        row["n_valid_train_lrt_pairs"] = len(valid_lrt_rows)
+        if len(valid_lrt_rows):
             row["train_lrt_significant_fraction"] = float(
-                model_rows["train_lrt_significant"].mean()
+                valid_lrt_rows["train_lrt_significant"].mean()
             )
         else:
             row["train_lrt_significant_fraction"] = np.nan
         for column in metric_columns:
-            values = model_rows[column].dropna().to_numpy(dtype=float)
+            values = model_rows.get(column, pd.Series(dtype=float)).dropna().to_numpy(dtype=float)
             for suffix in ("mean", "std", "median", "q025", "q975"):
                 row[f"{column}_{suffix}"] = np.nan
             if values.size:
@@ -706,7 +731,10 @@ def _append_model_log(
     else:
         handle.write("Fit warnings: none\n")
     handle.write("\nStatsmodels fit summary:\n")
-    handle.write(result.summary().as_text())
+    if getattr(result, "inference_valid", True):
+        handle.write(result.summary().as_text())
+    else:
+        handle.write(f"Inferential summary withheld: {result.inference_error}")
     handle.write("\n\n")
 
 
@@ -854,22 +882,15 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
         _write_fit_log_header(log, config, input_path, frame, outcome)
         for index, spec in enumerate(specs, start=1):
             print(f"[{outcome.name}] Fitting {index}/{len(specs)}: {spec.name}")
-            result, warning_messages = _fit_model(
-                frame, spec, config.max_iterations
+            result, row, model_fixed_rows, warning_messages = _fit_model_summary(
+                frame, spec, results, config,
             )
+            if result is None:
+                log.write(f"{spec.name}: FAILED: {row['fit_error']}\n")
+                comparison_rows.append(row)
+                fixed_effect_rows.extend(model_fixed_rows)
+                continue
             variance_metrics = _predictions_and_r2(result, frame, spec.outcome)
-            model_fixed_rows = _fixed_effect_rows(
-                result, spec, config.significance_alpha
-            )
-            parent_result = results.get(spec.parent) if spec.parent else None
-            row = _comparison_row(
-                result,
-                spec,
-                variance_metrics,
-                model_fixed_rows,
-                parent_result,
-                warning_messages,
-            )
             plot_path = _save_model_plot(
                 frame,
                 result,
@@ -940,6 +961,7 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
         config.significance_alpha,
     )
     print(f"Saved nested cell-count comparison to {output_dir}")
+    _require_usable_models(comparison, output_dir)
     if config.run_cv:
         _run_cross_validation(config, outcome, specs, contrasts, output_dir)
 

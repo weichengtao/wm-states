@@ -103,10 +103,14 @@ def load_runs(cache_dirs):
                 differences.append('trial ID metadata is missing')
             elif not np.array_equal(np.sort(reference['trial_idx']), np.sort(result['trial_idx'])):
                 differences.append('trial IDs differ')
+            if reference.get('preserve_null_time_structure', False) != result.get('preserve_null_time_structure', False):
+                differences.append('null time-structure policies differ')
+            if reference.get('observed_accuracy_source') != result.get('observed_accuracy_source'):
+                differences.append('observed accuracy decision rules differ; rerun evaluate for comparable accuracy')
             if differences:
                 warnings.warn(
                     f'Session {session}, runs {names[0]} and {name}: {"; ".join(differences)}. '
-                    'Continuing comparison, but scores may describe different trial populations.',
+                    'Continuing comparison, but trial populations or scoring/null policies may differ.',
                     UserWarning, stacklevel=2,
                 )
     return names, runs, common

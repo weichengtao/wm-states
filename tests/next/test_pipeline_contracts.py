@@ -44,6 +44,11 @@ class CacheContractTest(unittest.TestCase):
                 self.assertEqual(fit.call_count, 2)
                 decoder.main(dataclasses.replace(config, n_decode_shuffle=2))
                 self.assertEqual(fit.call_count, 3)
+                preserved = dataclasses.replace(config, n_decode_shuffle=2, preserve_null_time_structure=True)
+                decoder.main(preserved)
+                self.assertEqual(fit.call_count, 4)
+                decoder.main(preserved)
+                self.assertEqual(fit.call_count, 4)
 
     def test_rejects_legacy_cache_and_roundtrips_new_cache(self):
         with tempfile.TemporaryDirectory() as directory:

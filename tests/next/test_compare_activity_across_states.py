@@ -1,6 +1,10 @@
 import unittest
+import tempfile
+import warnings
+from pathlib import Path
 
 import numpy as np
+from scipy.io import savemat
 
 from scripts.next.compare_activity_across_states import (
     Config,
@@ -22,6 +26,7 @@ from scripts.next.compare_activity_across_states import (
     plot_session_activity_pairwise,
     population_mean_point_categories,
     preferred_pev_cells,
+    prepare_session_activity,
     principal_component_session_activity,
     session_cell_groups,
     top_preferred_pev_cells,
@@ -330,6 +335,98 @@ class PreferredCellPrincipalComponentsTest(unittest.TestCase):
         self.assertEqual(projection.opposite_activity.shape, (2, 3, 0))
         self.assertEqual(projection.max_off_state_activity.shape, (1, 0))
         self.assertEqual(projection.explained_variance_ratio.size, 0)
+
+    def test_empty_maximum_state_preserves_nonconstant_pca_fit(self):
+        preferred = np.arange(12, dtype=float).reshape(2, 3, 2)
+        opposite = np.arange(12, 24, dtype=float).reshape(2, 3, 2)
+        reference = compute_preferred_cell_principal_components(
+            preferred, opposite, np.asarray([[1.0, 2.0]]),
+        )
+        result = compute_preferred_cell_principal_components(
+            preferred, opposite, np.empty((0, 2)),
+        )
+
+        self.assertEqual(result.max_off_state_activity.shape, (0, 2))
+        for field in ("preferred_activity", "opposite_activity", "components",
+                      "center", "explained_variance_ratio"):
+            np.testing.assert_array_equal(getattr(result, field), getattr(reference, field))
+
+    def test_empty_maximum_state_does_not_bypass_pca_input_validation(self):
+        preferred = np.arange(12, dtype=float).reshape(2, 3, 2)
+        with self.assertRaisesRegex(ValueError, "shape .*bin, cell"):
+            compute_preferred_cell_principal_components(preferred, preferred, np.empty((0, 3)))
+        preferred[0, 0, 0] = np.nan
+        with self.assertRaisesRegex(ValueError, "only finite"):
+            compute_preferred_cell_principal_components(preferred, preferred, np.empty((0, 2)))
+
+
+class NoOffStateActivityPreparationTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.config = Config(
+            data_dir=Path(self.directory.name), show_principal_components=True,
+            compare_with_max_off_state=True,
+        )
+        times = np.arange(-400, 1500, 10)
+        spikes = np.ones((6, times.size, 2)) * np.arange(1, 7)[:, None, None]
+        savemat(self.config.data_dir / "example.mat", {
+            "spks": spikes, "tc": times,
+            "cueAngIdx": np.array([7, 7, 7, 3, 3, 3]), "isCorr": np.ones(6),
+        })
+        self.selection = {
+            "session": "example", "num_trials": 6,
+            "cell_idx_stationary": np.array([0, 1]),
+            "screening_checks": {"selectivity": True},
+            "cell_properties": {
+                "cell_idx": np.array([0, 1]), "preferred_cue": np.array([7, 7]),
+                "mean_selectivity_pev_pct": np.array([8.0, 7.0]),
+            },
+        }
+        self.state = {
+            "session": "example", "cue": 7, "trial_idx": np.array([0, 1, 2]),
+            "time_bins": np.array([500, 550, 600]),
+            "on_state_mask": np.ones((3, 3), dtype=bool),
+            "off_state_mask": np.zeros((3, 3), dtype=bool),
+        }
+
+    def test_no_off_state_warns_once_and_returns_usable_activity_and_pca(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = prepare_session_activity(self.state, [self.selection], self.config, 42)
+
+        self.assertEqual(len(caught), 1)
+        self.assertIs(caught[0].category, RuntimeWarning)
+        self.assertIn("Session example: no cached off-state bins", str(caught[0].message))
+        self.assertIn("review the states output", str(caught[0].message))
+        self.assertEqual(result.preferred_activity.shape, (3, 3, 2))
+        self.assertEqual(result.max_off_state_activity.shape, (0, 2))
+        self.assertIsNone(result.max_off_state_trial_id)
+        self.assertEqual(result.principal_component_activity.max_off_state_activity.shape, (0, 2))
+        self.assertGreater(result.principal_component_activity.explained_variance_ratio[0], 0)
+
+        import matplotlib.pyplot as plt
+        figure = plot_session_activity_marginal_histograms(
+            principal_component_session_activity(result), compare_with_max_off_state=True,
+        )
+        plt.close(figure)
+
+    def test_invalid_masks_are_errors_not_empty_state_warnings(self):
+        for invalid_value in (np.nan, np.inf, -1, 2):
+            with self.subTest(value=invalid_value):
+                self.state["off_state_mask"] = np.zeros((3, 3))
+                self.state["off_state_mask"][0, 0] = invalid_value
+                with warnings.catch_warnings(record=True) as caught:
+                    with self.assertRaisesRegex(ValueError, "Session example.*finite Boolean or 0/1"):
+                        prepare_session_activity(self.state, [self.selection], self.config, 42)
+                self.assertEqual(caught, [])
+
+    def test_invalid_time_bins_are_errors_not_empty_state_warnings(self):
+        for bins in ([500, np.nan, 600], [500, np.inf, 600], [500, 500, 600], [600, 550, 500]):
+            with self.subTest(bins=bins):
+                self.state["time_bins"] = np.asarray(bins)
+                with self.assertRaisesRegex(ValueError, "finite and strictly increasing"):
+                    prepare_session_activity(self.state, [self.selection], self.config, 42)
 
 
 class FixedWidthBinEdgesTest(unittest.TestCase):

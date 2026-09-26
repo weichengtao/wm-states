@@ -133,6 +133,24 @@ to the owning stage, as described in [Configuration](configuration.md#cache-dire
 Check the statistical analyses' logs and result tables for failed or nonconverged
 fits; a completed command does not imply that every model converged.
 
+Optimization and inference have separate status fields. `fit_success=false`
+records a failed model and its `fit_error`; other models can continue.
+`inference_valid=false` means usable point estimates may remain, but coefficient
+standard errors, confidence intervals, and p-values are withheld. Consult
+`inference_error` before interpreting a missing value or `significant=false`;
+withheld inference is not evidence of no effect. Nested comparisons similarly
+report `likelihood_ratio_valid` and `likelihood_ratio_error` instead of silently
+accepting invalid fits or materially negative likelihood improvements.
+If every model fails for an outcome, the stage saves diagnostic tables and logs,
+then raises an error. The same rule applies when every requested CV fit fails.
+
+CV rankings require every requested holdout to succeed with finite RMSE.
+Incomplete models remain in the raw/summary outputs, with failure counts,
+`rank_eligible=false`, and a reason. They do not compete against models evaluated
+on all holdouts. A warning explains each exclusion. These safeguards do not
+change the Gaussian model family, the random trial split, or multiplicity policy;
+see [the estimation methods](methods.md#mixed-effects-estimation).
+
 
 ## Activity periods and groups
 

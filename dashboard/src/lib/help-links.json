@@ -1,0 +1,193 @@
+{
+  "stageHelp": [
+    {
+      "id": "select",
+      "label": "Cell screening",
+      "summary": "Which cells and correct trials enter the analysis.",
+      "path": "next/methods/#select"
+    },
+    {
+      "id": "decode",
+      "label": "Observed & null decoding",
+      "summary": "Training, label shuffles, calibration, and time bins.",
+      "path": "next/methods/#decode"
+    },
+    {
+      "id": "evaluate",
+      "label": "Confidence evaluation",
+      "summary": "Accuracy, Brier score, log loss, and valid counts.",
+      "path": "next/methods/#evaluate"
+    },
+    {
+      "id": "states",
+      "label": "On/off states",
+      "summary": "Candidate thresholds, cluster correction, and durations.",
+      "path": "next/methods/#states"
+    },
+    {
+      "id": "activity",
+      "label": "Activity comparisons",
+      "summary": "Cell populations, normalization, PEV weights, and PCA.",
+      "path": "next/methods/#activity"
+    },
+    {
+      "id": "prepare",
+      "label": "Prepare model data",
+      "summary": "Trial predictors, histories, and cross-validation inputs.",
+      "path": "next/methods/#prepare"
+    },
+    {
+      "id": "models",
+      "label": "Mixed-effects models",
+      "summary": "Model families and conditional within-session validation.",
+      "path": "next/methods/#models"
+    },
+    {
+      "id": "nested-count",
+      "label": "Nested cell-count models",
+      "summary": "Compare contributions from different cell populations.",
+      "path": "next/methods/#nested-count"
+    },
+    {
+      "id": "nested-activity",
+      "label": "Nested activity models",
+      "summary": "Compare activity across periods with common model inputs.",
+      "path": "next/methods/#nested-activity"
+    },
+    {
+      "id": "criticality",
+      "label": "Active-cell thresholds",
+      "summary": "Interpret the threshold scan and its validation limits.",
+      "path": "next/methods/#criticality"
+    },
+    {
+      "id": "interactions",
+      "label": "Period interactions",
+      "summary": "Interactions between activity measurements across periods.",
+      "path": "next/methods/#interactions"
+    }
+  ],
+  "pageHelp": {
+    "configure": {
+      "label": "Configure your analysis",
+      "summary": "Start with the example preset, choose stages, then validate before launching.",
+      "path": "next/dashboard/#configure-an-analysis"
+    },
+    "monitor": {
+      "label": "Follow a running pipeline",
+      "summary": "Read stage progress and logs. You can browse results while processing continues.",
+      "path": "next/dashboard/#follow-processing"
+    },
+    "results": {
+      "label": "Find and explore your runs",
+      "summary": "Select a run to inspect its sessions, figures, tables, and recorded settings.",
+      "path": "next/dashboard/#find-existing-runs"
+    },
+    "compare": {
+      "label": "Compare sessions and runs",
+      "summary": "Use the side-by-side viewer and check that the trial and analysis settings match.",
+      "path": "next/dashboard/#inspect-and-compare-results"
+    }
+  },
+  "helpTopics": [
+    {
+      "title": "Choosing stages",
+      "keywords": "order dependency prerequisites select decode states",
+      "answer": "Core stages cover screening through activity. Select all stages to include model preparation and fitting. A partial run needs its earlier stages' caches.",
+      "path": "next/pipeline/#stage-order"
+    },
+    {
+      "title": "Null shuffles through time",
+      "keywords": "preserve_null_time_structure null temporal permutation n_decode_shuffle",
+      "answer": "The default shuffles labels independently at each bin. Enable Preserve null time structure to reuse a permutation across bins for each held-out trial and shuffle. Models remain separate at each bin, and permutations remain independent between held-out trials.",
+      "path": "next/configuration/#null-shuffle-time-structure"
+    },
+    {
+      "title": "A fresh run or a rerun?",
+      "keywords": "cache resume checkpoint folder overwrite history",
+      "answer": "Use a new run directory when comparing analysis settings. Reusing a directory can replace stage outputs; manifest history is retained. Decoder checkpoints are reused only when their inputs and settings match.",
+      "path": "next/configuration/#resume-and-rerun"
+    },
+    {
+      "title": "Keep a reusable configuration",
+      "keywords": "preset settings json save export import",
+      "answer": "The form starts with the example settings. Copy settings from the JSON editor into a named configuration file, or use Reuse settings from a previous run.",
+      "path": "next/dashboard/#generated-files-and-reusable-presets"
+    },
+    {
+      "title": "Warnings and failed stages",
+      "keywords": "error missing invalid failure help troubleshooting",
+      "answer": "Open the stage log for the specific message. A completed pipeline can still contain model warnings or unavailable results; inspect fit diagnostics before interpreting them.",
+      "path": "next/troubleshooting/"
+    },
+    {
+      "title": "Export clear figures",
+      "keywords": "pdf png tif eps vector lossless formats",
+      "answer": "Choose PNG for inline previews and PDF for vector text and paths. The format selection applies to every stage; embedded images remain raster data inside a PDF.",
+      "path": "next/configuration/#figure-exports"
+    },
+    {
+      "title": "Sessions and available data",
+      "keywords": "data directory allowlist missing session list file",
+      "answer": "The session list filters the files actually present in your data directory. Listed sessions without matching files are reported; available listed sessions continue.",
+      "path": "next/configuration/#session-selection"
+    },
+    {
+      "title": "Compare with the right context",
+      "keywords": "compare split screen session run results settings",
+      "answer": "Keep the analysis population, preferred cue, trial set, and preprocessing in view. Different settings can change what a figure or score represents.",
+      "path": "next/dashboard/#inspect-and-compare-results"
+    }
+  ],
+  "fieldLinks": {
+    "preserve_null_time_structure": "next/configuration/#null-shuffle-time-structure",
+    "n_decode_shuffle": "next/configuration/#changing-the-null-count",
+    "resume": "next/configuration/#resume-and-rerun",
+    "session_selection": "next/configuration/#session-selection",
+    "screening_checks": "next/configuration/#screening-checks",
+    "screening_diagnostics": "next/configuration/#screening-diagnostics",
+    "mixed_models": "next/methods/#mixed-effects-estimation"
+  },
+  "troubleshooting": [
+    {
+      "pattern": "fingerprint|provenance|stale",
+      "anchor": "activity-or-preparation-reports-stale-provenance"
+    },
+    {
+      "pattern": "unavailable cue|undefined.*cue|circular",
+      "anchor": "screening-reports-an-undefined-preferred-cue"
+    },
+    {
+      "pattern": "null.*variance|few null|monte carlo",
+      "anchor": "states-warn-about-very-few-null-estimates-or-zero-variance"
+    },
+    {
+      "pattern": "null.*off.*cluster|probabilit|threshold.*overlap",
+      "anchor": "states-reject-invalid-thresholds-probabilities-or-missing-null-clusters"
+    },
+    {
+      "pattern": "correct.*cue.*trials|calibration|training.*class|cv folds",
+      "anchor": "decoding-cannot-construct-the-requested-cv-folds"
+    },
+    {
+      "pattern": "missing.*cache|cache.*not found",
+      "anchor": "a-stage-cannot-find-its-input-cache"
+    },
+    {
+      "pattern": "incompatible.*cache|cache.*incompatible",
+      "anchor": "a-cache-is-incompatible"
+    },
+    {
+      "pattern": "unknown.*stage|unknown.*setting|unknown.*field|invalid.*config",
+      "anchor": "the-runner-rejects-settings-or-a-stage-name"
+    },
+    {
+      "pattern": "converg|singular|rank.deficient|model.*fail",
+      "anchor": "mixed-effects-fits-fail-or-do-not-converge"
+    },
+    {
+      "pattern": "fetch|network|connect|backend",
+      "anchor": "the-dashboard-does-not-open"
+    }
+  ]
+}

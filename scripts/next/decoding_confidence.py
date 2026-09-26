@@ -57,9 +57,16 @@ class Config:
     t_decode_window: int = 50
     t_decode_step: int = 10
     n_decode_shuffle: int = 100
+    # Reuse each training-label shuffle across time bins within a held-out trial.
+    preserve_null_time_structure: bool = False
+
+    # Reuse completed decoding checkpoints when settings, inputs, and code match.
     resume: bool = True
+    # Render figures from the existing decoding cache without fitting models.
     plot_only: bool = False
+    # Save diagnostic figures after decoding each session.
     save_figures: bool = True
+    # Label trial axes with original recording trial IDs.
     plot_actual_trial_id: bool = False
 
     def __post_init__(self):
@@ -68,6 +75,8 @@ class Config:
         self.decoder_model = DecoderModel(self.decoder_model)
         self.svm_kernel = SVMKernel(self.svm_kernel)
         self.logistic_calibration_method = LogisticCalibrationMethod(self.logistic_calibration_method)
+        if not isinstance(self.preserve_null_time_structure, bool):
+            raise ValueError('preserve_null_time_structure must be true or false.')
         if self.n_decode_shuffle < 0 or self.seed < 0:
             raise ValueError('Shuffle count and seed must be nonnegative.')
         if not np.isfinite(self.classifier_c) or self.classifier_c <= 0:
@@ -93,16 +102,45 @@ def training_trials(labels, test_idx, seed, balance):
     return indices
 
 
+def validate_training_class_counts(labels, config, *, context):
+    """Preflight every preferred-trial holdout before launching fit workers."""
+    preferred = int(np.count_nonzero(labels == 1))
+    opposite = int(np.count_nonzero(labels == 0))
+    required = 1
+    if config.grid_search_for_c:
+        required = CLASSIFIER_C_GRID_SEARCH_CV
+    elif (config.decoder_model is DecoderModel.LOGISTIC_REGRESSION
+          and config.logistic_calibration_method is not LogisticCalibrationMethod.NONE):
+        required = 2
+    if preferred < required + 1 or opposite < required:
+        raise ValueError(
+            f'{context}: decoding requires at least {required + 1} correct '
+            f'preferred-cue trials and {required} correct opposite-cue trials '
+            f'for the configured training/C-search/calibration after holdout; '
+            f'found {preferred} and {opposite}. Check trial eligibility or '
+            'explicitly revise the decoder settings.'
+        )
+    if (config.decoder_model is DecoderModel.LOGISTIC_REGRESSION
+            and config.logistic_calibration_method is not LogisticCalibrationMethod.NONE
+            and min(preferred - 1, opposite) < config.logistic_calibration_cv):
+        warnings.warn(
+            f'{context}: reducing logistic calibration from '
+            f'{config.logistic_calibration_cv} to {min(preferred - 1, opposite)} '
+            'folds because of available training class counts.',
+            RuntimeWarning, stacklevel=2,
+        )
+
+
 def decode_one_trial(test_idx, binned_rates, labels, bin_starts, config):
     """Hold out all activity from a trial in fitting, C search and calibration.
 
     Each fit uses one sample per training trial from the test bin only.
-    Null labels are independently permuted for each bin after selecting the
-    outer training trials.
+    Null labels are permuted after selecting the outer training trials. The
+    optional time-structure mode reuses a permutation across bins, not folds.
     """
     labels = np.asarray(labels)
     rates = np.asarray(binned_rates)
-    if rates.ndim != 3 or labels.shape != (rates.shape[0],) or not np.all(np.isin(labels, [0, 1])):
+    if rates.ndim != 3 or any(size == 0 for size in rates.shape) or labels.shape != (rates.shape[0],) or not np.all(np.isin(labels, [0, 1])):
         raise ValueError('Expected rates (trial, bin, cell) and binary labels (trial,).')
     if not 0 <= test_idx < labels.size or not np.all(np.isfinite(rates)):
         raise ValueError('Invalid test trial or nonfinite activity.')
@@ -124,12 +162,19 @@ def decode_one_trial(test_idx, binned_rates, labels, bin_starts, config):
     for estimate in range(config.n_decode_shuffle + 1):
         calibration_splits = {}
         search_splits = {}
+        shared_null_labels = None
+        if estimate > 0 and config.preserve_null_time_structure:
+            rng = np.random.default_rng(np.random.SeedSequence([config.seed, int(test_idx), 1, estimate, 0]))
+            shared_null_labels = rng.permutation(train_labels)
         for b in range(count):
             X, y = train_rates[:, b, :], train_labels
             if estimate > 0:
-                rng = np.random.default_rng(np.random.SeedSequence([config.seed, int(test_idx), 1, estimate, b]))
-                y = rng.permutation(y)
-            split_key = (X.shape[0], b if estimate > 0 else None)
+                if shared_null_labels is not None:
+                    y = shared_null_labels
+                else:
+                    rng = np.random.default_rng(np.random.SeedSequence([config.seed, int(test_idx), 1, estimate, b]))
+                    y = rng.permutation(y)
+            split_key = (X.shape[0], b if estimate > 0 and not config.preserve_null_time_structure else None)
             selected_c = config.classifier_c
             if config.grid_search_for_c:
                 if split_key not in search_splits:
@@ -155,6 +200,8 @@ def decode_one_trial(test_idx, binned_rates, labels, bin_starts, config):
             model.fit(X, y)
             test_sample = test_rates[b:b + 1]
             probability = model.predict_proba(test_sample)[0, np.flatnonzero(model.classes_ == 1)[0]]
+            if not np.isfinite(probability) or not 0 <= probability <= 1:
+                raise ValueError(f'Trial {test_idx}, bin {b}, estimate {estimate}: decoder returned an invalid probability.')
             if estimate == 0:
                 observed[b] = probability
                 predictions[b] = model.predict(test_sample)[0]
@@ -182,6 +229,7 @@ def decode_session(path, selection, config):
     tests = np.flatnonzero(labels == 1)
     if not tests.size:
         raise ValueError(f'{path.stem}: no preferred-cue test trials.')
+    validate_training_class_counts(labels, config, context=path.stem)
     starts = np.arange(config.t_decode_start, config.t_decode_end + 1, config.t_decode_step)
     # Bin the selected cells once; never send raw spike tensors to fit workers.
     rates = compute_binned_rates(spikes[np.ix_(trials, np.arange(times.size), cells)], times, starts, config.t_decode_window)
@@ -199,10 +247,15 @@ def decode_session(path, selection, config):
         'decoding_accuracy': (predicted == labels[tests, None]).mean(axis=0),
         'decoding_confidence_null': null, 'decoding_classifier_c_null': null_c,
         'n_decode_shuffle': config.n_decode_shuffle,
+        'preserve_null_time_structure': config.preserve_null_time_structure,
         'logistic_calibration_effective_cv_folds': sorted({n for d in decoded for n in d[5]}),
         'classifier_c_grid': CLASSIFIER_C_GRID,
         'classifier_c_grid_search_cv_folds': CLASSIFIER_C_GRID_SEARCH_CV,
-        'null_policy': 'training-trial labels independently permuted per bin and shuffle',
+        'null_policy': (
+            'training-trial labels permuted once per held-out trial and shuffle; reused across time bins'
+            if config.preserve_null_time_structure else
+            'training-trial labels independently permuted per bin and shuffle'
+        ),
         'config': json.loads(json.dumps(asdict(config), default=json_value)),
     }
 

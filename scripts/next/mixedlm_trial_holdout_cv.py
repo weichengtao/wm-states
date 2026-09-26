@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from scripts.next import cache_io as pickle
 from scripts.next.common import full_session_selection
 from dataclasses import dataclass, field
@@ -15,7 +16,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.stats import chi2
 
 from scripts.next.figure_exports import save_figure
 from scripts.next.activity_weighting import weighting_mode, weighting_policy
@@ -24,6 +24,7 @@ from scripts.next.compare_mixed_effect_models import (
     SESSION,
     ModelSpec,
     _fit_model,
+    _nested_likelihood_ratio,
     _predictions_and_r2,
 )
 from scripts.next.prepare_data_for_mixedlm import (
@@ -351,6 +352,9 @@ def _aggregate_metrics(repeat_metrics: pd.DataFrame) -> pd.DataFrame:
                 "n_shuffles_requested": int(len(all_model_rows)),
                 "n_successful_fits": int(len(model_rows)),
                 "n_failed_fits": int(len(all_model_rows) - len(model_rows)),
+                "n_invalid_inference_fits": int((~model_rows.get(
+                    "inference_valid", pd.Series(True, index=model_rows.index)
+                )).sum()),
             }
         )
         for column in metric_columns:
@@ -365,12 +369,33 @@ def _aggregate_metrics(repeat_metrics: pd.DataFrame) -> pd.DataFrame:
             row[f"{column}_q025"] = float(np.quantile(values, 0.025))
             row[f"{column}_q975"] = float(np.quantile(values, 0.975))
         rows.append(row)
-    return pd.DataFrame(rows)
+    summary = pd.DataFrame(rows)
+    summary["rank_eligible"] = (
+        summary["n_successful_fits"].eq(summary["n_shuffles_requested"])
+        & summary["n_shuffles_requested"].gt(0)
+        & np.isfinite(summary["fixed_rmse_ms_mean"])
+    )
+    summary["rank_exclusion_reason"] = np.where(
+        summary["rank_eligible"], "", "incomplete successful folds or nonfinite held-out RMSE",
+    )
+    return summary
 
 
 def _rank_models_by_marginal_rmse(summary: pd.DataFrame) -> pd.DataFrame:
-    """Return successful models ranked by mean held-out fixed-effect RMSE."""
-    return summary[summary["n_successful_fits"] > 0].sort_values(
+    """Rank only models evaluated successfully on every requested fold."""
+    complete = (
+        summary["n_successful_fits"].eq(summary["n_shuffles_requested"])
+        & summary["n_shuffles_requested"].gt(0)
+        & np.isfinite(summary["fixed_rmse_ms_mean"])
+    )
+    if not complete.all():
+        excluded = ", ".join(summary.loc[~complete, "model"].astype(str))
+        warnings.warn(
+            "Excluded models from CV ranking because requested folds did not all "
+            f"succeed with finite RMSE: {excluded}. Raw metrics and failure counts are retained.",
+            RuntimeWarning, stacklevel=2,
+        )
+    return summary[complete].sort_values(
         ["fixed_rmse_ms_mean", "model"], kind="stable"
     )
 
@@ -395,6 +420,9 @@ def _plot_overview(
         ax.set_yticks(y, shown["model"] if ax is axes[0] else [])
         ax.set_xlabel(label)
         ax.grid(axis="x", alpha=0.2)
+        if shown.empty:
+            ax.text(0.5, 0.5, "No models completed every requested fold", ha="center",
+                    va="center", transform=ax.transAxes)
     fig.suptitle(
         f"{outcome.replace('_', ' ')}\n"
         "Top models by mean held-out marginal RMSE; bars show ±1 SD"
@@ -584,17 +612,25 @@ def run_trial_holdout_cv(
                             result, train, spec.outcome
                         )
                         fixed, conditional = _test_predictions(result, test)
+                        if not np.all(np.isfinite(fixed)) or not np.all(np.isfinite(conditional)):
+                            raise RuntimeError("Model produced nonfinite held-out predictions.")
                         observed = test[spec.outcome].to_numpy(dtype=float)
                         sessions = test[SESSION].astype(str).to_numpy()
                         fixed_metrics = _metrics(observed, fixed, sessions)
                         conditional_metrics = _metrics(
                             observed, conditional, sessions
                         )
+                        if any(not np.isfinite(values[metric])
+                               for values in (fixed_metrics, conditional_metrics)
+                               for metric in ("rmse_ms", "mae_ms")):
+                            raise RuntimeError("Model produced nonfinite held-out prediction errors.")
                         row = {
                             **base_row,
                             "fit_success": True,
                             "fit_error": "",
                             "converged": bool(result.converged),
+                            "inference_valid": bool(getattr(result, "inference_valid", True)),
+                            "inference_error": getattr(result, "inference_error", ""),
                             "train_log_likelihood": float(result.llf),
                             "train_aic": float(result.aic),
                             "train_bic": float(result.bic),
@@ -681,6 +717,8 @@ def run_trial_holdout_cv(
                             "fit_success": False,
                             "fit_error": f"{type(error).__name__}: {error}",
                             "converged": False,
+                            "inference_valid": False,
+                            "inference_error": f"{type(error).__name__}: {error}",
                         }
                         print(f"  CV fit failed: {spec.name}: {error}")
                     metric_rows.append(row)
@@ -698,15 +736,18 @@ def run_trial_holdout_cv(
         degrees_lookup = metrics.set_index(["repeat", "model"])[
             "train_df_modelwc"
         ]
+        inference_lookup = metrics.set_index(["repeat", "model"])["inference_valid"]
         likelihood_ratios: list[float] = []
         likelihood_ratio_dfs: list[float] = []
         likelihood_ratio_p_values: list[float] = []
+        likelihood_ratio_errors: list[str] = []
         for row in metrics.itertuples(index=False):
             parent = str(row.parent_model)
             if not parent or not bool(row.fit_success):
                 likelihood_ratios.append(np.nan)
                 likelihood_ratio_dfs.append(np.nan)
                 likelihood_ratio_p_values.append(np.nan)
+                likelihood_ratio_errors.append("model fit failed" if not bool(row.fit_success) else "")
                 continue
             parent_llf = likelihood_lookup.get((int(row.repeat), parent), np.nan)
             parent_df = degrees_lookup.get((int(row.repeat), parent), np.nan)
@@ -715,18 +756,31 @@ def run_trial_holdout_cv(
                 likelihood_ratios.append(np.nan)
                 likelihood_ratio_dfs.append(np.nan)
                 likelihood_ratio_p_values.append(np.nan)
+                likelihood_ratio_errors.append("parent fit unavailable or invalid degrees of freedom")
                 continue
-            likelihood_ratio = 2.0 * (
-                float(row.train_log_likelihood) - float(parent_llf)
-            )
-            likelihood_ratios.append(likelihood_ratio)
-            likelihood_ratio_dfs.append(degrees_of_freedom)
-            likelihood_ratio_p_values.append(
-                float(chi2.sf(max(likelihood_ratio, 0.0), degrees_of_freedom))
-            )
+            try:
+                likelihood_ratio, p_value = _nested_likelihood_ratio(
+                    float(row.train_log_likelihood), float(parent_llf), degrees_of_freedom,
+                    context=f"CV repeat {row.repeat}, {row.model}",
+                )
+                inference_valid = bool(row.inference_valid) and bool(
+                    inference_lookup.get((int(row.repeat), parent), False)
+                )
+                likelihood_ratios.append(likelihood_ratio)
+                likelihood_ratio_dfs.append(degrees_of_freedom)
+                likelihood_ratio_p_values.append(p_value if inference_valid else np.nan)
+                likelihood_ratio_errors.append("" if inference_valid else "inference unavailable for full or reduced model")
+            except RuntimeError as error:
+                warnings.warn(str(error), RuntimeWarning, stacklevel=2)
+                likelihood_ratios.append(np.nan)
+                likelihood_ratio_dfs.append(degrees_of_freedom)
+                likelihood_ratio_p_values.append(np.nan)
+                likelihood_ratio_errors.append(str(error))
         metrics["train_likelihood_ratio_vs_parent"] = likelihood_ratios
         metrics["train_likelihood_ratio_df"] = likelihood_ratio_dfs
         metrics["train_likelihood_ratio_p_value"] = likelihood_ratio_p_values
+        metrics["train_likelihood_ratio_valid"] = np.isfinite(likelihood_ratio_p_values)
+        metrics["train_likelihood_ratio_error"] = likelihood_ratio_errors
         for prediction_type in ("fixed", "conditional"):
             for metric in (
                 "rmse_ms",
@@ -805,4 +859,9 @@ def run_trial_holdout_cv(
         predictions, summary, figure_dir, config.figure_dpi, outcome
     )
     print(f"Saved cross-validation metrics and plots to {output_dir}")
+    if not metrics["fit_success"].any():
+        raise RuntimeError(
+            f"All cross-validation fits failed. Diagnostic tables and logs are saved under {output_dir}; "
+            "inspect fit_error before interpreting or rerunning the analysis."
+        )
     return metrics, summary, predictions

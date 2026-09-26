@@ -51,6 +51,10 @@ class DashboardSchemaTests(unittest.TestCase):
         self.assertTrue(schema['presets']['example']['decode']['grid_search_for_c'])
         self.assertEqual(fields['n_decode_shuffle']['default'], 100)
         self.assertEqual(fields['n_decode_shuffle']['type'], 'integer')
+        self.assertEqual(fields['preserve_null_time_structure']['type'], 'boolean')
+        self.assertFalse(fields['preserve_null_time_structure']['default'])
+        self.assertIn('across time bins', fields['preserve_null_time_structure']['description'])
+        self.assertFalse(schema['presets']['example']['decode']['preserve_null_time_structure'])
         self.assertIn('sigmoid', fields['logistic_calibration_method']['choices'])
         self.assertNotIn('cache_dir', fields)
         self.assertEqual(schema['defaults']['settings'], schema['presets']['example'])
@@ -75,6 +79,7 @@ class DashboardSchemaTests(unittest.TestCase):
                  ({'decode': {'n_decode_shuffles': 3}}, 'unknown setting'),
                  ({'decode': {'n_decode_shuffle': True}}, 'expected int'),
                  ({'decode': {'save_figures': 'false'}}, 'expected bool'),
+                 ({'decode': {'preserve_null_time_structure': 'false'}}, 'expected bool'),
                  ({'decode': {'classifier_c': float('inf')}}, 'finite'),
                  ({'states': {'cc_method_on': 'invented'}}, 'choose one'),
                  ({'select': {'max_abs_preferred_cue_drift_r': 2}}, 'finite and in'),
@@ -227,7 +232,7 @@ class DashboardApiTests(unittest.TestCase):
                 payload = request().model_dump()
                 payload['figure_formats'] = formats
                 self.assertEqual(self.client.post('/api/validate', json=payload).status_code, 422)
-        schema = self.client.get('/openapi.json').json()
+        schema = self.client.get('/api/openapi.json').json()
         choices = schema['components']['schemas']['RunRequest']['properties']['figure_formats']['items']['enum']
         self.assertIn('pdf', choices)
 

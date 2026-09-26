@@ -28,6 +28,7 @@ from scripts.next.common import full_session_selection, validate_state_provenanc
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -291,6 +292,19 @@ def _prepare_session_rows(
         f"{group_name}_cell_count": int(groups[group_name].size)
         for group_name in GROUP_NAMES
     }
+    empty_groups = [group_name for group_name in GROUP_NAMES if not groups[group_name].size]
+    if empty_groups:
+        descriptions = ", ".join(
+            f"{group_name} ({group_labels[group_name]})" for group_name in empty_groups
+        )
+        warnings.warn(
+            f"Session {session}: no cells in populations: {descriptions}. "
+            "Their activity means, active fractions, and histories remain zero-filled "
+            "for compatibility; these zeros indicate an absent population, not "
+            "measured activity. Review screening and population counts before interpreting models.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     trial_features: dict[str, np.ndarray] = {}
     raw_rates_by_period: dict[str, dict[str, np.ndarray]] = {}

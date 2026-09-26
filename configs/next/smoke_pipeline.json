@@ -16,6 +16,7 @@
     "diagnostics_figure_config": "configs/next/diagnostic_figures.json"
   },
   "decode": {
+    "preserve_null_time_structure": false,
     "t_decode_window": 50,
     "min_cell_per_group": 1,
     "cells_used_for_decoder": "STATIONARY",

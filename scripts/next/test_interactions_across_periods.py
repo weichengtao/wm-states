@@ -41,10 +41,8 @@ from scripts.next.compare_mixed_effect_models import (
     OUTCOME,
     SESSION,
     ModelSpec,
-    _comparison_row,
-    _fit_model,
-    _fixed_effect_rows,
-    _predictions_and_r2,
+    _fit_model_summary,
+    _require_usable_models,
 )
 from scripts.next.mixedlm_outcomes import (
     OutcomeSelection,
@@ -265,25 +263,7 @@ def _fit_one(
     results: dict[str, Any],
     config: Config,
 ) -> tuple[Any, dict[str, Any], list[dict[str, Any]], list[str]]:
-    result, warning_messages = _fit_model(frame, spec, config.max_iterations)
-    variance_metrics = _predictions_and_r2(result, frame, spec.outcome)
-    fixed_effect_rows = _fixed_effect_rows(
-        result, spec, config.significance_alpha
-    )
-    parent_result = results.get(spec.parent) if spec.parent else None
-    if spec.parent and parent_result is None:
-        raise RuntimeError(
-            f"Parent {spec.parent} was not fit before child {spec.name}."
-        )
-    comparison_row = _comparison_row(
-        result,
-        spec,
-        variance_metrics,
-        fixed_effect_rows,
-        parent_result,
-        warning_messages,
-    )
-    return result, comparison_row, fixed_effect_rows, warning_messages
+    return _fit_model_summary(frame, spec, results, config)
 
 
 def _append_log(
@@ -320,7 +300,12 @@ def _append_log(
     else:
         handle.write("Fit warnings: none\n")
     handle.write("\nStatsmodels fit summary:\n")
-    handle.write(result.summary().as_text())
+    if result is None:
+        handle.write(f"Model failed: {row['fit_error']}")
+    elif getattr(result, "inference_valid", True):
+        handle.write(result.summary().as_text())
+    else:
+        handle.write(f"Inferential summary withheld: {result.inference_error}")
     handle.write("\n\n")
 
 
@@ -425,8 +410,9 @@ def _plot_final_interactions(
         lower = panel_rows["ci_95_lower"].to_numpy(dtype=float)
         upper = panel_rows["ci_95_upper"].to_numpy(dtype=float)
         significant = panel_rows["significant"].to_numpy(dtype=bool)
+        inference_valid = panel_rows.get("inference_valid", pd.Series(True, index=panel_rows.index)).to_numpy(dtype=bool)
 
-        for mask, color in ((~significant, "C0"), (significant, "C3")):
+        for mask, color in ((~significant & inference_valid, "C0"), (significant & inference_valid, "C3")):
             if not np.any(mask):
                 continue
             ax.errorbar(
@@ -445,6 +431,13 @@ def _plot_final_interactions(
                 elinewidth=1.5,
                 capsize=3,
             )
+        if not np.all(inference_valid):
+            ax.scatter(coefficients[~inference_valid], y[~inference_valid], color="0.5")
+            ax.text(0.02, 0.98, "Gray estimates: inference unavailable", va="top",
+                    transform=ax.transAxes, fontsize=8)
+        if not np.any(np.isfinite(coefficients)):
+            ax.text(0.5, 0.5, "Model fit unavailable; see fit_error", ha="center",
+                    transform=ax.transAxes)
         ax.axvline(0, color="black", linestyle="--", linewidth=1)
         ax.set_yticks(
             y,
@@ -619,6 +612,7 @@ def _run_outcome(config: Config, outcome: OutcomeSpec) -> None:
     print(f"Saved {len(interaction_effects)} interaction-effect rows")
     print(f"Saved 5 comparison figures to {figure_dir}")
 
+    _require_usable_models(comparison, output_dir)
     if config.run_cv:
         try:
             from scripts.next.mixedlm_trial_holdout_cv import (

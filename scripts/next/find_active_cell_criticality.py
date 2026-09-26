@@ -38,11 +38,9 @@ from scripts.next.activity_weighting import (
 )
 from scripts.next.compare_mixed_effect_models import (
     ModelSpec,
-    _comparison_row,
-    _fit_model,
-    _fixed_effect_rows,
+    _fit_model_summary,
+    _require_usable_models,
     _model_specs,
-    _predictions_and_r2,
 )
 from scripts.next.prepare_data_for_mixedlm import (
     Config as PrepareConfig,
@@ -209,25 +207,7 @@ def _fit_one(
     results: dict[str, Any],
     config: Config,
 ) -> tuple[Any, dict[str, Any], list[dict[str, Any]], list[str]]:
-    result, warning_messages = _fit_model(frame, spec, config.max_iterations)
-    variance_metrics = _predictions_and_r2(result, frame, spec.outcome)
-    fixed_effect_rows = _fixed_effect_rows(
-        result, spec, config.significance_alpha
-    )
-    parent_result = results.get(spec.parent) if spec.parent else None
-    if spec.parent and parent_result is None:
-        raise RuntimeError(
-            f"Parent {spec.parent} was not fit before child model {spec.name}."
-        )
-    comparison_row = _comparison_row(
-        result,
-        spec,
-        variance_metrics,
-        fixed_effect_rows,
-        parent_result,
-        warning_messages,
-    )
-    return result, comparison_row, fixed_effect_rows, warning_messages
+    return _fit_model_summary(frame, spec, results, config)
 
 
 def _append_fit_log(
@@ -271,7 +251,12 @@ def _append_fit_log(
     else:
         handle.write("Fit warnings: none\n")
     handle.write("\nStatsmodels fit summary:\n")
-    handle.write(result.summary().as_text())
+    if result is None:
+        handle.write(f"Model failed: {comparison_row['fit_error']}")
+    elif getattr(result, "inference_valid", True):
+        handle.write(result.summary().as_text())
+    else:
+        handle.write(f"Inferential summary withheld: {result.inference_error}")
     handle.write("\n\n")
 
 
@@ -320,7 +305,10 @@ def _best_row(
     metric: str,
     minimize: bool,
 ) -> pd.Series:
-    index = rows[metric].idxmin() if minimize else rows[metric].idxmax()
+    finite_rows = rows[np.isfinite(rows[metric])]
+    if finite_rows.empty:
+        return pd.Series(np.nan, index=rows.columns)
+    index = finite_rows[metric].idxmin() if minimize else finite_rows[metric].idxmax()
     return rows.loc[index]
 
 
@@ -339,7 +327,7 @@ def _criticality_summary(comparison: pd.DataFrame) -> pd.DataFrame:
             {
                 "base_model": base_model,
                 "n_thresholds": len(rows),
-                "best_aic_percentile": int(best_aic["active_percentile"]),
+                "best_aic_percentile": best_aic["active_percentile"],
                 "best_aic_z_threshold": best_aic["active_z_threshold"],
                 "best_aic": best_aic["aic"],
                 "aic_improvement_vs_50th": (
@@ -347,20 +335,14 @@ def _criticality_summary(comparison: pd.DataFrame) -> pd.DataFrame:
                     if default is not None
                     else np.nan
                 ),
-                "best_bic_percentile": int(best_bic["active_percentile"]),
+                "best_bic_percentile": best_bic["active_percentile"],
                 "best_bic_z_threshold": best_bic["active_z_threshold"],
                 "best_bic": best_bic["bic"],
-                "best_marginal_r2_percentile": int(
-                    best_marginal["active_percentile"]
-                ),
+                "best_marginal_r2_percentile": best_marginal["active_percentile"],
                 "best_marginal_r2": best_marginal["marginal_r2"],
-                "best_conditional_r2_percentile": int(
-                    best_conditional["active_percentile"]
-                ),
+                "best_conditional_r2_percentile": best_conditional["active_percentile"],
                 "best_conditional_r2": best_conditional["conditional_r2"],
-                "best_conditional_rmse_percentile": int(
-                    best_rmse["active_percentile"]
-                ),
+                "best_conditional_rmse_percentile": best_rmse["active_percentile"],
                 "best_conditional_rmse_ms": best_rmse["conditional_rmse_ms"],
                 "default_50th_aic": (
                     default["aic"] if default is not None else np.nan
@@ -643,6 +625,7 @@ def _run_outcome(
     print(f"Saved {len(summary)} per-model criticality summaries")
     print(f"Saved {len(PERIOD_LABELS)} criticality figures to {figure_dir}")
 
+    _require_usable_models(comparison, output_dir)
     if config.run_cv:
         try:
             from scripts.next.mixedlm_trial_holdout_cv import (

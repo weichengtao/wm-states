@@ -20,25 +20,22 @@ nvm install 24
 nvm use 24
 ```
 
-Install the Python dependencies and build the browser interface:
+Install the Python and browser dependencies, then build and start the dashboard
+with its documentation:
 
 ```bash
-uv sync --python 3.12 --group dashboard --locked
+uv sync --python 3.12 --group dashboard --group docs --locked
 npm --prefix dashboard ci
-npm --prefix dashboard run build
+uv run --group dashboard --group docs --locked python -m scripts.next.dashboard --build
 ```
 
-`npm ci` installs the versions in the lockfile; `npm run build` creates the
-interface that the Python server serves. You only need one server for normal
-use. You can open it without recordings to explore the interface or view
+`npm ci` installs the versions in the lockfile. `--build` builds the React
+interface and MkDocs guide, then starts one Python server for both. It installs
+frontend dependencies if `node_modules/` is missing; run `npm ci` yourself when
+the lockfile changes. Builds must succeed before the server starts.
+You can open the dashboard without recordings to explore the interface or view
 existing runs. To launch an analysis, first
 [prepare the recordings](getting-started.md#prepare-the-recordings).
-
-Start the dashboard:
-
-```bash
-uv run --group dashboard --locked python -m scripts.next.dashboard
-```
 
 When the terminal says the server is running, open
 **[http://127.0.0.1:8000/](http://127.0.0.1:8000/)** in your browser.
@@ -50,7 +47,7 @@ fresh checkout is normal; generated data and results are not included in Git.
 On later visits, open a terminal in the repository root and run just:
 
 ```bash
-uv run --group dashboard --locked python -m scripts.next.dashboard
+uv run --group dashboard --group docs --locked python -m scripts.next.dashboard
 ```
 
 Then open [http://127.0.0.1:8000/](http://127.0.0.1:8000/). If the server is
@@ -60,9 +57,10 @@ already running in another terminal, simply open that address.
 - Closing or refreshing the browser tab leaves analysis running.
 - **Ctrl+C in the server terminal stops the dashboard and cancels any analysis
   it launched that is still running.** Saved outputs remain on disk.
-- After frontend source changes, rebuild with
-  `npm --prefix dashboard run build`, then refresh the browser. If its
-  dependencies changed, run `npm --prefix dashboard ci` before rebuilding.
+- After frontend or documentation changes, stop the server when no analysis is
+  running and repeat the start command with `--build`, then refresh the browser.
+  The [development workflow](#frontend-development) also supports rebuilding
+  assets while the server remains running.
 - After backend Python changes, stop and restart the server when no analysis
   is running. The normal launcher does not reload Python code automatically.
 
@@ -71,28 +69,56 @@ already running in another terminal, simply open that address.
 If port 8000 is already in use, start on a free port:
 
 ```bash
-uv run --group dashboard --locked python -m scripts.next.dashboard --port 8001
+uv run --group dashboard --group docs --locked python -m scripts.next.dashboard --port 8001
 ```
 
-Open [http://127.0.0.1:8001/](http://127.0.0.1:8001/) for that server. If you
-also serve the documentation, give each service its own port:
+Open [http://127.0.0.1:8001/](http://127.0.0.1:8001/) for that server. The guide
+moves with it to `/docs/`; no extra documentation server is needed.
 
 | Service | Usual address | When to use it |
 | --- | --- | --- |
 | Dashboard | `http://127.0.0.1:8000/` | Configure runs, follow progress, and inspect results |
-| MkDocs documentation | `http://127.0.0.1:8001/` with the commands in this repository | Read these guides locally |
+| Pipeline guide | `http://127.0.0.1:8000/docs/` | Read or search the full guide from the dashboard |
+| Developer API reference | `http://127.0.0.1:8000/api/docs` | Inspect REST endpoints |
+| MkDocs development preview | `http://127.0.0.1:8001/` | Edit the guide with automatic reload |
 | Vite development server | `http://127.0.0.1:5173/` | Edit the frontend with automatic browser updates |
 
-The [documentation preview instructions](../development.md#serve-the-documentation)
-use port 8001 explicitly; a bare `mkdocs serve` defaults to 8000. If both
-Python services share this environment, include `--group dashboard --group docs`
-in their `uv` commands to keep both sets of dependencies installed.
+Only development previews need separate ports. If you moved the dashboard to
+8001, choose another free port for a MkDocs preview. Include both
+`--group dashboard --group docs` in `uv` commands when sharing one environment
+so it retains both dependency groups.
 
 The dashboard is intended for one trusted user on their own computer. Its
 launcher binds to loopback addresses and it has no account or authentication
 system. It reads Python pickle caches on the server: only place caches you trust
 in this repository's `cache/` directory. Do not expose the service through a
 public reverse proxy.
+
+## Get help without leaving your work
+
+Click **Help** in the top bar to open a side panel. It starts with guidance for
+your current workspace and provides searchable topics for setup, configuration,
+live progress, results, comparisons, and analysis methods. These concise tips
+are available even when the documentation has not yet been built. On a smaller
+screen, the panel uses the available width. Close it with its close button or
+Escape to return to the same workspace.
+
+- **Pipeline guide** in the sidebar opens the full searchable MkDocs guide.
+- Each configuration stage has a **Stage methods** link to its method section.
+- **Learn more** links explain consequential settings such as screening checks,
+  null-shuffle time structure, and state thresholds.
+- Error messages include troubleshooting links where guidance is available.
+- **API reference** is the separate developer reference, now at `/api/docs`.
+
+Full documentation links open in a new tab, leaving your unsaved settings and
+live progress intact. The local guide has a **Back to dashboard** shortcut;
+switch to your original tab to resume its exact view. Search within the help
+panel searches its topics; use the guide's search for the complete documentation.
+
+The guide is built from this checkout, so it can describe the same code and
+presets you are running. Rebuild it after updating the repository. It can also
+be published separately, including on GitHub Pages; see
+[standalone hosting](../development.md#publish-the-guide-on-github-pages).
 
 ## Try your first run
 
@@ -304,6 +330,7 @@ ignored by Git; ignoring them does not affect analysis or run discovery.
 | `cache/<run-name>/` | Scientific outputs and per-invocation manifests | Archive the whole run directory to preserve results and their history |
 | `dashboard/node_modules/` | Installed frontend dependencies | Recreate with `npm --prefix dashboard ci` |
 | `dashboard/dist/` and `dashboard/*.tsbuildinfo` | Built frontend and TypeScript build bookkeeping | Recreate with `npm --prefix dashboard run build` after installing dependencies |
+| `site/` | Built MkDocs guide, including its search index | Recreate with `uv run --group dashboard --group docs --locked mkdocs build --strict` |
 
 To keep a reusable preset in Git, save a named JSON such as
 `configs/next/my_analysis.json` outside `.dashboard/`. The supplied example and
@@ -324,11 +351,12 @@ frontend source, despite the repository's older generic `lib/` ignore rule.
 | --- | --- |
 | `npm: command not found` or an unsupported Node version | Select Node.js 24 with nvm as shown above, then retry setup. If nvm is already installed but unavailable in this terminal, load it as described below. |
 | Python cannot find `scripts.next.dashboard` | Run the start command from the repository root, not from `dashboard/` or `scripts/next/`. |
-| Missing `fastapi` or `uvicorn` | Use the documented `uv run --group dashboard --locked ...` command; the `dashboard` dependency group is required. |
+| Missing `fastapi`, `uvicorn`, or `mkdocs` | Use the documented command with both `--group dashboard --group docs`; the docs group is required for building the guide. |
 | Browser says it cannot connect | Check that the server terminal is still running and that the browser port matches `--port`. Inspect the terminal for a startup error. |
-| `Frontend is not built` | Run the two npm commands in [first-time setup](#first-time-setup), then restart the server. |
-| `Address already in use`, or the browser shows the documentation | Use a free dashboard port, or put MkDocs on port 8001. See [Use another port](#use-another-port). |
+| `Frontend is not built` or `Documentation is not built` | Follow [first-time setup](#first-time-setup) with `--build`. The missing guide page also gives a docs-only build command. |
+| `Address already in use` | Use a free dashboard port. Both dashboard and guide share that port. See [Use another port](#use-another-port). |
 | Recent frontend changes are missing | Rebuild with `npm --prefix dashboard run build`, then refresh the browser. Use [frontend development](#frontend-development) for automatic updates while editing. |
+| Guide content is old, or a new Methods link gives 404 | Rebuild the guide with `uv run --group dashboard --group docs --locked mkdocs build --strict`, then refresh it. A missing documentation page never opens the dashboard in its place. |
 | A saved run is missing from the library | Click **Refresh runs**, then check its location and layout against [Find existing runs](#find-existing-runs). |
 | A discovered run reports missing or incompatible results | Read the displayed error and follow the [cache and provenance troubleshooting](troubleshooting.md#a-cache-is-incompatible); discovery does not validate every stage. |
 
@@ -354,7 +382,7 @@ needs the single Python server described above.
 In terminal 1, from the repository root, start the backend on port 8000:
 
 ```bash
-uv run --group dashboard --locked python -m scripts.next.dashboard
+uv run --group dashboard --group docs --locked python -m scripts.next.dashboard
 ```
 
 In terminal 2, also from the repository root, start Vite:
@@ -366,18 +394,35 @@ npm --prefix dashboard run dev
 
 You can skip `npm ci` when dependencies are already installed and unchanged.
 Open **[http://127.0.0.1:5173/](http://127.0.0.1:5173/)** for this workflow.
-Keep both terminals running. Vite reloads frontend edits and forwards REST and
-WebSocket requests to the backend on port 8000. It does not replace the Python
-backend. If you change that backend port, update the proxy targets in
+Keep both terminals running. Vite reloads frontend edits and forwards REST,
+WebSocket, and `/docs/` requests to the backend on port 8000. It does not replace
+the Python backend. If you change that backend port, update the proxy targets in
 `dashboard/vite.config.ts` to match.
 
 The frontend uses React, TypeScript, Vite, Tailwind CSS, and shadcn-style Radix
 components. The backend lives in `scripts/next/dashboard/` and uses FastAPI and
-Pydantic. API documentation is available at `/docs` on the backend. Tests and a
+Pydantic. The pipeline guide is at `/docs/`; the developer API reference is at
+`/api/docs`, with OpenAPI JSON at `/api/openapi.json` and ReDoc at `/api/redoc`.
+Tests and a
 production build can be run with:
 
 ```bash
-uv run --group dashboard --locked python -m unittest discover -s tests/next -v
+uv run --group dashboard --group docs --locked python -m unittest discover -s tests/next -v
 npm --prefix dashboard test
 npm --prefix dashboard run build
 ```
+
+To refresh the integrated guide during development, run
+`uv run --group dashboard --group docs --locked mkdocs build --strict` and
+reload its tab; the backend does not need to restart. For automatic Markdown
+reload, use the separate [MkDocs preview](../development.md#serve-the-documentation)
+on port 8001. To make Vite's help links open that preview, start Vite with:
+
+```bash
+VITE_DOCS_BASE_URL=http://127.0.0.1:8001/ npm --prefix dashboard run dev
+```
+
+`VITE_DOCS_BASE_URL` is a frontend build/development setting, not a runtime Python
+option. Omit it for the integrated `/docs/` guide. It also accepts an HTTPS
+project URL for a separately hosted guide; include the repository subpath and
+use documentation matching the local pipeline version.

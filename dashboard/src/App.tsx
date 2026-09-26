@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowUpRight,
   BookOpen,
+  Code2,
   ChevronRight,
   Command,
   FlaskConical,
@@ -21,6 +22,8 @@ import Results from "./components/Results";
 import Configure from "./components/Configure";
 import Compare from "./components/Compare";
 import LiveMonitor from "./components/LiveMonitor";
+import HelpPanel from "./components/HelpPanel";
+import GuideLink from "./components/GuideLink";
 type Page = "results" | "configure" | "compare" | "monitor";
 const navigation = [
   { id: "results", label: "Run library", icon: Layers3 },
@@ -172,15 +175,20 @@ export default function App() {
               <br />A distribution of possibilities.
             </p>
           </div>
-          <a
-            href="/docs"
-            target="_blank"
-            rel="noreferrer"
-            className="help-link"
-          >
+          <GuideLink className="help-link guide-sidebar-link">
             <BookOpen size={16} />
+            Pipeline guide
+          </GuideLink>
+          <a
+            href="/api/docs"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="help-link api-sidebar-link"
+          >
+            <Code2 size={15} />
             API reference
             <ArrowUpRight size={14} />
+            <span className="sr-only"> (opens in a new tab)</span>
           </a>
           <div className="connection-status">
             <span className={`connection-dot ${online ? "online" : ""}`} />
@@ -211,6 +219,7 @@ export default function App() {
             <strong>{navigation.find((n) => n.id === page)?.label}</strong>
           </div>
           <div className="topbar-actions">
+            <HelpPanel page={page} />
             {activeJobs.length > 0 ? (
               <button
                 className="running-pill"

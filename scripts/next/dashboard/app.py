@@ -6,10 +6,11 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from scripts.next.dashboard.documentation import DocumentationFiles
 from scripts.next.dashboard.models import RunRequest
 from scripts.next.dashboard.runner import BusyError, RunManager, TERMINAL
 from scripts.next.dashboard.schema import get_schema
@@ -32,7 +33,10 @@ def create_app(repo_root: Path | None = None):
         yield
         await manager.close()
 
-    app = FastAPI(title='WM States · Next dashboard', version='1.0', lifespan=lifespan)
+    app = FastAPI(title='WM States · Next dashboard', version='1.0', lifespan=lifespan,
+                  docs_url='/api/docs', redoc_url='/api/redoc',
+                  openapi_url='/api/openapi.json',
+                  swagger_ui_oauth2_redirect_url='/api/docs/oauth2-redirect')
     app.state.repo_root, app.state.runner = root, manager
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['localhost', '127.0.0.1', '[::1]'])
 
@@ -128,6 +132,13 @@ def create_app(repo_root: Path | None = None):
     from scripts.next.dashboard.results import create_results_router
     app.include_router(create_results_router(root))
 
+    @app.get('/docs', include_in_schema=False)
+    def documentation_root():
+        return RedirectResponse('/docs/', status_code=307)
+
+    # Register before the frontend catch-all: documentation misses must remain 404s.
+    app.mount('/docs', DocumentationFiles(root / 'site'), name='documentation')
+
     frontend = root / 'dashboard' / 'dist'
     if (frontend / 'assets').is_dir():
         app.mount('/assets', StaticFiles(directory=frontend / 'assets'), name='assets')
@@ -141,7 +152,7 @@ def create_app(repo_root: Path | None = None):
             return FileResponse(asset)
         if (frontend / 'index.html').is_file():
             return FileResponse(frontend / 'index.html')
-        return JSONResponse({'detail': 'Frontend is not built. Run npm install && npm run build in dashboard/, '
+        return JSONResponse({'detail': 'Frontend is not built. Run npm ci && npm run build in dashboard/, '
                                        'or use the Vite development server on localhost:5173.'}, status_code=503)
 
     return app

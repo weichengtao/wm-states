@@ -113,10 +113,24 @@ def evaluate_session(source):
     observed = np.asarray(source['decoding_confidence'])
     if observed.ndim != 2 or time_bins.shape != (observed.shape[1],):
         raise ValueError('Observed confidence must have shape (trial, bin).')
-    predictions = np.asarray(source['decoding_predicted_labels'])
-    if predictions.shape != observed.shape:
-        raise ValueError('Predicted labels must match observed confidence.')
-    predictions = predictions[:, :, None]
+    # Both observed and null scores use the same decision rule. SVC native
+    # predictions need not agree with its calibrated probability threshold.
+    predictions = source.get('decoding_predicted_labels')
+    if predictions is not None:
+        predictions = np.asarray(predictions)
+        if predictions.shape != observed.shape or not np.all(
+            np.isin(predictions, [-1, 0, 1]) | np.isnan(predictions)
+        ):
+            raise ValueError('Predicted labels must match observed confidence and be binary, -1, or NaN.')
+        valid = np.isfinite(observed) & np.isin(predictions, [0, 1])
+        mismatch = int(np.count_nonzero(valid & (predictions != (observed >= 0.5))))
+        if mismatch:
+            warnings.warn(
+                f'Session {source["session"]}: {mismatch} cached native predictions '
+                'differ from the probability threshold. Evaluation uses p >= 0.5 '
+                'for both observed and null accuracy; native predictions remain in the decoding cache.',
+                RuntimeWarning, stacklevel=2,
+            )
 
     result = {
         'session': source['session'],
@@ -126,10 +140,13 @@ def evaluate_session(source):
         'decoding_test_labels': labels,
         'num_trials': int(observed.shape[0]),
         'num_time_bins': int(observed.shape[1]),
+        'preserve_null_time_structure': source.get(
+            'preserve_null_time_structure', source.get('config', {}).get('preserve_null_time_structure', False)),
+        'null_policy': source.get('null_policy', 'unrecorded; assume independent per-bin shuffles'),
         'log_loss_epsilon': np.finfo(np.float64).eps,
-        'observed': score_probabilities(observed[:, :, None], labels, predictions,
+        'observed': score_probabilities(observed[:, :, None], labels,
                                        context=f'Session {source["session"]}, observed'),
-        'observed_accuracy_source': 'cached_predictions' if predictions is not None else 'probability_threshold_0.5',
+        'observed_accuracy_source': 'probability_threshold_0.5',
         'null_accuracy_source': 'probability_threshold_0.5',
         'null': None,
         'num_null_shuffles': 0,

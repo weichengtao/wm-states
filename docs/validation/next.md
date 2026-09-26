@@ -1,5 +1,150 @@
 # Next pipeline validation
 
+## Integrated dashboard guide and help — 2026-09-26
+
+The combined changes passed **409 Python tests** in **10.346 seconds**:
+**292 next tests** and **117 historical tests**. The frontend passed **29 tests**,
+TypeScript checking, a production Vite build, and Prettier verification. The
+integrated launcher's `--build` completed both the frontend and strict MkDocs
+builds before starting the local server.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m unittest discover -s tests -v
+npm --prefix dashboard test
+npm --prefix dashboard run format:check
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m scripts.next.dashboard --build --port 8020
+git diff --check
+```
+
+### Routing and documentation portability
+
+- Backend tests cover `/docs` redirects, nested pages/assets, HEAD requests,
+  builds completed after startup, true documentation 404s, and symlink escapes.
+  Missing builds return a useful HTML 503 for browsers and JSON for API clients.
+- Swagger, ReDoc, and OpenAPI remain accessible at `/api/docs`, `/api/redoc`,
+  and `/api/openapi.json`; the guide does not shadow the API or fall through to
+  the React interface.
+- Build-helper tests cover missing tools, installation of absent frontend
+  dependencies, the active Python interpreter, and build failure before listen.
+- Four integration tests build the actual MkDocs Material site under both
+  `/docs/` and a GitHub Pages-style `/wm-states/` URL prefix. They check every
+  generated internal navigation/asset target, configured canonical URLs,
+  search worker/index/result locations, all dashboard help destinations, and
+  methods coverage for all eleven stages.
+- Frontend tests cover local/external documentation bases, repository subpaths,
+  invalid-base fallback, stage/parameter/troubleshooting mapping, help search,
+  and accessible links and help controls.
+
+### Browser review
+
+An isolated local server on port 8020 served the production dashboard and guide.
+The review checked contextual help, searching by `preserve_null_time_structure`,
+expanded explanations, an empty search result, and the full-guide link. Guide
+links opened a separate tab at the intended anchor. Escape closed the panel,
+returned focus to Help, and retained an edited run name. The integrated MkDocs
+guide displayed its local dashboard shortcut and returned search results.
+
+The help panel was visually checked at **390 × 844** and **1440 × 960**. The
+narrow panel filled the viewport without horizontal overflow; the desktop panel
+remained beside the visible workspace. Both retained a reachable close control,
+scrolling content, and the full-guide action.
+
+No new scientific analysis was needed for these navigation changes. The
+four-session, all-stage null-policy integration and its scientific limitations
+are recorded below. GitHub Pages itself was not deployed; portability is
+validated against generated HTML and URL prefixes. Generated sites, dependencies,
+and test outputs remain outside Git.
+
+## Null time structure and statistical edge cases — 2026-09-26
+
+The final code passed **394 Python tests** in **9.653 seconds**: **277 next
+tests** and **117 historical tests**. The example preset resolves all eleven
+stages in a dry run; the MkDocs documentation passes a strict build.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m unittest discover -s tests -v
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+```
+
+### New coverage
+
+- Default-independent and optional shared-across-time null labels, including
+  identical-bin data, training-trial exclusion, balancing before permutation,
+  C search/calibration, shuffle-prefix stability, and parallel reproducibility.
+- Standalone enable/disable flags, default-false preset/dashboard settings,
+  checkpoint invalidation, cached policy metadata, and cross-run policy warnings.
+- Decoder class-count preflight and explicit calibration-fold reduction;
+  consistent probability-threshold accuracy when native SVM predictions disagree.
+- Undefined circular preferences: antipodal/symmetric directions, valid weak
+  resultants and wraparound, selected-cell errors, and rejected-cell warnings.
+- Empty OFF-state PCA projections, empty-population preparation warnings, and
+  malformed state/time inputs.
+- Constant float64 nulls such as `0.1` remain unclassified despite mean-rounding
+  artifacts; small null counts warn, including two-tailed tail probabilities.
+  Missing OFF-cluster reference distributions and overlapping candidate
+  thresholds raise errors.
+- Invalid final model inference withholds uncertainty estimates while preserving
+  usable point fits; rank-deficient models fail explicitly. Materially negative
+  nested likelihood improvements are rejected; numerical roundoff warns.
+- Partial failures retain diagnostic rows. Incomplete CV fits are excluded from
+  rankings, no-valid-pair contrast reports export successfully, and entirely
+  failed analyses save diagnostics before raising errors.
+
+### Four-session integration
+
+`cache/test_run_055_next_null_time_structure` runs all eleven stages on the four
+`data/example` sessions. It uses a copy of the smoke preset with these decode
+overrides:
+
+```json
+{
+  "preserve_null_time_structure": true,
+  "n_decode_shuffle": 4
+}
+```
+
+The full local settings file is
+`configs/next/.dashboard/validation_null_time_structure.json`. To reproduce it,
+copy `configs/next/smoke_pipeline.json` there and change the two fields above
+inside `decode`. All other smoke settings remain unchanged, including the
+400 ms decoding stride, one model holdout, and reduced fitting budget.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python scripts/next/pipeline.py \
+  --settings configs/next/.dashboard/validation_null_time_structure.json \
+  --data-dir data/example \
+  --cache-dir cache/test_run_055_next_null_time_structure \
+  --stages all --n-jobs 2
+```
+
+All eleven stages completed. The final invocation reran the complete pipeline
+after the last report-only edge-case fix; the preceding invocation remains in
+manifest history. Results include **240 preferred-cue decoding trials**,
+**236 × 56 prepared trial features**, **214 successful full-data model fits**,
+**214 successful CV fits**, and **270 PNG figures**. Each decoding cache has
+five time bins and four null estimates and records the enabled time-structure
+policy.
+
+Across all four sessions, observed probabilities, native predictions, selected
+C values, trial IDs, cell IDs, and time grids match run 054 exactly. The first
+bin's first three null estimates also match: the option changes how a shuffle
+is shared across time, while preserving that RNG prefix. Both modes receive
+focused regression coverage; the supplied example and smoke presets remain
+default-independent.
+
+Invalid-inference model rows retain point estimates but contain no reported
+Wald p-values or significance claims. In each general-model outcome, 33 of 34
+fits are flagged for unavailable inference, demonstrating why convergence
+alone is insufficient. The coefficient-forest display was visually checked:
+unavailable inference uses gray markers and an explicit legend instead of
+appearing as a nonsignificant result.
+
+This is an integration check, not statistical validation of null error rates,
+state durations, or model hypotheses. Four null estimates provide very little
+tail precision, and a four-session model fit does not establish population
+inference. The shared-across-time option preserves permutations within each
+held-out trial; it does not establish a joint session-wide permutation test.
+
 ## Shared downstream contracts and activity modules — 2026-09-26
 
 The downstream refactor passed **345 Python tests** in **8.978 seconds**:

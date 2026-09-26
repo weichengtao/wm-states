@@ -10,6 +10,7 @@ from scripts.next.cache_paths import primary_cache, stage_path
 from dataclasses import asdict, dataclass
 from numbers import Integral, Real
 from pathlib import Path
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -185,6 +186,23 @@ def process_session(data_file, config):
     screening_results.apply(
         'selectivity', np.where(selectivity.has_finite_pev, selectivity.mean_pev_pct, np.nan),
         selectivity.passes_duration_check)
+    unavailable_cue = ~np.isfinite(selectivity.preferred_cue)
+    selected_without_cue = np.flatnonzero(screening_results.selected & unavailable_cue)
+    if selected_without_cue.size:
+        raise ValueError(
+            f'{session}: selected cells {selected_without_cue.tolist()} have unavailable cue metadata. '
+            'Opposing or symmetric bin preferences can have an undefined circular mean. '
+            'Inspect these cells\' cue responses and the configured selectivity test window; '
+            'a defined preferred cue is required for selected cells.'
+        )
+    unused_without_cue = np.flatnonzero(unavailable_cue)
+    if unused_without_cue.size:
+        warnings.warn(
+            f'{session}: cells {unused_without_cue.tolist()} have unavailable cue metadata '
+            'and were already rejected by enabled screening checks. Continuing without '
+            'cue metadata for these cells; any preferred-cue drift measurement remains unavailable.',
+            RuntimeWarning, stacklevel=2,
+        )
     if config.check_preferred_cue_drift:
         preferred_cue_drift_r = checks.preferred_cue_drift(session_data, config, selectivity.preferred_cue)
         measurements[MEASUREMENT_COLUMNS['preferred_cue_drift']] = preferred_cue_drift_r
@@ -195,8 +213,6 @@ def process_session(data_file, config):
     if not screening_results.selected.any():
         return None, diagnostic_rows
     selected_cell_indices = np.flatnonzero(screening_results.selected)
-    if not np.all(np.isfinite(selectivity.preferred_cue[selected_cell_indices])):
-        raise ValueError(f'{session}: selected cells have unavailable cue metadata; check input spike data and test windows.')
     preferred_cue_drift_status = screening_results.status['preferred_cue_drift']
     stationary_cell_indices = np.flatnonzero(passes_stationary_checks & (
         (preferred_cue_drift_status == 'pass') | (preferred_cue_drift_status == 'disabled')))

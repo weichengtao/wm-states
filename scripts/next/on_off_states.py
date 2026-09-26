@@ -12,6 +12,7 @@ from scripts.next.common import full_session_selection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+import warnings
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -201,6 +202,8 @@ class Config:
             raise ValueError('cluster_size_threshold_off must be positive.')
         if not np.isfinite(self.z_threshold_on) or not np.isfinite(self.z_threshold_off) or self.z_threshold_on < 0 or self.z_threshold_off < 0:
             raise ValueError('State z thresholds must be finite and nonnegative.')
+        if self.z_threshold_off > self.z_threshold_on:
+            raise ValueError('z_threshold_off must not exceed z_threshold_on: ON and OFF candidates would overlap.')
 
 def main(config: Config):
     cache_dir = config.cache_dir
@@ -224,6 +227,19 @@ def main(config: Config):
     # load decoding confidence cache
     with open(primary_cache(cache_dir, 'decoding_confidence.pkl'), 'rb') as f:
         outs = pickle.load(f)
+    if not outs:
+        raise ValueError('States require at least one decoded session.')
+    if (cc_method_on != 'skipped' or cc_method_off != 'skipped') and any(
+        not out.get('preserve_null_time_structure', out.get('config', {}).get('preserve_null_time_structure', False))
+        for out in outs
+    ):
+        warnings.warn(
+            'Some decoding nulls use independent label shuffles at each time bin. '
+            'Their cluster statistics do not preserve temporal dependence. '
+            'Use decode.preserve_null_time_structure=true for coherent within-trial '
+            'null trajectories; this alone does not establish a joint session-wide permutation test.',
+            RuntimeWarning, stacklevel=2,
+        )
 
     # prepare figure dir for this analysis
     fig_dir = stage_path(cache_dir, 'states', 'figures')
@@ -232,21 +248,48 @@ def main(config: Config):
 
     # loop through outs and get decoding confidence and null distribution
     for out_dict in outs:
-        decoding_confidence = np.asarray(out_dict['decoding_confidence']) # (trial, bin)
+        decoding_confidence = np.asarray(out_dict['decoding_confidence'], dtype=float) # (trial, bin)
         decoding_confidence_null = out_dict.get('decoding_confidence_null', None) # (trial, bin, shuffle)
-        if decoding_confidence.ndim != 2 or not np.all(np.isfinite(decoding_confidence)):
+        if decoding_confidence.ndim != 2 or 0 in decoding_confidence.shape or not np.all(np.isfinite(decoding_confidence)):
             raise ValueError('States require finite observed confidence (trial, bin).')
+        if decoding_confidence_null is not None:
+            decoding_confidence_null = np.asarray(decoding_confidence_null, dtype=float)
         if decoding_confidence_null is None or decoding_confidence_null.shape[:2] != decoding_confidence.shape or decoding_confidence_null.ndim != 3 or decoding_confidence_null.shape[2] < 2 or not np.all(np.isfinite(decoding_confidence_null)):
             raise ValueError('States require at least two finite null estimates per trial/bin.')
+        if np.any((decoding_confidence < 0) | (decoding_confidence > 1)) or np.any(
+            (decoding_confidence_null < 0) | (decoding_confidence_null > 1)
+        ):
+            raise ValueError('Observed and null decoding probabilities must be in [0, 1].')
         session = out_dict.get('session', 'unknown_session')
         cue = out_dict.get('cue', 'unknown_cue')
         bin_starts = np.asarray(out_dict.get('time_bins', None))
         if bin_starts.shape != (decoding_confidence.shape[1],):
             raise ValueError('Time bins must match the confidence bin axis.')
+        null_count = decoding_confidence_null.shape[2]
+        on_tail_alpha = cc_alpha_on / (2 if cc_method_on == 'two_tailed' else 1)
+        off_tail_alpha = cc_alpha_off / (2 if cc_method_off == 'two_tailed' else 1)
+        if cc_method_on != 'skipped' and z_threshold_on >= np.sqrt(null_count - 1):
+            warnings.warn(
+                f'{session}: {null_count} null estimates cannot exceed the ON z threshold '
+                f'{z_threshold_on} under the current in-sample null standardization. '
+                'The ON cluster cutoff is necessarily zero; this is suitable only '
+                'for an integration smoke test. Increase n_decode_shuffle for analysis.',
+                RuntimeWarning, stacklevel=2,
+            )
+        elif (cc_method_on != 'skipped' and null_count * on_tail_alpha < 1) or (
+            cc_method_off != 'skipped' and null_count * off_tail_alpha < 1
+        ):
+            warnings.warn(
+                f'{session}: only {null_count} null estimates for the configured '
+                'cluster tail probabilities; cutoffs have very low Monte Carlo precision.',
+                RuntimeWarning, stacklevel=2,
+            )
 
         # define delay period
         delay_start = 500 # first bin start
         delay_end = 1400 # last bin start
+        if not np.any((bin_starts >= delay_start) & (bin_starts <= delay_end)):
+            raise ValueError(f'{session}: decoding contains no delay bins from 500 through 1400 ms.')
 
         if decoding_confidence is not None:
             t_decode_step = infer_time_bin_step(bin_starts)
@@ -280,9 +323,18 @@ def main(config: Config):
                 null_mean = np.mean(decoding_confidence_null, axis=2)
                 null_std = np.std(decoding_confidence_null, axis=2)
                 safe_std = null_std.copy()
-                safe_std[safe_std == 0] = np.nan
+                # Identical samples such as float64 0.1 can acquire a tiny
+                # positive std from mean-rounding; they still carry no variance.
+                constant_null = np.ptp(decoding_confidence_null, axis=2) == 0
+                safe_std[(safe_std == 0) | constant_null] = np.nan
                 z_map = (decoding_confidence - null_mean) / safe_std
                 valid_null = np.isfinite(safe_std)
+                if not np.all(valid_null):
+                    warnings.warn(
+                        f'{session}: {np.count_nonzero(~valid_null)} trial/bin values '
+                        'have zero null variance and remain unclassified in both state masks.',
+                        RuntimeWarning, stacklevel=2,
+                    )
                 z_map = np.where(valid_null, z_map, 0.0)
 
                 # Standardized shuffled maps are needed by either non-skipped
@@ -382,10 +434,14 @@ def main(config: Config):
                             if null_cluster_masses:
                                 null_cluster_masses = np.concatenate(null_cluster_masses)
                             else:
-                                null_cluster_masses = np.zeros(1, dtype=float)
+                                raise ValueError(
+                                    f'{session}: observed OFF candidates exist but no null OFF clusters '
+                                    'meet the size threshold. Cannot compute a correction cutoff; '
+                                    'increase null estimates or explicitly revise candidate settings.'
+                                )
                             null_cluster_masses = null_cluster_masses[np.isfinite(null_cluster_masses)]
                             if null_cluster_masses.size == 0:
-                                null_cluster_masses = np.zeros(1, dtype=float)
+                                raise ValueError(f'{session}: no finite null OFF cluster masses for correction.')
                             # 6. keep off-state candidates according to the requested correction tail
                             if cc_method_off == 'one_tailed':
                                 upper_mass_cutoff = np.percentile(null_cluster_masses, 100 * (1 - cc_alpha_off))
@@ -808,6 +864,9 @@ def main(config: Config):
                 'off_state_duration_delay_end': delay_end,
                 't_decode_step': t_decode_step,
                 'decoding_fingerprint': out_dict.get('fingerprint'),
+                'preserve_null_time_structure': out_dict.get(
+                    'preserve_null_time_structure', out_dict.get('config', {}).get('preserve_null_time_structure', False)),
+                'decoding_null_policy': out_dict.get('null_policy', 'unrecorded; assume independent per-bin shuffles'),
                 'z_threshold_on': z_threshold_on,
                 'z_threshold_off': z_threshold_off,
             })

@@ -14,6 +14,8 @@ To use the pipeline in your browser, follow the dashboard's
 [first-time setup](next/dashboard.md#first-time-setup). Already set up? Use
 [Open the dashboard again](next/dashboard.md#open-the-dashboard-again).
 The same viewer can [find existing command-line runs](next/dashboard.md#find-existing-runs).
+Its **Help** panel offers guidance without leaving your work, and **Pipeline
+guide** opens these pages from the same server at `/docs/`.
 
 | Task | Guide |
 | --- | --- |
@@ -60,5 +62,6 @@ run. Screening presence diagnostics use correct trials, and
 different preferred cues or trial sets while continuing to produce figures.
 
 To build or serve these docs locally, see [Development](development.md#serve-the-documentation).
-The documented local addresses are port **8000** for the dashboard and
-**8001** for the documentation preview, so both can run together.
+The dashboard and built guide share port **8000**. Port **8001** is only for the
+optional documentation development preview. The guide can also be published as
+a [standalone static site](development.md#publish-the-guide-on-github-pages).

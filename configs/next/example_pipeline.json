@@ -17,6 +17,7 @@
   },
   "decode": {
     "n_decode_shuffle": 100,
+    "preserve_null_time_structure": false,
     "t_decode_window": 50,
     "min_cell_per_group": 1,
     "cells_used_for_decoder": "STATIONARY",

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block header %}
+  {{ super() }}
+  <div id="dashboard-return" hidden style="background: var(--md-code-bg-color); padding: .45rem .8rem; font-size: .7rem; text-align: center;">
+    <a href="/" style="color: var(--md-primary-fg-color); font-weight: 600;">&larr; Back to dashboard</a>
+    <span style="margin-left: .6rem; color: var(--md-default-fg-color--light);">Your analysis keeps running while you read.</span>
+  </div>
+  <script>
+    // This shortcut belongs only to the local integrated server. The same
+    // static site can be hosted independently, including on GitHub Pages.
+    if (["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)
+        && window.location.pathname.startsWith("/docs/")) {
+      document.getElementById("dashboard-return").hidden = false;
+    }
+  </script>
+{% endblock %}

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -147,6 +148,40 @@ class SharedPreparationInputsTest(unittest.TestCase):
         self.state["cue"] = 1.5
         with self.assertRaisesRegex(ValueError, "Session example: preferred cue.*integer cue"):
             _prepare_session_rows(self.state, [self.selection], self.config)
+
+    def test_empty_groups_warn_once_per_session_and_preserve_zero_features(self):
+        self.selection["cell_idx_stationary"] = np.array([0, 1, 2])
+        self.selection["cell_properties"]["preferred_cue"] = np.array([1, 1, 1])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            rows, cv_session = _prepare_session_rows(self.state, [self.selection], self.config)
+
+        self.assertEqual(len(caught), 1)
+        self.assertIs(caught[0].category, RuntimeWarning)
+        message = str(caught[0].message)
+        self.assertIn("Session example: no cells in populations", message)
+        self.assertIn("selective_nonpreferred (Selected non-preferred cells)", message)
+        self.assertIn("stationary_nonselective (Other cells passing enabled checks)", message)
+        self.assertIn("not measured activity", message)
+        for group in ("selective_nonpreferred", "stationary_nonselective"):
+            for row in rows:
+                self.assertEqual(row[f"{group}_cell_count"], 0)
+                for name, value in row.items():
+                    if name.endswith(f"_{group}"):
+                        self.assertEqual(value, 0)
+            for period_groups in cv_session["raw_firing_rates_hz"].values():
+                self.assertEqual(period_groups[group].shape, (3, 0))
+
+    def test_present_groups_with_zero_activity_do_not_emit_absence_warnings(self):
+        savemat(self.config.data_dir / "example.mat", {
+            "spks": np.zeros_like(self.spikes), "tc": self.times_ms,
+            "cueAngIdx": np.ones(3), "isCorr": np.ones(3),
+        })
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            rows, _ = _prepare_session_rows(self.state, [self.selection], self.config)
+        self.assertEqual(caught, [])
+        self.assertEqual(rows[0]["delay_mean_normalized_activity_preferred"], 0)
 
 
 class OutcomeSelectionTest(unittest.TestCase):

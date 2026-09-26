@@ -33,12 +33,14 @@ class TestPredictionsTest(unittest.TestCase):
             {
                 "model": ["conditional-winner", "marginal-winner", "failed"],
                 "n_successful_fits": [5, 5, 0],
+                "n_shuffles_requested": [5, 5, 5],
                 "fixed_rmse_ms_mean": [2.0, 1.0, 0.1],
                 "conditional_rmse_ms_mean": [0.5, 3.0, 0.1],
             }
         )
 
-        ranked = _rank_models_by_marginal_rmse(summary)
+        with self.assertWarnsRegex(RuntimeWarning, "Excluded models.*failed"):
+            ranked = _rank_models_by_marginal_rmse(summary)
 
         self.assertEqual(
             ranked["model"].tolist(),
