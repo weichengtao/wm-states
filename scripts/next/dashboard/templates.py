@@ -21,7 +21,7 @@ class TemplateStore:
     """Read built-ins and publish new, immutable saved-template files."""
 
     directory_parts = ('configs', 'next', 'templates')
-    shared_fields = {'stages', 'n_jobs', 'max_sessions_to_run', 'figure_formats'}
+    shared_fields = {'stages', 'n_jobs', 'max_sessions_to_run', 'figure_formats', 'figure_font'}
     builtin_details = {
         'example': ('Example pipeline', 'Example scientific analysis settings.'),
         'smoke': ('Smoke test', 'Reduced computation for an integration check.'),
@@ -136,7 +136,7 @@ class TemplateStore:
         return {
             'id': envelope.id, 'name': envelope.name, 'description': envelope.description,
             'created_at': envelope.created_at,
-            'config': envelope.config.model_dump(exclude_unset=True),
+            'config': {**envelope.config.model_dump(exclude_unset=True), 'figure_font': envelope.config.figure_font},
             'builtin': False,
             'path': f'configs/next/templates/{envelope.id}.json',
         }
@@ -194,7 +194,9 @@ class TemplateStore:
                     raise TemplateConflict('A template with this name already exists. Choose a different name.')
                 for _ in range(8):
                     envelope = SavedTemplate(
-                        **{**request.model_dump(exclude_unset=True), 'description': request.description},
+                        **{**request.model_dump(exclude_unset=True), 'description': request.description,
+                           'config': {**request.config.model_dump(exclude_unset=True),
+                                      'figure_font': request.config.figure_font}},
                         schema_version=1, id=uuid4().hex,
                         created_at=datetime.now(timezone.utc).isoformat(),
                     )

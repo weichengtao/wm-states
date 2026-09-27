@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import warnings
 from unittest.mock import Mock, patch
 
 import matplotlib
@@ -15,7 +16,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from scripts.next import eval_confidence, pipeline
-from scripts.next.figure_exports import FORMAT_ENV, figure_format_context, save_figure
+from scripts.next.figure_exports import (
+    DEFAULT_FIGURE_FONT, FONT_ENV, FORMAT_ENV, figure_font_context,
+    figure_format_context, resolve_figure_font, save_figure, validate_figure_font,
+)
+
+
+def worker_font_snapshot():
+    """Run in real loky workers to catch stale import/environment defaults."""
+    import matplotlib.pyplot as plt
+    figure, axes = plt.subplots()
+    try:
+        return os.environ[FONT_ENV], axes.set_title('Worker title').get_fontfamily()
+    finally:
+        plt.close(figure)
 
 
 class FigureExportsTest(unittest.TestCase):
@@ -123,6 +137,80 @@ class FigureExportsTest(unittest.TestCase):
             with self.subTest(formats=formats), self.assertRaises(ValueError):
                 pipeline.main(pipeline.Config(cache_dir=self.root / 'invalid', figure_formats=formats))
         self.assertFalse((self.root / 'invalid').exists())
+
+    def test_font_defaults_override_and_restore_at_creation_and_export(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(resolve_figure_font(DEFAULT_FIGURE_FONT), 'DejaVu Sans')
+            with matplotlib.rc_context({'font.family': 'DejaVu Serif'}):
+                figure, axes = plt.subplots()
+                title = axes.set_title('Font policy')
+                original = title.get_fontfamily()
+                with figure_format_context(('pdf',)):
+                    path, = save_figure(figure, self.root / 'default.png')
+                self.assertIn(b'DejaVuSans', path.read_bytes())
+                self.assertEqual(title.get_fontfamily(), original)
+                with figure_font_context('DejaVu Sans Mono'):
+                    next_figure, next_axes = plt.subplots()
+                    self.assertEqual(next_axes.set_title('New figure').get_fontfamily(), ['DejaVu Sans Mono'])
+                    with figure_format_context(('pdf',)):
+                        path, = save_figure(figure, self.root / 'override.png')
+                    self.assertIn(b'DejaVuSansMono', path.read_bytes())
+                self.assertEqual(matplotlib.rcParams['font.family'], ['DejaVu Serif'])
+                self.assertEqual(title.get_fontfamily(), original)
+            self.assertNotIn(FONT_ENV, os.environ)
+
+    def test_font_context_restores_environment_and_style_after_failure(self):
+        with patch.dict(os.environ, {FONT_ENV: 'DejaVu Serif'}), matplotlib.rc_context({'font.family': 'DejaVu Serif'}):
+            with self.assertRaises(RuntimeError):
+                with figure_font_context('DejaVu Sans Mono'):
+                    self.assertEqual(os.environ[FONT_ENV], 'DejaVu Sans Mono')
+                    raise RuntimeError('failed run')
+            self.assertEqual(os.environ[FONT_ENV], 'DejaVu Serif')
+            self.assertEqual(matplotlib.rcParams['font.family'], ['DejaVu Serif'])
+
+    def test_missing_font_warns_once_and_falls_back_without_global_style_changes(self):
+        resolve_figure_font.cache_clear()
+        before = matplotlib.rcParams['font.family'][:]
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            for _ in range(2):
+                with figure_font_context('Nonexistent wm-states journal font 981273') as resolved:
+                    self.assertEqual(resolved, DEFAULT_FIGURE_FONT)
+                    self.assertEqual(matplotlib.rcParams['font.family'], [DEFAULT_FIGURE_FONT])
+        self.assertEqual(len(caught), 1)
+        self.assertIn('unavailable on this computer', str(caught[0].message))
+        self.assertEqual(matplotlib.rcParams['font.family'], before)
+
+    def test_invalid_font_settings_fail_before_creating_run_or_figure_output(self):
+        for font in ('', '  ', 'Arial\n', 'font\x00name', 'x' * 121, None, ['Arial']):
+            with self.subTest(font=font), self.assertRaises(ValueError):
+                validate_figure_font(font)
+        with self.assertRaises(ValueError):
+            pipeline.main(pipeline.Config(cache_dir=self.root / 'invalid-font', figure_font=' '))
+        self.assertFalse((self.root / 'invalid-font').exists())
+        with patch.dict(os.environ, {FONT_ENV: ''}), self.assertRaises(ValueError):
+            save_figure(Mock(), self.root / 'invalid-export/chart.png')
+        self.assertFalse((self.root / 'invalid-export').exists())
+
+    def test_pipeline_records_requested_and_resolved_font_and_applies_it_to_stage(self):
+        cache = self.root / 'font-run'
+        def stage(_config):
+            self.assertEqual(os.environ[FONT_ENV], 'DejaVu Sans Mono')
+            figure, axes = plt.subplots()
+            self.assertEqual(axes.set_title('Stage').get_fontfamily(), ['DejaVu Sans Mono'])
+        with patch.object(eval_confidence, 'main', side_effect=stage), redirect_stdout(io.StringIO()):
+            pipeline.main(pipeline.Config(cache_dir=cache, stages=('evaluate',), figure_font='DejaVu Sans Mono'))
+        record = json.loads((cache / 'pipeline_manifest.json').read_text())
+        self.assertEqual(record['runner_config']['figure_font'], 'DejaVu Sans Mono')
+        self.assertEqual(record['runner_config']['resolved_figure_font'], 'DejaVu Sans Mono')
+
+    def test_worker_pools_follow_consecutive_font_changes(self):
+        from joblib import Parallel, delayed
+        from scripts.next.common import worker_context
+        for font in ('DejaVu Sans', 'DejaVu Sans Mono'):
+            with figure_font_context(font), worker_context(2):
+                snapshots = Parallel()(delayed(worker_font_snapshot)() for _ in range(2))
+            self.assertEqual(snapshots, [(font, [font])] * 2)
 
     def test_all_next_savefig_calls_are_owned_by_the_shared_export_helper(self):
         sources = Path(__file__).resolve().parents[2] / 'scripts/next'

@@ -41,7 +41,9 @@ describe("live monitor controls", () => {
     expect(html).toContain("Stop run");
     expect(html).not.toContain("Yes, stop run");
     expect(html).toContain('aria-label="Filter log lines"');
-    expect(html).toContain("Save log");
+    expect(html).toContain("Download full log");
+    expect(html).toContain('href="/api/jobs/example-job/log"');
+    expect(html).toContain("Copy shown lines");
   });
 
   it("shows a finished log without offering to stop a completed run", () => {
@@ -52,13 +54,41 @@ describe("live monitor controls", () => {
     expect(html).not.toContain("Connecting");
   });
 
-  it("explains an empty saved log and disables exports", () => {
+  it("explains an empty preview while keeping the full saved log downloadable", () => {
     const html = renderJob({ status: "failed", logs: [] });
     expect(html).toContain("No processing output was recorded.");
     expect(html).toContain("Run stopped with an error");
     const logActions = html.match(
       /<div class="monitor-log-actions">([\s\S]*?)<\/div>/,
     )?.[1];
-    expect(logActions?.match(/disabled=""/g)).toHaveLength(2);
+    expect(logActions?.match(/disabled=""/g)).toHaveLength(1);
+    expect(logActions).toContain('href="/api/jobs/example-job/log"');
+  });
+
+  it("shows running elapsed time and freezes a stopped job", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T10:03:00Z"));
+    try {
+      const stages = [
+        {
+          stage: "decode",
+          status: "running",
+          started_at: "2026-09-26T10:01:30Z",
+        },
+      ];
+      expect(renderJob({ stages })).toContain("Now: Decode · 1m 30s elapsed");
+      expect(renderJob({ stages })).toContain(
+        "Elapsed time · updates every second",
+      );
+      const stopped = renderJob({
+        stages,
+        status: "failed",
+        finished_at: "2026-09-26T10:02:00Z",
+      });
+      expect(stopped).toContain("30.0s");
+      expect(stopped).not.toContain("updates every second");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

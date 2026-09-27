@@ -1,12 +1,13 @@
 """Same-origin REST/WebSocket API and production frontend for a local dashboard."""
 import asyncio
 from contextlib import asynccontextmanager, suppress
+import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -23,6 +24,43 @@ def _trusted_origin(origin, host):
     parsed = urlsplit(origin)
     return (parsed.scheme in ('http', 'https') and
             (parsed.netloc == host or parsed.netloc in ('localhost:5173', '127.0.0.1:5173')))
+
+
+class _FullLogResponse(StreamingResponse):
+    """Download a bounded snapshot while the subprocess keeps appending output."""
+
+    def __init__(self, path, job_id):
+        self.stream = path.open('rb')
+        try:
+            self.length = os.fstat(self.stream.fileno()).st_size
+            super().__init__(self._chunks(), media_type='text/plain', headers={
+                'Content-Length': str(self.length),
+                'Content-Disposition': f'attachment; filename="{job_id}.log"',
+            })
+        except BaseException:
+            self.stream.close()
+            raise
+
+    async def _chunks(self):
+        remaining = self.length
+        while remaining:
+            chunk = self.stream.read(min(64 * 1024, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+
+    async def __call__(self, scope, receive, send):
+        try:
+            if scope.get('method') == 'HEAD':
+                await send({'type': 'http.response.start', 'status': self.status_code,
+                            'headers': self.raw_headers})
+                await send({'type': 'http.response.body', 'body': b'', 'more_body': False})
+            else:
+                await super().__call__(scope, receive, send)
+        finally:
+            # Also close if the client disconnects before consuming the body.
+            self.stream.close()
 
 
 def create_app(repo_root: Path | None = None):
@@ -109,6 +147,15 @@ def create_app(repo_root: Path | None = None):
         except KeyError as exc:
             raise HTTPException(404, 'Job not found.') from exc
 
+    @app.get('/api/jobs/{job_id}/log')
+    @app.head('/api/jobs/{job_id}/log', include_in_schema=False)
+    def full_log(job_id: str):
+        try:
+            path = manager.log_path(job_id)
+            return _FullLogResponse(path, job_id)
+        except (KeyError, ValueError, OSError) as exc:
+            raise HTTPException(404, 'Full log is not available for this job.') from exc
+
     @app.post('/api/jobs/{job_id}/cancel')
     async def cancel(job_id: str):
         try:
@@ -146,6 +193,8 @@ def create_app(repo_root: Path | None = None):
 
     from scripts.next.dashboard.results import create_results_router
     app.include_router(create_results_router(root))
+    from scripts.next.dashboard.paths import create_paths_router
+    app.include_router(create_paths_router(root, trusted_origin=_trusted_origin))
 
     @app.get('/docs', include_in_schema=False)
     def documentation_root():

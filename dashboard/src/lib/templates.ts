@@ -45,7 +45,8 @@ export function templateConfig(
         Object.hasOwn(sharedStageFields, field.name) ||
         field.name === "cache_dir" ||
         field.name === "data_dir" ||
-        field.name === "figure_formats"
+        field.name === "figure_formats" ||
+        field.name === "figure_font"
       )
         continue;
       if (!Object.hasOwn(settings[stage.id], field.name)) {
@@ -67,6 +68,7 @@ export function templateConfig(
     // The pipeline applies these through its figure-export context. Formats
     // must not be injected into individual stage dataclasses.
     figure_formats: form.figure_formats,
+    figure_font: form.figure_font,
     ...(includePaths
       ? { data_dir: form.data_dir, session_list_file: form.session_list_file }
       : {}),
@@ -86,6 +88,7 @@ export function templateRun(
     n_jobs: config.n_jobs,
     max_sessions_to_run: config.max_sessions_to_run,
     figure_formats: config.figure_formats,
+    figure_font: config.figure_font ?? "DejaVu Sans",
     ...(Object.hasOwn(config, "data_dir")
       ? { data_dir: config.data_dir! }
       : {}),
@@ -178,6 +181,7 @@ export function templateChanges(
     ["n_jobs", "Parallel workers"],
     ["max_sessions_to_run", "Session limit"],
     ["figure_formats", "Figure formats"],
+    ["figure_font", "Figure font"],
   ] as const)
     compare("shared", name, baseline[name], form[name], label);
   for (const [name, label] of [

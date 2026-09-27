@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from scripts.next import pipeline
-from scripts.next.dashboard.app import create_app
+from scripts.next.dashboard.app import _FullLogResponse, create_app
 from scripts.next.dashboard.models import RunRequest
 from scripts.next.dashboard.runner import BusyError, RunManager
 from scripts.next.dashboard.schema import get_schema
@@ -154,6 +154,53 @@ class DashboardSchemaTests(unittest.TestCase):
                     self.assertEqual(plan['resolved']['select']['diagnostics_figure_config'], configured_path)
         self.assertFalse((self.root / 'cache').exists())
 
+    def test_home_diagnostic_and_stage_session_paths_match_validation_and_execution(self):
+        from scripts.next import cell_screening
+        (self.root / 'data/sample.mat').touch()
+        diagnostics = self.root / 'diagnostics.json'
+        diagnostics.write_text(json.dumps({'schema_version': 1, 'plots': {'enabled': False}}))
+        sessions = self.root / 'sessions.txt'
+        sessions.write_text('sample\n')
+        settings = {'select': {
+            'save_extended_diagnostics': True,
+            'diagnostics_figure_config': '~/diagnostics.json',
+            'session_list_file': '~/sessions.txt',
+        }}
+        payload = request(settings=settings).model_copy(update={'stages': ['select']})
+        original_expanduser = Path.expanduser
+
+        def expand_fixture_home(path):
+            return self.root / str(path)[2:] if str(path).startswith('~/') else original_expanduser(path)
+
+        with patch.object(Path, 'expanduser', autospec=True, side_effect=expand_fixture_home):
+            plan = self.manager.validate(payload)
+            self.assertEqual(plan['resolved']['select']['diagnostics_figure_config'], str(diagnostics))
+            self.assertEqual(plan['resolved']['select']['session_list_file'], str(sessions))
+            saved_settings = self.root / 'settings.json'
+            saved_settings.write_text(json.dumps(settings))
+            with patch.object(cell_screening, 'main') as screening:
+                pipeline.main(pipeline.Config(cache_dir=self.root / 'cache/home-paths',
+                                              data_dir=self.root / 'data', settings=saved_settings,
+                                              stages=('select',)))
+            resolved = screening.call_args.args[0]
+            self.assertEqual(resolved.diagnostics_figure_config, diagnostics)
+            self.assertEqual(resolved.session_list_file, sessions)
+
+        missing_home = '~wm_states_missing_user_for_test/recordings'
+
+        def fail_missing_home(path):
+            if str(path) == missing_home:
+                raise RuntimeError('Could not determine home directory.')
+            return original_expanduser(path)
+
+        with patch.object(Path, 'expanduser', autospec=True, side_effect=fail_missing_home), \
+                TestClient(create_app(self.root), base_url='http://127.0.0.1:8000') as client:
+            response = client.post('/api/validate', json=request().model_copy(
+                update={'data_dir': missing_home}).model_dump())
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertIn('Cannot resolve the home directory', response.json()['detail'])
+        self.assertIn(missing_home, response.json()['detail'])
+
     def test_cache_confinement_existing_outputs_and_symlinks(self):
         invalid = ['/tmp/escape', 'cache', 'cache/.dashboard', 'cache/../outside', 'cache/run/nested']
         for cache in invalid:
@@ -192,6 +239,34 @@ class DashboardSchemaTests(unittest.TestCase):
             self.manager.validate(request(session_list_file='sessions.txt').model_copy(update={'stages': ['select']}))
         sessions.write_text('sample # selected\nmissing\n')
         self.manager.validate(request(session_list_file='sessions.txt').model_copy(update={'stages': ['select']}))
+
+    def test_restored_crashed_job_does_not_count_offline_time_as_stage_runtime(self):
+        job_id = 'd' * 32
+        self.manager.storage.mkdir(parents=True)
+        record = {
+            'id': job_id, 'status': 'running', 'created_at': '2026-09-27T01:00:00Z',
+            'started_at': '2026-09-27T01:00:00Z', 'finished_at': None,
+            'stages': [
+                {'stage': 'select', 'status': 'complete', 'seconds': 3.125},
+                {'stage': 'decode', 'status': 'running',
+                 'started_at': '2026-09-27T01:00:03Z', 'finished_at': None},
+            ],
+        }
+        path = self.manager.storage / f'{job_id}.json'
+        path.write_text(json.dumps(record))
+        with patch('scripts.next.dashboard.runner.now', return_value='2026-09-29T01:00:00Z'):
+            restored = RunManager(self.root).snapshot(job_id)
+        self.assertEqual(restored['status'], 'failed')
+        self.assertEqual(restored['stages'][0], record['stages'][0])
+        self.assertEqual(restored['stages'][1]['started_at'], record['stages'][1]['started_at'])
+        self.assertTrue(restored['stages'][1]['elapsed_unavailable'])
+        self.assertIsNone(restored['stages'][1]['finished_at'])
+        self.assertNotIn('seconds', restored['stages'][1])
+        self.assertTrue(json.loads(path.read_text())['stages'][1]['elapsed_unavailable'])
+        # A subsequent restart must preserve the annotation and recovery time.
+        again = RunManager(self.root).snapshot(job_id)
+        self.assertEqual(again['stages'], restored['stages'])
+        self.assertEqual(again['finished_at'], restored['finished_at'])
 
 
 class DashboardApiTests(unittest.TestCase):
@@ -257,6 +332,28 @@ class DashboardApiTests(unittest.TestCase):
             self.assertEqual(snapshot['status'], 'complete')
             self.assertEqual(snapshot['logs'], ['real log'])
 
+    def test_full_log_download_includes_more_than_the_live_preview(self):
+        manager = self.app.state.runner
+        job_id = 'a' * 32
+        manager.jobs[job_id] = dict(id=job_id, status='running', logs=['latest line'])
+        manager.storage.mkdir(parents=True)
+        path = manager.storage / f'{job_id}.log'
+        payload = ''.join(f'line {index}\n' for index in range(650)).encode()
+        path.write_bytes(payload)
+        response = self.client.get(f'/api/jobs/{job_id}/log')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, payload)
+        self.assertIn(f'{job_id}.log', response.headers['content-disposition'])
+        self.assertEqual(response.headers['content-length'], str(len(payload)))
+        head = self.client.head(f'/api/jobs/{job_id}/log')
+        self.assertEqual(head.content, b'')
+        self.assertEqual(head.headers['content-length'], str(len(payload)))
+        path.write_bytes(b'')
+        self.assertEqual(self.client.get(f'/api/jobs/{job_id}/log').content, b'')
+        self.assertEqual(self.client.get('/api/jobs/unknown/log').status_code, 404)
+        path.unlink()
+        self.assertEqual(self.client.get(f'/api/jobs/{job_id}/log').status_code, 404)
+
     def test_built_frontend_and_spa_route(self):
         dist = self.root / 'dashboard/dist'
         dist.mkdir(parents=True)
@@ -286,6 +383,34 @@ class DashboardProcessTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(.01)
         self.fail('Job did not start')
 
+    async def test_log_download_stops_at_initial_length_and_closes_on_disconnect(self):
+        path = self.root / 'growing.log'
+        payload = b'initial output\n' * 10_000
+        path.write_bytes(payload)
+        response = _FullLogResponse(path, 'a' * 32)
+        messages = []
+
+        async def send(message):
+            messages.append(message)
+            if message['type'] == 'http.response.start':
+                with path.open('ab') as stream:
+                    stream.write(b'output after download started\n')
+
+        async def receive():
+            return {'type': 'http.disconnect'}
+
+        scope = {'type': 'http', 'method': 'GET', 'asgi': {'spec_version': '2.4'}}
+        await response(scope, receive, send)
+        self.assertEqual(b''.join(message.get('body', b'') for message in messages), payload)
+        self.assertTrue(response.stream.closed)
+
+        response = _FullLogResponse(path, 'a' * 32)
+        async def disconnected(message):
+            raise OSError('client left')
+        with self.assertRaises(Exception):
+            await response(scope, receive, disconnected)
+        self.assertTrue(response.stream.closed)
+
     async def test_real_process_output_progress_and_restoration(self):
         self.script('''import json, pathlib, sys, time
 args = sys.argv
@@ -310,6 +435,11 @@ print('evaluation done', flush=True)
         self.assertEqual(final['stages'][0]['status'], 'complete')
         self.assertEqual(final['logs'], ['evaluating sessions', 'evaluation done'])
         self.assertEqual(json.loads((self.root / f"configs/next/.dashboard/{job['id']}.json").read_text()), {})
+        self.assertEqual(Path(final['run_log_path']).read_bytes(), self.manager.log_path(job['id']).read_bytes())
+        self.assertEqual(Path(final['run_record_path']).read_bytes(),
+                         (self.manager.storage / f"{job['id']}.json").read_bytes())
+        self.assertEqual(json.loads(Path(final['run_settings_path']).read_text()), {})
+        self.assertEqual(json.loads(Path(final['run_record_path']).read_text())['request'], request().model_dump())
         restored = RunManager(self.root).snapshot(job['id'])
         self.assertEqual(restored['status'], 'complete')
         self.assertEqual(restored['logs'], final['logs'])
@@ -333,7 +463,8 @@ print('evaluation done', flush=True)
         self.assertEqual(final['status'], 'failed')
         self.assertIn('launch unavailable', final['error'])
         self.script('raise SystemExit(7)\n')
-        second = await self.manager.start(request())
+        self.assertIn('launch unavailable', Path(final['run_log_path']).read_text())
+        second = await self.manager.start(request(allow_existing=True))
         await self.manager.tasks[second['id']]
         self.assertEqual(self.manager.snapshot(second['id'])['exit_code'], 7)
 
@@ -370,6 +501,62 @@ print('evaluation done', flush=True)
         self.assertTrue(signal_group.called)
         self.assertFalse(self.manager.processes)
 
+    async def test_full_log_is_mirrored_while_running_and_reruns_preserve_history(self):
+        self.script('''import json, pathlib, sys, time
+cache = pathlib.Path(sys.argv[sys.argv.index('--cache-dir') + 1])
+record = {'run_id': 'current', 'invocation': {'argv': sys.orig_argv},
+          'stages': [{'stage': 'evaluate', 'status': 'running',
+                      'started_at': '2026-09-27T01:00:00Z', 'finished_at': None}]}
+(cache / 'pipeline_manifest.json').write_text(json.dumps(record))
+for number in range(650):
+    print(f'line {number}', flush=True)
+print('standard error', file=sys.stderr, flush=True)
+while not (cache / 'continue').exists():
+    time.sleep(.01)
+''')
+        settings = {'decode': {'n_decode_shuffle': 3}}
+        job = await self.manager.start(request(settings=settings))
+        await self.wait_running(job['id'])
+        for _ in range(100):
+            if self.manager.jobs[job['id']]['logs'][-1:] == ['standard error']:
+                break
+            await asyncio.sleep(.01)
+        else:
+            self.fail('Full process output did not arrive')
+        live = self.manager.snapshot(job['id'])
+        self.assertEqual(live['status'], 'running')
+        self.assertEqual(len(live['logs']), 500)
+        expected = ''.join(f'line {number}\n' for number in range(650)) + 'standard error\n'
+        self.assertEqual(self.manager.log_path(job['id']).read_text(), expected)
+        self.assertEqual(Path(live['run_log_path']).read_text(), expected)
+        self.assertEqual(json.loads(Path(live['run_record_path']).read_text())['status'], 'running')
+        self.assertEqual(json.loads(Path(live['run_record_path']).read_text())['stages'][0]['started_at'],
+                         '2026-09-27T01:00:00Z')
+        self.assertEqual(json.loads(Path(live['run_settings_path']).read_text()), settings)
+        (Path(live['cache_dir']) / 'continue').touch()
+        await asyncio.wait_for(self.manager.tasks[job['id']], 5)
+        originals = {key: Path(live[key]).read_bytes()
+                     for key in ('run_record_path', 'run_log_path', 'run_settings_path')}
+        self.script('print("second invocation")\n')
+        second = await self.manager.start(request(allow_existing=True))
+        await asyncio.wait_for(self.manager.tasks[second['id']], 5)
+        self.assertNotEqual(job['id'], second['id'])
+        self.assertEqual(len(list((Path(live['cache_dir']) / 'dashboard').glob('*.log'))), 2)
+        for key, payload in originals.items():
+            self.assertEqual(Path(live[key]).read_bytes(), payload)
+
+    async def test_log_paths_reject_unknown_jobs_and_symlink_files(self):
+        self.script('print("recorded")\n')
+        job = await self.manager.start(request())
+        await self.manager.tasks[job['id']]
+        with self.assertRaises(KeyError):
+            self.manager.log_path('../outside')
+        log = self.manager.log_path(job['id'])
+        log.unlink()
+        log.symlink_to(Path(job['run_log_path']))
+        with self.assertRaises(FileNotFoundError):
+            self.manager.log_path(job['id'])
+
     async def test_queued_cancel_and_old_manifest_do_not_fake_progress(self):
         cache = self.root / 'cache/first'
         cache.mkdir(parents=True)
@@ -385,6 +572,8 @@ print('evaluation done', flush=True)
         self.assertEqual(final['status'], 'cancelled')
         self.assertEqual(final['stages'][0]['status'], 'pending')
         self.assertFalse(self.manager.processes)
+        self.assertEqual(Path(final['run_log_path']).read_bytes(), b'')
+        self.assertEqual(self.manager.log_path(job['id']).read_bytes(), b'')
 
 
 if __name__ == '__main__':

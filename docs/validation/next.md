@@ -1,5 +1,51 @@
 # Next pipeline validation
 
+## Live timing, run records, figure fonts, and path completion — 2026-09-27
+
+The changes passed **446 Python tests** in **12.933 seconds**, including all
+**329 next-pipeline tests**, and **81 frontend tests** across **13 files**.
+TypeScript checking, the production Vite build, frontend formatting, a strict
+MkDocs build, and `git diff --check` passed.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m unittest discover -s tests -v
+npm --prefix dashboard test
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
+- Timing tests cover live stage start timestamps, measured final durations,
+  older records, and recovery after an unclean shutdown. An unfinished stage
+  with no known end time does not count dashboard downtime as analysis time.
+- Subprocess and API tests verify matching central/run-folder records and full
+  logs, retained invocation history, submitted settings copies, queued
+  cancellation, launch failures, and bounded downloads while a log grows.
+  Full-log downloads are independent of the visible 500-line preview and filter.
+- Figure tests inspect exported PDF fonts, unavailable-family warnings and
+  fallback, requested/resolved manifest values, and restoration of Matplotlib
+  state. Real worker-pool tests cover consecutive runs with different fonts and
+  existing serial/parallel scientific-result consistency.
+- Path tests cover directory/file suggestions, spaces, missing paths, bounded
+  listings, cross-origin rejection, keyboard completion, truncated results, and
+  viewport placement. Home-directory paths expand during validation/execution;
+  templates retain literal paths so they remain portable between computers.
+- Desktop browser review at **1440 × 960** verified an advancing stage timer,
+  stable completed-stage durations, Tab/common-prefix completion, arrow-key
+  selection, font change indicators and reset, and saving a font preference as a
+  template during an active-job fixture. A full-log download contained all
+  **600 fixture lines**, including lines absent from the preview.
+- Mobile review at **390 × 844** verified controls without horizontal overflow
+  and suggestions opening above fields near the viewport bottom. No browser
+  console warnings or errors appeared in the reviewed workflows.
+
+Browser review used an isolated temporary repository and dashboard on port 8013.
+No user analysis job was started, stopped, or modified. The temporary server and
+browser tab were closed after review. Statistical calculations are unchanged;
+this validation exercises run management, presentation, configuration, and file
+handling rather than rerunning the complete scientific example dataset.
+
 ## Template comparison and reusable configurations — 2026-09-26
 
 The dashboard template changes passed **422 Python tests** in **11.691 seconds**

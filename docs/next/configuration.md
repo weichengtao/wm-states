@@ -90,6 +90,49 @@ Use `png pdf` to get inline dashboard previews and a PDF original for export.
 PDF-only runs are supported: their figures appear in the viewer with a download
 control. See [Outputs](outputs.md#figure-files) for file behavior.
 
+### Figure fonts
+
+All `next` figures use **DejaVu Sans** by default, a sans-serif family bundled
+with Matplotlib for consistent availability across operating systems. The same
+choice applies to stage results, screening diagnostics, and inspection figures.
+To follow a journal's typography requirements, set one family for a whole run:
+
+```bash
+uv run python scripts/next/pipeline.py \
+  --settings configs/next/example_pipeline.json --stages all \
+  --cache-dir cache/journal_run --figure-font "Arial" --figure-formats png pdf
+```
+
+The dashboard's **Figure font** field sets `--figure-font` and saved analysis
+templates retain it. Earlier templates without this field use DejaVu Sans.
+This is a run-level argument, not a stage JSON setting. With the same code and
+analysis settings, changing only the font affects figure text and does not
+invalidate decoding checkpoints. Plotting stages still need to run to export
+new figures.
+
+The requested font must be available to Matplotlib on the computer running the
+Python backend. A missing family emits a warning in the run log and falls back
+to DejaVu Sans, allowing the analysis to finish. Install the journal font and
+restart the dashboard or command before re-exporting. Blank names, control
+characters, and names longer than 120 characters are errors. The manifest keeps
+both the requested `runner_config.figure_font` and the actual
+`runner_config.resolved_figure_font`, so a fallback is visible in provenance.
+PDF and EPS embed TrueType fonts; mathematical symbols retain Matplotlib's
+math-text rendering and glyph fallback.
+
+Standalone inspection commands use `WM_STATES_FIGURE_FONT`:
+
+```bash
+WM_STATES_FIGURE_FONT="Arial" WM_STATES_FIGURE_FORMATS=png,pdf \
+  uv run python scripts/next/inspect_decoding_results.py \
+  --cache-dir cache/journal_run --session 221024 --trial 0
+```
+
+The runner's `--figure-font` takes precedence over an inherited environment
+value, including when the flag is omitted and its DejaVu Sans default applies.
+Run-scoped styles are restored after a Python API call; worker pools receive
+the current font even across consecutive calls with different choices.
+
 ## Cache directory layout
 
 Pass the run root to `--cache-dir` on every command, such as `cache/my_run`,

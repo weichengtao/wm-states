@@ -52,6 +52,8 @@ def _type_description(hint):
         return {'type': 'string', 'choices': [item.value for item in hint]}
     if origin in (list, tuple):
         return {'type': 'array', 'items': _type_description(args[0])}
+    if hint is Path:
+        return {'type': 'string', 'path_kind': 'file'}
     return {'type': {bool: 'boolean', int: 'integer', float: 'number', str: 'string',
                      Path: 'string'}.get(hint, 'string')}
 
@@ -187,7 +189,8 @@ def resolve_settings(request: RunRequest, repo_root: Path, cache_dir: Path, data
                 raise ValueError(f'{stage}: unknown setting {name!r}.')
             _validate_type(value, hints[name], f'{stage}.{name}')
         try:
-            config = pipeline.resolve_config(module, shared, overrides)
+            config = pipeline.resolve_config(module, shared, overrides,
+                                             expand_paths=validate_external_files)
             _validate_limits(config, stage)
             if hasattr(module, '_validate_config'):
                 module._validate_config(config)

@@ -64,6 +64,10 @@ class ManifestHistoryTest(unittest.TestCase):
             self.assertEqual(record['status'], 'complete')
             self.assertIsNotNone(record['finished_at'])
             self.assertTrue(all(s['status'] == 'complete' for s in record['stages']))
+            for stage in record['stages']:
+                self.assertIsNotNone(datetime.fromisoformat(stage['started_at']).tzinfo)
+                self.assertGreaterEqual(datetime.fromisoformat(stage['finished_at']),
+                                        datetime.fromisoformat(stage['started_at']))
 
     def test_failures_and_interruptions_are_recorded_without_touching_prior_runs(self):
         self.invoke(replace(self.config, stages=('select',)))
@@ -80,6 +84,8 @@ class ManifestHistoryTest(unittest.TestCase):
             self.assertEqual(latest['stages'][1]['status'], status)
             self.assertIn(type(error).__name__, latest['stages'][1]['error'])
             self.assertIn('seconds', latest['stages'][1])
+            self.assertIsNotNone(latest['stages'][1]['started_at'])
+            self.assertIsNotNone(latest['stages'][1]['finished_at'])
             self.assertEqual(self.history()[latest['run_id'] + '.json'], self.latest.read_bytes())
         self.assertTrue(original.items() <= self.history().items())
         self.assertEqual(len(self.history()), 3)
@@ -120,6 +126,8 @@ class ManifestHistoryTest(unittest.TestCase):
             self.assertEqual(record['status'], 'running')
             self.assertIsNone(record['finished_at'])
             self.assertEqual(record['stages'][-1]['status'], 'running')
+            self.assertIsNotNone(record['stages'][-1]['started_at'])
+            self.assertIsNone(record['stages'][-1]['finished_at'])
             self.assertEqual(self.history()[record['run_id'] + '.json'], self.latest.read_bytes())
         self.invoke(replace(self.config, stages=('evaluate',)), inspect)
 

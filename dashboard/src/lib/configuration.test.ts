@@ -200,6 +200,7 @@ describe("reuse manifest settings", () => {
         session_list_file: null,
         max_sessions_to_run: null,
         figure_formats: ["png"],
+        figure_font: "DejaVu Serif",
         dry_run: false,
       },
       settings: {
@@ -228,6 +229,7 @@ describe("reuse manifest settings", () => {
     });
     expect(seed.stages).toEqual(["select", "decode"]);
     expect(seed.data_dir).toBe("data/example");
+    expect(seed.figure_font).toBe("DejaVu Serif");
     expect(seed.allow_existing).toBe(false);
     expect(manifest.settings?.select.cache_dir).toBe("cache/old");
     expect(initialRun(schema, seed, "cache/copied").cache_dir).toBe(

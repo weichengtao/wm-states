@@ -8,6 +8,7 @@ export type Field = {
   choices?: string[];
   nullable?: boolean;
   description?: string;
+  path_kind?: "file" | "directory";
 };
 export type Stage = {
   id: string;
@@ -29,6 +30,7 @@ export type RunRequest = {
   session_list_file: string | null;
   max_sessions_to_run: number | null;
   figure_formats: string[];
+  figure_font: string;
   settings: Settings;
   allow_existing: boolean;
 };
@@ -38,6 +40,7 @@ export type TemplateConfig = {
   n_jobs: number;
   max_sessions_to_run: number | null;
   figure_formats: string[];
+  figure_font?: string;
   data_dir?: string;
   session_list_file?: string | null;
 };
@@ -61,6 +64,9 @@ export type StageProgress = {
   stage: string;
   status: string;
   seconds?: number;
+  elapsed_unavailable?: boolean;
+  started_at?: string;
+  finished_at?: string;
   error?: string;
 };
 export type Job = {
@@ -77,6 +83,9 @@ export type Job = {
   logs: string[];
   exit_code?: number;
   error?: string;
+  run_record_path?: string;
+  run_log_path?: string;
+  run_settings_path?: string;
 };
 export type Run = {
   id: string;

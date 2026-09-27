@@ -41,6 +41,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
 import SaveTemplateDialog from "./SaveTemplateDialog";
+import PathInput from "./PathInput";
 import {
   builtInTemplates,
   formatTemplateValue,
@@ -146,6 +147,20 @@ function FieldEditor({
                   : ""
                 : Number(e.target.value),
             )
+          }
+        />
+      ) : field.path_kind ? (
+        <PathInput
+          id={id}
+          aria-describedby={`${id}-description`}
+          value={value === null ? "" : String(value)}
+          mode={field.path_kind === "directory" ? "directory" : "any"}
+          extensions={
+            field.name === "diagnostics_figure_config" ? [".json"] : undefined
+          }
+          placeholder={field.nullable ? "None (optional)" : ""}
+          onValueChange={(path) =>
+            onChange(path || (field.nullable ? null : ""))
           }
         />
       ) : (
@@ -674,11 +689,12 @@ export default function Configure({
           </div>
           <div className="field">
             <label htmlFor="cache-dir">Cache directory</label>
-            <Input
+            <PathInput
               id="cache-dir"
               aria-describedby="cache-dir-help"
+              mode="directory"
               value={form.cache_dir}
-              onChange={(e) => update({ cache_dir: e.target.value })}
+              onValueChange={(path) => update({ cache_dir: path })}
             />
             <p id="cache-dir-help" className="field-hint">
               A unique folder keeps this run easy to compare later.
@@ -694,10 +710,11 @@ export default function Configure({
                 Use example data
               </button>
             </label>
-            <Input
+            <PathInput
               id="data-dir"
+              mode="directory"
               value={form.data_dir}
-              onChange={(e) => update({ data_dir: e.target.value })}
+              onValueChange={(path) => update({ data_dir: path })}
             />
             {sharedHint("data_dir")}
           </div>
@@ -705,13 +722,13 @@ export default function Configure({
             <label htmlFor="session-list">
               Session allowlist <span>optional</span>
             </label>
-            <Input
+            <PathInput
               id="session-list"
               aria-describedby="session-list-help"
               placeholder="All available sessions"
               value={form.session_list_file ?? ""}
-              onChange={(e) =>
-                update({ session_list_file: e.target.value || null })
+              onValueChange={(path) =>
+                update({ session_list_file: path || null })
               }
             />
             {sharedHint("session_list_file")}
@@ -753,6 +770,33 @@ export default function Configure({
               }
             />
             {sharedHint("max_sessions_to_run")}
+          </div>
+          <div className={fieldClass("figure_font")}>
+            <label htmlFor="figure-font">
+              Figure font
+              {form.figure_font !== "DejaVu Sans" && (
+                <button
+                  className="text-button"
+                  onClick={() => update({ figure_font: "DejaVu Sans" })}
+                >
+                  Use default
+                </button>
+              )}
+            </label>
+            <Input
+              id="figure-font"
+              aria-describedby="figure-font-help"
+              value={form.figure_font}
+              placeholder="DejaVu Sans"
+              maxLength={120}
+              onChange={(event) => update({ figure_font: event.target.value })}
+            />
+            {sharedHint("figure_font")}
+            <p id="figure-font-help" className="field-hint">
+              Applies to every figure in this run. Use an installed font family
+              for a journal requirement; unavailable fonts warn and fall back to
+              DejaVu Sans.
+            </p>
           </div>
         </div>
         {sharedHint("figure_formats")}

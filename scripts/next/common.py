@@ -14,7 +14,16 @@ from scipy.io import loadmat
 def worker_context(n_jobs):
     if n_jobs == 0:
         raise ValueError('n_jobs must be positive or a negative joblib CPU count.')
-    return parallel_config(backend='loky', n_jobs=n_jobs, inner_max_num_threads=1)
+    from scripts.next.figure_exports import (
+        FORMAT_ENV, configure_worker_figure_exports, current_figure_font, validate_figure_formats,
+    )
+    import os
+    formats = validate_figure_formats(tuple(value.strip() for value in os.environ.get(FORMAT_ENV, 'png').split(',')))
+    # Changed initializer arguments make loky replace an incompatible reused
+    # pool, so consecutive programmatic runs cannot inherit an earlier font.
+    return parallel_config(backend='loky', n_jobs=n_jobs, inner_max_num_threads=1,
+                           initializer=configure_worker_figure_exports,
+                           initargs=(formats, current_figure_font()))
 
 
 def load_session(path):

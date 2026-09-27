@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from scripts.next.figure_exports import FigureFormat
+from scripts.next.figure_exports import DEFAULT_FIGURE_FONT, FigureFormat, validate_figure_font
 
 
 class RunRequest(BaseModel):
@@ -21,8 +21,14 @@ class RunRequest(BaseModel):
     max_sessions_to_run: int | None = None
     session_list_file: str | None = None
     figure_formats: list[FigureFormat] = Field(default_factory=lambda: ['png'])
+    figure_font: str = DEFAULT_FIGURE_FONT
     settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
     allow_existing: bool = False
+
+    @field_validator('figure_font')
+    @classmethod
+    def font(cls, value: str) -> str:
+        return validate_figure_font(value)
 
     @field_validator('name', 'data_dir', 'cache_dir')
     @classmethod
@@ -62,8 +68,14 @@ class TemplateConfig(BaseModel):
     n_jobs: int
     max_sessions_to_run: int | None
     figure_formats: list[FigureFormat]
+    figure_font: str = DEFAULT_FIGURE_FONT
     data_dir: str | None = None
     session_list_file: str | None = None
+
+    @field_validator('figure_font')
+    @classmethod
+    def font(cls, value: str) -> str:
+        return validate_figure_font(value)
 
     @field_validator('data_dir', 'session_list_file')
     @classmethod

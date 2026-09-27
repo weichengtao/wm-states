@@ -326,6 +326,19 @@ class RunnerTest(unittest.TestCase):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'unknown settings'):
                 resolve_config(module, {}, {key: 2})
 
+    def test_unavailable_home_directories_have_clear_errors_and_can_stay_literal_for_templates(self):
+        module = importlib.import_module('scripts.next.cell_screening')
+        overrides = {'diagnostics_figure_config': '~absent-user/diagnostics.json',
+                     'session_list_file': '~absent-user/sessions.txt'}
+        with patch.object(Path, 'expanduser', side_effect=RuntimeError('Could not determine home directory.')) as expand:
+            with self.assertRaisesRegex(ValueError, 'diagnostics_figure_config: cannot resolve the home directory'):
+                resolve_config(module, {}, overrides)
+            expand.reset_mock()
+            config = resolve_config(module, {}, overrides, expand_paths=False)
+            expand.assert_not_called()
+            self.assertEqual(config.diagnostics_figure_config, Path(overrides['diagnostics_figure_config']))
+            self.assertEqual(config.session_list_file, Path(overrides['session_list_file']))
+
 
 if __name__ == '__main__':
     unittest.main()

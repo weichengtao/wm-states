@@ -37,6 +37,7 @@ def payload(**overrides):
             'settings': {'activity': {'max_points_per_color_group': None}},
             'stages': ['evaluate'], 'n_jobs': -1, 'max_sessions_to_run': None,
             'figure_formats': ['png', 'pdf'],
+            'figure_font': 'DejaVu Sans',
         },
         **overrides,
     }
@@ -66,7 +67,7 @@ class DashboardTemplateTests(unittest.TestCase):
             self.assertTrue(record['builtin'])
             config = record['config']
             self.assertEqual(config['settings'], json.loads((self.root / record['path']).read_text()))
-            for field in ('stages', 'n_jobs', 'max_sessions_to_run', 'figure_formats'):
+            for field in ('stages', 'n_jobs', 'max_sessions_to_run', 'figure_formats', 'figure_font'):
                 self.assertEqual(config[field], defaults[field])
             for field in ('data_dir', 'session_list_file', 'cache_dir', 'name', 'allow_existing'):
                 self.assertNotIn(field, config)
@@ -78,6 +79,33 @@ class DashboardTemplateTests(unittest.TestCase):
         self.assertEqual(refreshed['config']['settings']['decode']['seed'], 71)
         self.assertFalse(self.storage.exists())
         self.assertFalse((self.root / 'cache').exists())
+
+    def test_legacy_templates_receive_default_font_and_new_templates_keep_requested_font(self):
+        request = payload()
+        request['config'].pop('figure_font')
+        saved = self.post(request).json()
+        self.assertEqual(saved['config']['figure_font'], 'DejaVu Sans')
+        path = self.root / saved['path']
+        envelope = json.loads(path.read_text())
+        self.assertEqual(envelope['config'].pop('figure_font'), 'DejaVu Sans')
+        path.write_text(json.dumps(envelope))
+        records = self.client.get('/api/templates').json()
+        self.assertEqual(records['warnings'], [])
+        self.assertEqual(records['templates'][-1]['config']['figure_font'], 'DejaVu Sans')
+        request['name'] = 'Journal typography'
+        request['config']['figure_font'] = '  DejaVu Sans Mono  '
+        saved = self.post(request).json()
+        self.assertEqual(saved['config']['figure_font'], 'DejaVu Sans Mono')
+
+    def test_run_and_template_font_validation_does_not_require_installed_fonts(self):
+        self.assertEqual(RunRequest().figure_font, 'DejaVu Sans')
+        self.assertEqual(RunRequest(figure_font='Journal-only font').figure_font, 'Journal-only font')
+        for font in ('', '  ', 'Arial\n', 'x' * 121, None, ['Arial']):
+            with self.subTest(font=font), self.assertRaises(ValueError):
+                RunRequest(figure_font=font)
+            request = payload()
+            request['config']['figure_font'] = font
+            self.assertEqual(self.post(request).status_code, 422)
 
     def test_save_is_durable_and_preserves_sparse_config_nulls_and_enum_spelling(self):
         request = payload()
@@ -126,9 +154,14 @@ class DashboardTemplateTests(unittest.TestCase):
         self.assertFalse((self.root / 'cache').exists())
         request['name'] = 'Recording path for another computer'
         request['config']['data_dir'] = '~wm_states_nonexistent_user_20260926/recordings'
+        request['config']['session_list_file'] = '~wm_states_nonexistent_user_20260926/sessions.txt'
+        request['config']['settings']['select'].update(
+            diagnostics_figure_config='~wm_states_nonexistent_user_20260926/diagnostics.json',
+            session_list_file='~wm_states_nonexistent_user_20260926/stage-sessions.txt',
+        )
         response = self.post(request)
         self.assertEqual(response.status_code, 201, response.text)
-        self.assertEqual(response.json()['config']['data_dir'], request['config']['data_dir'])
+        self.assertEqual(response.json()['config'], request['config'])
         self.assertEqual(self.app.state.runner.jobs, {'existing-job': active})
 
     def test_omitted_recording_paths_and_explicit_null_session_list_stay_distinct(self):

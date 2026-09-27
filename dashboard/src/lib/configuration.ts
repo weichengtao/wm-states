@@ -25,6 +25,7 @@ export function initialRun(
     session_list_file: null,
     max_sessions_to_run: null,
     figure_formats: ["png"],
+    figure_font: "DejaVu Sans",
     allow_existing: false,
     ...schema.defaults,
     cache_dir: cache,
@@ -42,6 +43,7 @@ const sharedFields: Record<string, keyof RunRequest> = {
   session_list_file: "session_list_file",
   max_sessions_to_run: "max_sessions_to_run",
   figure_formats: "figure_formats",
+  figure_font: "figure_font",
 };
 
 export function fieldValue(
@@ -149,6 +151,7 @@ export function manifestSeed(
     "session_list_file",
     "max_sessions_to_run",
     "figure_formats",
+    "figure_font",
   ] as const) {
     if (Object.hasOwn(runner, key)) Object.assign(seed, { [key]: runner[key] });
   }

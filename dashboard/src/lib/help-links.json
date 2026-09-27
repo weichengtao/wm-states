@@ -147,7 +147,7 @@
     {
       "title": "Keep a reusable configuration",
       "keywords": "template preset settings json save export import recording paths reusable",
-      "answer": "Use Save as template to keep a named setup with selected stages, all effective stage parameters, workers, session limit, and figure formats. Recording paths are optional; the run name and output directory are excluded. Templates can be saved while another analysis runs, and are stored in configs/next/templates for deliberate sharing or commits.",
+      "answer": "Use Save as template to keep a named setup with selected stages, all effective stage parameters, workers, session limit, figure formats, and figure font. Recording paths are optional; the run name and output directory are excluded. Templates can be saved while another analysis runs, and are stored in configs/next/templates for deliberate sharing or commits.",
       "path": "next/dashboard/#analysis-templates"
     },
     {
@@ -179,6 +179,24 @@
       "keywords": "compare split screen session run results settings",
       "answer": "Keep the analysis population, preferred cue, trial set, and preprocessing in view. Different settings can change what a figure or score represents.",
       "path": "next/dashboard/#inspect-and-compare-results"
+    },
+    {
+      "title": "Complete a local path",
+      "keywords": "file folder directory tab autocomplete allowlist diagnostic path",
+      "answer": "Recording directory, cache directory, session allowlist, and diagnostic file fields suggest local paths. Tab completes a unique match or shared prefix; arrow keys and Enter pick a path. A second Tab moves on, Shift+Tab moves back, and Escape closes suggestions. Relative paths start at the repository; ~/ starts at your home folder. New paths can still be typed manually.",
+      "path": "next/dashboard/#path-completion"
+    },
+    {
+      "title": "Choose the font for a run",
+      "keywords": "figure font DejaVu Sans serif journal Arial Times New Roman typography",
+      "answer": "Figure font defaults to DejaVu Sans for every new figure. Enter another installed family for a journal requirement. An unavailable font warns and falls back to DejaVu Sans; the manifest records the request and resolved font. Templates retain the font choice. From the CLI, use --figure-font.",
+      "path": "next/dashboard/#figure-font"
+    },
+    {
+      "title": "Find the full log and run records",
+      "keywords": "log 500 lines download history json settings full output elapsed timing",
+      "answer": "Live Progress shows a running-stage timer and the latest 500 log lines. Download full log includes all output written so far; Copy shown lines uses only the filtered preview. New dashboard jobs also save their JSON record, full log, and settings in the run folder under dashboard/<job-id>.*, while central dashboard copies are retained. Each invocation has its own files.",
+      "path": "next/dashboard/#follow-processing"
     }
   ],
   "fieldLinks": {

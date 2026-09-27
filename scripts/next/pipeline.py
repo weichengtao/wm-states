@@ -21,8 +21,11 @@ from threadpoolctl import threadpool_limits
 
 from scripts.next.common import json_value
 from scripts.next.diagnostic_config import load_diagnostic_config
-from scripts.next.figure_exports import FigureFormat, figure_format_context, validate_figure_formats
-from scripts.next.run_manifest import RunManifest, invocation_context
+from scripts.next.figure_exports import (
+    DEFAULT_FIGURE_FONT, FigureFormat, figure_font_context, figure_format_context,
+    validate_figure_font, validate_figure_formats,
+)
+from scripts.next.run_manifest import RunManifest, invocation_context, utc_now
 
 STAGES = {
     'select': 'cell_screening',
@@ -51,10 +54,11 @@ class Config:
     session_list_file: Path | None = None
     max_sessions_to_run: int | None = None
     figure_formats: tuple[FigureFormat, ...] = ('png',)
+    figure_font: str = DEFAULT_FIGURE_FONT  # Font family for all figures; unavailable fonts warn and fall back to DejaVu Sans.
     dry_run: bool = False  # Print resolved settings without running any analysis.
 
 
-def resolve_config(module, shared, overrides):
+def resolve_config(module, shared, overrides, *, expand_paths=True):
     names = {field.name for field in fields(module.Config)}
     unknown = set(overrides) - names
     if unknown:
@@ -66,7 +70,14 @@ def resolve_config(module, shared, overrides):
         hint = hints[key]
         alternatives = (hint,) + get_args(hint)
         if value is not None and Path in alternatives:
-            values[key] = Path(value)
+            path = Path(value)
+            if expand_paths:
+                try:
+                    path = path.expanduser()
+                except RuntimeError as exc:
+                    raise ValueError(f'{key}: cannot resolve the home directory in {str(value)!r}. '
+                                     'Choose a local path or an existing user.') from exc
+            values[key] = path
         elif isinstance(hint, type) and issubclass(hint, Enum):
             # JSON accepts enum CLI names (SIGMOID) as well as values (sigmoid).
             values[key] = hint.__members__.get(str(value), None) or hint(value)
@@ -76,6 +87,7 @@ def resolve_config(module, shared, overrides):
 def main(config: Config, *, argv=None):
     invocation = invocation_context(argv)
     validate_figure_formats(config.figure_formats)
+    validate_figure_font(config.figure_font)
     stages = config.stages
     if stages == ('all',):
         stages = tuple(STAGES)
@@ -114,13 +126,14 @@ def main(config: Config, *, argv=None):
         print(json.dumps({s: asdict(c) for s, _, c in resolved}, indent=2, default=json_value))
         return
     config.cache_dir.mkdir(parents=True, exist_ok=True)
-    with figure_format_context(config.figure_formats):
+    with figure_format_context(config.figure_formats), figure_font_context(config.figure_font) as resolved_font:
         manifest = RunManifest(config.cache_dir, {s: asdict(c) for s, _, c in resolved},
-                               asdict(config), invocation=invocation)
+                               {**asdict(config), 'resolved_figure_font': resolved_font}, invocation=invocation)
         try:
             for stage, module, stage_config in resolved:
                 started = time.monotonic()
-                entry = {'stage': stage, 'status': 'running'}
+                entry = {'stage': stage, 'status': 'running',
+                         'started_at': utc_now().isoformat(), 'finished_at': None}
                 manifest.record['stages'].append(entry)
                 manifest.save()
                 print(f'\n[{stage}]', flush=True)
@@ -135,6 +148,7 @@ def main(config: Config, *, argv=None):
                     entry['status'] = 'complete'
                 finally:
                     entry['seconds'] = round(time.monotonic() - started, 3)
+                    entry['finished_at'] = utc_now().isoformat()
                     manifest.save()
         except BaseException as exc:
             manifest.finish('failed' if isinstance(exc, Exception) else 'interrupted')

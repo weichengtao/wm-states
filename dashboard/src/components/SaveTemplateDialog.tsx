@@ -145,7 +145,7 @@ export default function SaveTemplateDialog({
             </strong>
             <p>
               {snapshot.stages.length} selected stages, all stage settings,
-              worker count, session limit, and figure formats.
+              worker count, session limit, figure formats, and figure font.
             </p>
             <p>
               Run name, cache directory, and permission to reuse outputs stay

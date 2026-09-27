@@ -1,0 +1,119 @@
+.path-input {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+.path-input-hint {
+  color: var(--color-muted-foreground);
+  font-size: 10px;
+  line-height: 1.5;
+  margin-top: 5px;
+}
+.path-suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-popover, white);
+  color: var(--color-foreground);
+  box-shadow: 0 12px 28px rgb(24 47 44 / 15%);
+}
+.path-suggestions-heading {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  color: var(--color-muted-foreground);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--color-border);
+}
+.path-suggestions-heading .path-loading {
+  margin-left: auto;
+  animation: path-spin 1s linear infinite;
+}
+.path-suggestions ul {
+  min-height: 0;
+  flex: 0 1 auto;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 5px;
+  margin: 0;
+  list-style: none;
+}
+.path-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  min-width: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.path-option > svg {
+  flex-shrink: 0;
+  color: var(--color-muted-foreground);
+}
+.path-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.path-option small {
+  font-size: 9px;
+  color: var(--color-muted-foreground);
+}
+.path-option-active,
+.path-option:hover {
+  background: #e9f1ee;
+  color: #20483d;
+}
+.path-option-active > svg {
+  color: #2f6756;
+}
+.path-suggestions-empty,
+.path-suggestions-warning {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 8px 12px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-muted-foreground);
+}
+.path-suggestions-warning {
+  color: #865b20;
+}
+.path-suggestions-footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border);
+  font-size: 10px;
+  color: var(--color-muted-foreground);
+  background: #f7f9f7;
+}
+.path-suggestions kbd {
+  font: inherit;
+  font-weight: 600;
+}
+@keyframes path-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .path-suggestions-heading .path-loading {
+    animation: none;
+  }
+}

@@ -75,6 +75,12 @@ even while an analysis is running. Templates preserve analysis choices without
 reusing a run's output directory; recording paths are optional. See
 [analysis templates](docs/next/dashboard.md#analysis-templates) for saving and sharing.
 
+Local path fields support **Tab completion**. **Live Progress** shows the running
+stage's elapsed time and offers **Download full log** beyond the 500-line preview.
+New jobs also keep their record, full log, and settings under the run folder's
+`dashboard/` subdirectory. Figures default to **DejaVu Sans**; set **Figure font**
+in the dashboard or pass `--figure-font "Arial"` for a different installed font.
+
 **First-time setup.** Open a terminal in the repository root (the directory
 containing `pyproject.toml`). Use Python 3.12 and Node.js 22.12 or newer:
 

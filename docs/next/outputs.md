@@ -11,6 +11,9 @@ do not create runner-history records.
 | `pipeline_manifest.json` | Latest invocation’s resolved settings, progress, and status |
 | `manifests/<run_id>.json` | Persistent record of each runner invocation, including partial and failed runs |
 | `manifests/prior-<content hash>.json` | Preserved pre-history or orphaned latest manifests, when present |
+| `dashboard/<job-id>.json` | For new dashboard jobs: per-invocation job record, submitted run arguments, command, and progress |
+| `dashboard/<job-id>.log` | Full dashboard-launched stdout/stderr stream, also retained centrally in `cache/.dashboard/` |
+| `dashboard/<job-id>.settings.json` | Copy of the exact submitted stage-settings JSON for that dashboard invocation |
 | `select/cell_screening.pkl` | Full-session screening results |
 | `select/tables/cell_screening.csv` | Screening summary, enabled checks, and settings |
 | `select/diagnostics/` | Optional per-cell diagnostic CSV, resolved `figure_config.json`, and rejection summary; plots in `figures/cells/` and `figures/reasons/` |
@@ -35,6 +38,12 @@ Model outcome directories contain `tables/`, `figures/`, `logs/`, and, when
 enabled, `cross_validation/`. `<outcome>` is `total_off_state_duration` or
 `maximum_off_state_duration`. Optional plots and diagnostics are created only
 when requested and when the corresponding data are available.
+
+Dashboard job IDs and pipeline manifest run IDs identify different records for
+the same invocation; the job record's `manifest_id` links them once the manifest
+is available. New dashboard invocations keep their own files when a run folder
+is reused. See [full logs and run records](dashboard.md#follow-processing) for
+downloads, central copies, and archiving older runs.
 
 PEV-weighted variants add `pev_weighted/` to the relevant output directory:
 `prepare/pev_weighted/`, `activity/figures/pev_weighted/`, and
@@ -81,6 +90,14 @@ stage directory, while `--figure-formats pdf` writes PDF only. TIFF and EPS are
 also available. The choice includes diagnostics, inspection tools, cross-run
 plots, and statistical model figures; no plots force a PNG exception.
 
+Figure text defaults to DejaVu Sans, which is bundled with Matplotlib. Use
+`--figure-font "Arial"` (or the dashboard's **Figure font** field) to choose a
+different family for a run. If that family is unavailable, the run log warns
+and the exporter uses DejaVu Sans. The manifest records both the requested
+`runner_config.figure_font` and `runner_config.resolved_figure_font`; consult
+these when preparing journal figures. See [figure fonts](configuration.md#figure-fonts)
+for installation, standalone commands, and template behavior.
+
 PDF keeps paths and text as vector content, supports transparency, and compresses
 streams and embedded images losslessly. Image-based plots, such as heatmaps,
 still contain raster images. The dashboard previews PNG files and lists PDFs
@@ -120,10 +137,10 @@ Each new record has these fields:
 | `run_id` | Unique identifier; matches the history filename without `.json` |
 | `started_at`, `finished_at` | UTC timestamps; `finished_at` is `null` until a terminal status is recorded |
 | `status` | Overall invocation status: `running`, `complete`, `failed`, or `interrupted` |
-| `runner_config` | Runner options, including the original stage request, data/cache paths, preset path, and figure formats |
+| `runner_config` | Runner options, including the original stage request, data/cache paths, preset path, figure formats, and requested/resolved figure fonts |
 | `invocation` | Command origin, exact Python argument vector, quoted command, working directory, and interpreter path |
 | `settings` | Resolved configuration for every requested stage, including inherited defaults and overrides |
-| `stages` | Ordered execution entries for attempted stages, with status, elapsed `seconds` when the attempt ends, and `error` when applicable |
+| `stages` | Ordered execution entries for attempted stages, with status, UTC `started_at`/`finished_at`, elapsed `seconds` when the attempt ends, and `error` when applicable |
 
 The preset's path is recorded, but the preset file and source code are not
 copied into history. Keep the code revision and relevant input data with any

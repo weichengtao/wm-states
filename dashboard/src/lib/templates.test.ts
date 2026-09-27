@@ -73,6 +73,24 @@ function saved(form: RunRequest, includePaths = false): PipelineTemplate {
 }
 
 describe("pipeline templates", () => {
+  it("captures and compares a run-wide figure font, with a default for older templates", () => {
+    const form = draft({ figure_font: "DejaVu Serif" });
+    const template = saved(form);
+    expect(template.config.figure_font).toBe("DejaVu Serif");
+    expect(templateRun(draft(), template).figure_font).toBe("DejaVu Serif");
+    expect(templateChanges(draft(), template, schema)).toEqual([
+      {
+        stage: "shared",
+        field: "figure_font",
+        label: "Figure font",
+        before: "DejaVu Serif",
+        after: "DejaVu Sans",
+      },
+    ]);
+    delete template.config.figure_font;
+    expect(templateRun(form, template).figure_font).toBe("DejaVu Sans");
+    expect(templateChanges(draft(), template, schema)).toEqual([]);
+  });
   it("offers Example and Smoke baselines with resolved settings and no recording paths", () => {
     const templates = builtInTemplates(schema);
     expect(templates.map((template) => template.id)).toEqual([

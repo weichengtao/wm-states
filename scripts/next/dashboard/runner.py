@@ -1,15 +1,18 @@
 """One local subprocess at a time, with durable logs and real manifest progress."""
 import asyncio
 import codecs
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shlex
 import signal
 import sys
+import tempfile
+import threading
 from uuid import uuid4
 
 from scripts.next import pipeline
@@ -26,9 +29,19 @@ def now():
 
 def atomic_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix('.tmp')
-    temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + '\n')
-    temporary.replace(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.tmp',
+                                         dir=path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            json.dump(value, handle, indent=2, allow_nan=False)
+            handle.write('\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 class BusyError(ValueError):
@@ -44,6 +57,7 @@ class RunManager:
         self.processes: dict[str, asyncio.subprocess.Process] = {}
         self.tasks: dict[str, asyncio.Task] = {}
         self.lock = asyncio.Lock()
+        self.persistence_lock = threading.RLock()
         self._restore()
 
     def _restore(self):
@@ -57,9 +71,22 @@ class RunManager:
                 if not re.fullmatch(r'[0-9a-f]{32}', job_id) or path.stem != job_id:
                     continue
                 if job.get('status') not in TERMINAL:
+                    # Restart time is when the dashboard discovers the failure,
+                    # not when analysis stopped. Never include offline time in
+                    # an unfinished stage's elapsed duration.
+                    for stage in job.get('stages', []):
+                        if not isinstance(stage, dict):
+                            continue
+                        seconds = stage.get('seconds')
+                        measured = (isinstance(seconds, (int, float))
+                                    and not isinstance(seconds, bool)
+                                    and math.isfinite(seconds) and seconds >= 0)
+                        if (stage.get('status') == 'running' and not measured
+                                and not stage.get('finished_at')):
+                            stage['elapsed_unavailable'] = True
                     job.update(status='failed', finished_at=now(),
                                error='Dashboard stopped before this job finished. Check the run manifest before restarting.')
-                    atomic_json(path, job)
+                    self._save(job)
                 log = self.storage / f'{job_id}.log'
                 if log.exists():
                     # Tail logs without reading a potentially huge decoding log into memory.
@@ -71,7 +98,11 @@ class RunManager:
                 continue
 
     def _local_path(self, value):
-        path = Path(value).expanduser()
+        try:
+            path = Path(value).expanduser()
+        except RuntimeError as exc:
+            raise ValueError(f'Cannot resolve the home directory in {value!r}. '
+                             'Choose a local path or an existing user.') from exc
         return (path if path.is_absolute() else self.repo_root / path).resolve()
 
     def validate(self, request: RunRequest, job_id='preview'):
@@ -110,7 +141,8 @@ class RunManager:
         argv = [sys.executable, '-u', str(self.repo_root / 'scripts/next/pipeline.py'),
                 '--settings', str(settings_path), '--data-dir', str(data_dir),
                 '--cache-dir', str(cache_dir), '--stages', *request.stages,
-                '--n-jobs', str(request.n_jobs), '--figure-formats', *request.figure_formats]
+                '--n-jobs', str(request.n_jobs), '--figure-font', request.figure_font,
+                '--figure-formats', *request.figure_formats]
         if request.max_sessions_to_run is not None:
             argv.extend(['--max-sessions-to-run', str(request.max_sessions_to_run)])
         if session_file is not None:
@@ -119,19 +151,61 @@ class RunManager:
                 'argv': argv, 'cache_dir': str(cache_dir), 'settings_path': settings_path}
 
     def _save(self, job):
-        atomic_json(self.storage / f"{job['id']}.json", {k: v for k, v in job.items() if k != 'logs'})
+        # REST polling uses worker threads while the subprocess uses the event
+        # loop. Serialize the pair of writes so both records stay aligned.
+        with self.persistence_lock:
+            value = {k: v for k, v in job.items() if k != 'logs'}
+            atomic_json(self.storage / f"{job['id']}.json", value)
+            # Older jobs remain untouched in their run directories. Every newly
+            # launched invocation has its own record, even when reusing a run folder.
+            if job.get('run_record_path'):
+                atomic_json(self._run_directory(job) / f"{job['id']}.json", value)
+
+    def _run_directory(self, job):
+        cache_dir = Path(job['cache_dir'])
+        if (self.cache_root.resolve() != self.cache_root
+                or not cache_dir.is_relative_to(self.cache_root)
+                or len(cache_dir.relative_to(self.cache_root).parts) != 1
+                or cache_dir.name.startswith('.')
+                or cache_dir.resolve() != cache_dir):
+            raise ValueError('Run record directory must stay inside its original cache folder.')
+        directory = cache_dir / 'dashboard'
+        if directory.resolve() != directory:
+            raise ValueError('Run record directory must not redirect through a symlink.')
+        return directory
+
+    def log_path(self, job_id):
+        """Return only a known job's regular full log, never a supplied path."""
+        if job_id not in self.jobs:
+            raise KeyError(job_id)
+        path = self.storage / f'{job_id}.log'
+        if (not re.fullmatch(r'[0-9a-f]{32}', job_id)
+                or self.cache_root.resolve() != self.cache_root
+                or self.storage.resolve() != self.storage
+                or path.is_symlink() or not path.is_file()):
+            raise FileNotFoundError('The full log file is not available for this job.')
+        return path
 
     def _refresh_manifest(self, job):
+        with self.persistence_lock:
+            if job['status'] in TERMINAL:
+                return
+            self._read_manifest(job)
+
+    def _read_manifest(self, job):
         try:
             path = Path(job['cache_dir']) / 'pipeline_manifest.json'
             manifest = json.loads(path.read_text())
             # A partial rerun starts with an older latest manifest: never show it as new progress.
             if manifest.get('invocation', {}).get('argv') != job.get('argv'):
                 return
-            job['manifest_id'] = manifest.get('run_id')
+            manifest_id = manifest.get('run_id')
             entries = {entry['stage']: entry for entry in manifest.get('stages', [])}
-            job['stages'] = [entries.get(stage, {'stage': stage, 'status': 'pending'})
-                             for stage in job['requested_stages']]
+            stages = [entries.get(stage, {'stage': stage, 'status': 'pending'})
+                      for stage in job['requested_stages']]
+            if manifest_id != job.get('manifest_id') or stages != job['stages']:
+                job.update(manifest_id=manifest_id, stages=stages)
+                self._save(job)
         except (OSError, ValueError, KeyError, TypeError):
             pass
 
@@ -159,15 +233,41 @@ class RunManager:
                 raise ValueError('Dashboard settings directory must not redirect outside configs/next.')
             if self.storage.is_symlink():
                 raise ValueError('Dashboard storage must not be a symlink.')
-            atomic_json(plan['settings_path'], request.settings)
             self.storage.mkdir(parents=True, exist_ok=True)
+            run_directory = Path(plan['cache_dir']) / 'dashboard'
             job = dict(id=job_id, name=request.name, cache_dir=plan['cache_dir'],
                        status='queued', created_at=now(), started_at=None, finished_at=None,
                        command=plan['command'], argv=plan['argv'],
                        requested_stages=list(request.stages),
                        stages=[{'stage': stage, 'status': 'pending'} for stage in request.stages],
-                       logs=[], exit_code=None, error=None, manifest_id=None)
-            self._save(job)
+                       logs=[], exit_code=None, error=None, manifest_id=None,
+                       request=request.model_dump(),
+                       run_record_path=str(run_directory / f'{job_id}.json'),
+                       run_log_path=str(run_directory / f'{job_id}.log'),
+                       run_settings_path=str(run_directory / f'{job_id}.settings.json'))
+            run_directory = self._run_directory(job)
+            # Create the empty full log before the job is visible, including for
+            # jobs cancelled while queued or unable to launch a subprocess.
+            new_files = [plan['settings_path'], self.storage / f'{job_id}.json',
+                         self.storage / f'{job_id}.log',
+                         *(Path(job[key]) for key in ('run_record_path', 'run_log_path', 'run_settings_path'))]
+            if any(path.exists() or path.is_symlink() for path in new_files):
+                raise ValueError('A dashboard job with this identifier already exists.')
+            try:
+                run_directory.mkdir(parents=True, exist_ok=True)
+                atomic_json(plan['settings_path'], request.settings)
+                atomic_json(Path(job['run_settings_path']), request.settings)
+                (self.storage / f'{job_id}.log').touch(exist_ok=False)
+                Path(job['run_log_path']).touch(exist_ok=False)
+                self._save(job)
+            except BaseException:
+                for path in new_files:
+                    with suppress(OSError):
+                        path.unlink(missing_ok=True)
+                for directory in (run_directory, run_directory.parent):
+                    with suppress(OSError):
+                        directory.rmdir()  # Remove only empty directories.
+                raise
             self.jobs[job_id] = job
             self.tasks[job_id] = asyncio.create_task(self._execute(job_id), name=f'pipeline-{job_id}')
             return self.snapshot(job_id)
@@ -198,10 +298,14 @@ class RunManager:
             if job['status'] == 'cancelling':
                 self._signal_group(process, signal.SIGINT)
             pending, decoder = '', codecs.getincrementaldecoder('utf-8')(errors='replace')
-            with (self.storage / f'{job_id}.log').open('ab') as log:
+            with ExitStack() as stack:
+                log_paths = [self.storage / f'{job_id}.log',
+                             self._run_directory(job) / f'{job_id}.log']
+                logs = [stack.enter_context(path.open('ab')) for path in log_paths]
                 while chunk := await process.stdout.read(8192):
-                    log.write(chunk)
-                    log.flush()
+                    for log in logs:
+                        log.write(chunk)
+                        log.flush()
                     pending += decoder.decode(chunk).replace('\r', '\n')
                     lines = pending.split('\n')
                     pending = lines.pop()
@@ -235,7 +339,15 @@ class RunManager:
                 job.update(status='cancelling', error='Dashboard stopped before this job finished.')
             elif job['status'] != 'cancelling':
                 job.update(status='failed', error=f'{type(exc).__name__}: {exc}')
-            self._append_log(job, f"Dashboard: {type(exc).__name__}: {exc}")
+            message = f"Dashboard: {type(exc).__name__}: {exc}"
+            self._append_log(job, message)
+            # Persist launch/metadata failures as well as subprocess output.
+            # A failed log destination must not prevent recording the other.
+            for path in (self.storage / f'{job_id}.log', Path(job['run_log_path'])):
+                with suppress(OSError):
+                    with path.open('ab') as log:
+                        log.write((message + '\n').encode('utf-8', errors='replace'))
+                        log.flush()
         finally:
             if job['status'] == 'cancelling':
                 job['status'] = 'cancelled'

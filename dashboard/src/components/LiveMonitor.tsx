@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
 import type { Job } from "@/lib/types";
+import { stageElapsedSeconds } from "@/lib/progress";
 import { cn, duration, formatDate, humanize } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
@@ -54,6 +55,7 @@ export default function LiveMonitor({
   const [followLog, setFollowLog] = useState(true);
   const [logQuery, setLogQuery] = useState("");
   const [wrapLog, setWrapLog] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
   const logRef = useRef<HTMLPreElement>(null);
   const stopButtonRef = useRef<HTMLButtonElement>(null);
   const keepRunningRef = useRef<HTMLButtonElement>(null);
@@ -151,6 +153,15 @@ export default function LiveMonitor({
     snapshot?.id === activeId
       ? snapshot
       : jobs.find((item) => item.id === activeId);
+  const hasRunningStage = job?.stages.some(
+    (stage) => stage.status === "running",
+  );
+  useEffect(() => {
+    if (!job || terminal(job.status) || !hasRunningStage) return;
+    setCurrentTime(Date.now());
+    const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [job?.id, job?.status, hasRunningStage]);
   useEffect(() => {
     if (followLog && !logQuery.trim() && logRef.current)
       logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -202,6 +213,10 @@ export default function LiveMonitor({
     job?.stages.filter((stage) => stage.status === "complete").length ?? 0;
   const count = job?.requested_stages.length ?? 0;
   const activeStage = job?.stages.find((stage) => stage.status === "running");
+  const activeSeconds =
+    activeStage && job
+      ? stageElapsedSeconds(activeStage, job, currentTime)
+      : undefined;
   const cancelPending = cancelling || job?.status === "cancelling";
   const connectionStatus =
     job && terminal(job.status) ? "finished" : connection;
@@ -211,19 +226,6 @@ export default function LiveMonitor({
       (line) => !query || line.toLocaleLowerCase().includes(query),
     ) ?? [];
   const logText = visibleLogs.join("\n");
-  const downloadLog = () => {
-    if (!job || !visibleLogs.length) return;
-    const url = URL.createObjectURL(
-      new Blob([`${logText}\n`], { type: "text/plain;charset=utf-8" }),
-    );
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${job.name.replace(/[^a-zA-Z0-9_-]+/g, "-") || "pipeline"}-${job.id}${query ? "-filtered" : ""}-log.txt`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
   return (
     <div className="monitor-layout">
       <div className="section-heading">
@@ -356,7 +358,7 @@ export default function LiveMonitor({
                       : job.status === "cancelled"
                         ? "Run stopped by request"
                         : activeStage
-                          ? `Now: ${humanize(activeStage.stage)}`
+                          ? `Now: ${humanize(activeStage.stage)}${activeSeconds == null ? "" : ` · ${duration(activeSeconds)} elapsed`}`
                           : "Waiting for the first stage"}
               </span>
             </div>
@@ -413,7 +415,9 @@ export default function LiveMonitor({
                         <Check size={15} />
                       ) : stage.status === "running" ? (
                         <LoaderCircle className="animate-spin" size={15} />
-                      ) : ["failed", "cancelled"].includes(stage.status) ? (
+                      ) : ["failed", "cancelled", "interrupted"].includes(
+                          stage.status,
+                        ) ? (
                         <XCircle size={15} />
                       ) : (
                         <Circle size={13} />
@@ -429,8 +433,20 @@ export default function LiveMonitor({
                         {stage.error ? ` · ${stage.error}` : ""}
                       </span>
                     </div>
-                    <span className="monitor-stage-duration">
-                      {duration(stage.seconds)}
+                    <span
+                      className="monitor-stage-duration"
+                      title={
+                        stageElapsedSeconds(stage, job, currentTime) == null
+                          ? "Timing was not recorded for this stage."
+                          : stage.status === "running" && !terminal(job.status)
+                            ? "Elapsed time · updates every second"
+                            : "Recorded stage duration"
+                      }
+                    >
+                      {stage.status === "running" && !terminal(job.status) && (
+                        <Clock3 size={12} aria-hidden="true" />
+                      )}
+                      {duration(stageElapsedSeconds(stage, job, currentTime))}
                     </span>
                   </li>
                 ))}
@@ -495,18 +511,18 @@ export default function LiveMonitor({
                 <div className="monitor-log-actions">
                   <CopyButton
                     text={logText}
-                    label="Copy log"
+                    label="Copy shown lines"
                     disabled={!visibleLogs.length}
                   />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!visibleLogs.length}
-                    onClick={downloadLog}
-                    title="Download the lines currently shown"
-                  >
-                    <Download />
-                    Save log
+                  <Button variant="outline" size="sm" asChild>
+                    <a
+                      href={`/api/jobs/${encodeURIComponent(job.id)}/log`}
+                      download
+                      title="Download the complete log saved so far, including lines outside this preview"
+                    >
+                      <Download />
+                      Download full log
+                    </a>
                   </Button>
                 </div>
               </div>
@@ -561,7 +577,7 @@ export default function LiveMonitor({
                   {query
                     ? `${visibleLogs.length} of ${job.logs.length} lines`
                     : `Latest ${job.logs.length} lines`}{" "}
-                  · full log saved locally
+                  · preview limited to 500 lines
                 </span>
               </div>
             </section>
@@ -574,6 +590,13 @@ export default function LiveMonitor({
             </p>
             <pre>{job.command}</pre>
             <CopyButton text={job.command} label="Copy command" />
+            {job.run_record_path && (
+              <p>
+                This invocation’s record, full log, and exact settings are also
+                saved together in <code>{job.cache_dir}/dashboard/</code>, using
+                job ID <code>{job.id}</code>.
+              </p>
+            )}
           </details>
         </>
       )}
