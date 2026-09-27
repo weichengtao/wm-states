@@ -1,5 +1,90 @@
 # Next pipeline validation
 
+## Local and tailnet dashboard access — 2026-09-27
+
+The opt-in `--tailnet` launcher discovers the connected machine's Tailscale
+addresses and binds one dashboard process to loopback and those exact addresses.
+The default remains localhost-only. Dashboard, API, WebSocket progress, and the
+guide share one application and job manager across the supported origins.
+
+- **545 Python tests** pass in **17.547 seconds**, including **32 new tests** for
+  address discovery, startup/binding failures, cleanup, host validation,
+  same-origin API/path/WebSocket access, and trusted proxy forwarding.
+  The `tests/next` subset contains **428 tests**. The final focused network,
+  API, and documentation checks also pass after review corrections.
+- **104 frontend tests** across **17 files** pass. HTTP-compatible cache name
+  generation and unavailable, denied, or failing clipboard operations have
+  dedicated coverage. TypeScript/Vite build, formatting, strict MkDocs builds,
+  documentation-link checks, and `git diff --check` pass.
+- A real temporary server on port 8013 successfully bound IPv4 and IPv6
+  loopback plus this Mac's discovered IPv4 and IPv6 Tailscale addresses.
+  Browser checks verified localhost, IPv6 loopback, and the machine's own
+  tailnet IPv4 HTTP URL: dashboard rendering, configuration validation,
+  generated cache paths, completed-job WebSocket messages, guide redirects,
+  and the **Back to dashboard** link all work.
+- The numeric HTTP page was confirmed to be an insecure browser context with
+  `crypto.randomUUID` unavailable. Configuration still renders; manual copying
+  opens a dialog, selects the complete command, and restores focus after closing.
+  Mobile rendering at **390 × 844** has no horizontal overflow. A guide served
+  without the dashboard health endpoint keeps its return shortcut hidden.
+  No browser JavaScript errors occurred.
+- The final frontend build also passed the desktop/mobile dropdown regression
+  workflows below: pending data does not move the document scroll position,
+  including table pagination, split/overlay comparisons, rapid changes, errors,
+  and recovery.
+
+HTTPS proxy behavior is covered by application tests using trusted loopback
+forwarding, including preservation of the HTTPS scheme/port in guide redirects.
+Headers from direct tailnet peers cannot change the scheme. An actual Serve
+mapping and a second tailnet device were not used. The tailnet IPv6 listener
+bound successfully, but connections from this Mac to its own tailnet IPv6
+address timed out in both the browser request client and curl; end-to-end
+tailnet IPv6 connectivity remains unverified on this installation.
+
+Validation used temporary fixtures and a separate headless test runtime, not
+the installed Chrome application. No user cache or Tailscale/Serve/WebDAV
+configuration was changed, and no user analysis was launched. Test browsers
+and the temporary server were stopped after validation.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m unittest discover -s tests -v
+npm --prefix dashboard test
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
+## Dashboard dropdown scroll stability — 2026-09-27
+
+Changing a session previously replaced the full result area with a short loading
+message. A deferred-response browser fixture reproduced a **431-pixel upward
+jump** caused by the temporary reduction in document height. Opening the dropdown
+itself did not change the scroll position.
+
+Result views now reserve their measured height while replacement data loads.
+The pending region shows a loading state instead of stale scientific values;
+comparison panes can load independently. Settled results and errors release the
+temporary reservation, without forcing a scroll position or blocking manual
+scrolling.
+
+- **99 frontend tests** across **16 files** pass, including height observation,
+  cleanup, resize fallback, stale-content exclusion, and nested loading states.
+  TypeScript/Vite build, formatting, and `git diff --check` pass.
+- Browser checks at **1440 × 1000** and **390 × 844** verify identical scroll
+  positions before opening, while loading, and after completion for session
+  selection, keyboard selection, table selection, split/overlay comparisons,
+  comparison run selection, and mobile session selection.
+- Escape dismissal, table pagination, rapid selections with responses completing
+  out of order, user scrolling during loading, errors, and recovery also pass.
+  No browser JavaScript errors occurred in the reviewed workflows.
+
+Browser validation used a separate headless test runtime and an isolated static
+dashboard on port 8013 with simulated API responses. It did not control the
+installed Chrome application, access user caches, or launch pipeline jobs. The
+test browser and server were closed afterward. Python/scientific code is
+unchanged; the Python suite and scientific analyses were not rerun for this fix.
+
 ## Run-scoped manual legacy trust — 2026-09-27
 
 The explicit legacy trust override passed **513 Python tests** in **17.695

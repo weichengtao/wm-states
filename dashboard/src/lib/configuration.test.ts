@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   choiceValue,
   fieldValue,
@@ -11,11 +11,17 @@ import {
   sameFieldValue,
   updateRunDraft,
   launchRun,
+  newCacheDirectory,
 } from "./configuration";
 import type { Field, Job, Manifest, Schema } from "./types";
 import { api } from "./api";
 
 vi.mock("./api", () => ({ api: vi.fn() }));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 const field: Field = {
   name: "max_points",
@@ -33,6 +39,30 @@ const schema: Schema = {
 };
 
 describe("configuration defaults and manual overrides", () => {
+  it("creates cache directories on HTTP without crypto.randomUUID", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-27T12:34:56.007Z"));
+    const getRandomValues = vi
+      .fn()
+      .mockImplementationOnce((bytes: Uint8Array) => {
+        bytes.set([0, 1, 16, 255]);
+        return bytes;
+      })
+      .mockImplementationOnce((bytes: Uint8Array) => {
+        bytes.set([16, 32, 48, 64]);
+        return bytes;
+      });
+    vi.stubGlobal("crypto", { getRandomValues });
+    expect(newCacheDirectory()).toBe(
+      "cache/dashboard_20260927T123456007Z_000110ff",
+    );
+    expect(initialRun(schema).cache_dir).toBe(
+      "cache/dashboard_20260927T123456007Z_10203040",
+    );
+    expect(getRandomValues).toHaveBeenCalledTimes(2);
+    expect(getRandomValues.mock.calls[0][0]).toHaveLength(4);
+  });
+
   it("submits enabled trust before consuming consent after an accepted launch", async () => {
     const form = {
       ...initialRun(schema, { allow_existing: true }),

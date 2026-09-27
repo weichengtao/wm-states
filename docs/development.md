@@ -55,6 +55,9 @@ Vite on port **5173**, with API, WebSocket, and built guide requests proxied to
 port 8000.
 Frontend packages are locked in `dashboard/package-lock.json`.
 
+Frontend commands require **Node.js 22.12+ with npm**; see
+[setup instructions](next/dashboard.md#first-time-setup).
+
 ```bash
 cd dashboard
 npm ci
@@ -73,8 +76,8 @@ for the distinction between local build/job files and configurations to commit.
 ## Serve the documentation
 
 For normal use, the dashboard's `--build` option builds both interfaces and
-serves the guide at `/docs/` on the same server. MkDocs Material is provided
-through the optional `docs` dependency group.
+serves the guide at `/docs/` on the same server. This build requires Node.js;
+standalone MkDocs needs Python only, with the optional `docs` dependency group.
 
 For **documentation editing with automatic reload**, run from the repository root:
 
@@ -114,10 +117,14 @@ while missing guide pages return 404, never the React app. The docs routes are
 registered before the frontend fallback.
 
 You can also serve `site/` with any static HTTP server. Relative documentation
-links and assets work at a site root or project subpath. `docs/overrides/main.html`
-adds a **Back to dashboard** bar only on a loopback host under `/docs/`; it is
-hidden on standalone/public sites. The override source is excluded from build
-output. No backend requests or recordings are needed to browse the guide.
+links and assets work at a site root or project subpath. On a page under `/docs/`,
+`docs/overrides/main.html` checks `/api/health` on that same origin and reveals
+**Back to dashboard** only if the response identifies a healthy `wm-states-next`
+service. The shortcut works through localhost, direct tailnet HTTP, and Serve
+HTTPS without a second hostname list. It stays hidden on standalone/public
+sites; failed checks are silent, and redirects to another service are refused.
+Pages outside `/docs/` do not make this check. The override source is excluded
+from build output. Browsing the guide itself needs no backend or recordings.
 
 ## Publish the guide on GitHub Pages
 

@@ -82,7 +82,8 @@ New jobs also keep their record, full log, and settings under the run folder's
 in the dashboard or pass `--figure-font "Arial"` for a different installed font.
 
 **First-time setup.** Open a terminal in the repository root (the directory
-containing `pyproject.toml`). Use Python 3.12 and Node.js 22.12 or newer:
+containing `pyproject.toml`). Use Python 3.12. **`--build` requires Node.js 22.12+
+with npm**, installed separately from `uv`.
 
 ```bash
 uv sync --python 3.12 --group dashboard --group docs --locked
@@ -116,9 +117,36 @@ busy, add `--port 8001` to the start command
 and open [http://127.0.0.1:8001/](http://127.0.0.1:8001/) instead.
 
 The dashboard uses the same pipeline and cache layout as the CLI, so existing
-runs in `cache/<run-name>/` can appear in the **Run library**. It is for local use with
-trusted caches. The [dashboard guide](docs/next/dashboard.md) includes Node/nvm
+runs in `cache/<run-name>/` can appear in the **Run library**. Use trusted caches
+and limit access to trusted users. The [dashboard guide](docs/next/dashboard.md) includes Node/nvm
 help, a first-run walkthrough, troubleshooting, and frontend development.
+
+**Access from your other Tailscale devices.** Add `--tailnet` when starting the
+dashboard; add `--build` as well when updating its interface or guide:
+
+```bash
+uv run --group dashboard --group docs --locked python -m scripts.next.dashboard --tailnet
+```
+
+Tailscale must be connected on the server. The launcher discovers its Tailscale
+addresses automatically and prints HTTP links for both localhost and those
+addresses. Open `http://127.0.0.1:8000/` locally or `http://100.x.y.z:8000/`
+from a permitted tailnet device; the guide is at `/docs/` on either address.
+Direct IP access does **not** require Tailscale Serve. Without `--tailnet`, the
+dashboard remains local only and does not require Tailscale.
+
+For optional HTTPS at `https://<device>.<tailnet>.ts.net:8443/`, first check
+`tailscale serve status` and choose an unused port, then run:
+
+```bash
+tailscale serve --bg --https=8443 http://127.0.0.1:8000
+```
+
+A separate port leaves an existing WebDAV mapping on 443 in place. No hostname
+list needs maintenance. The app has no login or read-only role: use Tailscale's
+access policy to restrict ports 8000 and 8443 to trusted users/devices. See
+[local and tailnet access](docs/next/dashboard.md#local-and-tailnet-access) for
+setup, troubleshooting, and removing only this Serve mapping.
 
 ## Reuse and compare results
 
@@ -193,8 +221,9 @@ The [documentation home](docs/index.md) links to the full guides:
 - [Migration](docs/next/migration.md) and [troubleshooting](docs/next/troubleshooting.md)
 - [Validation record](docs/validation/next.md)
 
-The dashboard serves these pages at `/docs/` after its `--build` setup. To edit
-the guides with automatic reload, use a separate MkDocs preview:
+The dashboard serves these pages at `/docs/` after its `--build` setup.
+Standalone MkDocs needs Python only. To edit the guides with automatic reload,
+use a separate MkDocs preview:
 
 ```bash
 uv run --group dashboard --group docs --locked mkdocs serve --dev-addr 127.0.0.1:8001

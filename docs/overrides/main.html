@@ -7,11 +7,24 @@
     <span style="margin-left: .6rem; color: var(--md-default-fg-color--light);">Your analysis keeps running while you read.</span>
   </div>
   <script>
-    // This shortcut belongs only to the local integrated server. The same
-    // static site can be hosted independently, including on GitHub Pages.
-    if (["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)
-        && window.location.pathname.startsWith("/docs/")) {
-      document.getElementById("dashboard-return").hidden = false;
+    // Reveal the shortcut only when this origin serves the actual dashboard.
+    // Static hosting (including GitHub Pages) needs no dashboard connection.
+    if (window.location.pathname.startsWith("/docs/")) {
+      fetch("/api/health", {
+        cache: "no-store",
+        credentials: "same-origin",
+        mode: "same-origin",
+        redirect: "error"
+      })
+        .then(function (response) {
+          return response.ok ? response.json() : null;
+        })
+        .then(function (health) {
+          if (health && health.status === "ok" && health.service === "wm-states-next") {
+            document.getElementById("dashboard-return").hidden = false;
+          }
+        })
+        .catch(function () { /* A standalone guide keeps the shortcut hidden. */ });
     }
   </script>
 {% endblock %}

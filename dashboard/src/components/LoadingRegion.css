@@ -1,0 +1,7 @@
+.loading-region {
+  min-width: 0;
+}
+
+.loading-region-content {
+  display: flow-root;
+}

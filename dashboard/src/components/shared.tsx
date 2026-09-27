@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertCircle,
   Check,
@@ -12,6 +12,14 @@ import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
 import GuideLink from "./GuideLink";
 import { troubleshootingPath } from "@/lib/help";
+import { copyText } from "@/lib/clipboard";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "./ui/dialog";
+import "./CopyButton.css";
 export function Status({ value }: { value: string }) {
   const running = ["running", "queued", "cancelling"].includes(value);
   const success = ["complete", "completed"].includes(value);
@@ -105,27 +113,89 @@ export function CopyButton({
   disabled?: boolean;
 }) {
   const [state, setState] = useState("");
+  const [manualText, setManualText] = useState<string | null>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (!state) return;
+    if (state !== "Copied") return;
     const timer = setTimeout(() => setState(""), 1800);
     return () => clearTimeout(timer);
   }, [state]);
+  async function copy() {
+    if (state === "Copying…") return;
+    const captured = text;
+    setState("Copying…");
+    if (await copyText(captured)) setState("Copied");
+    else {
+      setState("");
+      setManualText(captured);
+    }
+  }
   return (
-    <Button
-      size="sm"
-      variant="outline"
-      disabled={disabled}
-      aria-live="polite"
-      onClick={() =>
-        navigator.clipboard
-          .writeText(text)
-          .then(() => setState("Copied"))
-          .catch(() => setState("Select text to copy"))
-      }
+    <Dialog
+      open={manualText !== null}
+      onOpenChange={(open) => {
+        if (!open) setManualText(null);
+      }}
     >
-      {state === "Copied" ? <Check /> : <Copy />}
-      {state || label}
-    </Button>
+      <Button
+        ref={button}
+        size="sm"
+        variant="outline"
+        disabled={disabled}
+        aria-disabled={disabled || state === "Copying…"}
+        aria-busy={state === "Copying…"}
+        aria-live="polite"
+        onClick={() => void copy()}
+      >
+        {state === "Copied" ? (
+          <Check />
+        ) : state === "Copying…" ? (
+          <LoaderCircle className="animate-spin" />
+        ) : (
+          <Copy />
+        )}
+        {state || label}
+      </Button>
+      <DialogContent
+        className="manual-copy-dialog"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          textarea.current?.focus({ preventScroll: true });
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          button.current?.focus({ preventScroll: true });
+        }}
+      >
+        <DialogTitle>Copy this text</DialogTitle>
+        <DialogDescription>
+          Your browser didn’t allow automatic copying. Select the text below,
+          then press ⌘C or Ctrl+C, or use your device’s Copy menu.
+        </DialogDescription>
+        <textarea
+          ref={textarea}
+          aria-label="Text to copy"
+          value={manualText ?? ""}
+          readOnly
+          spellCheck={false}
+          rows={7}
+        />
+        <div className="manual-copy-actions">
+          <Button variant="outline" onClick={() => setManualText(null)}>
+            Done
+          </Button>
+          <Button
+            onClick={() => {
+              textarea.current?.focus({ preventScroll: true });
+              textarea.current?.select();
+            }}
+          >
+            Select text
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 export function Stat({

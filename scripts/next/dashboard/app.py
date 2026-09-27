@@ -1,4 +1,4 @@
-"""Same-origin REST/WebSocket API and production frontend for a local dashboard."""
+"""Same-origin REST/WebSocket API and frontend for local or tailnet access."""
 import asyncio
 from contextlib import asynccontextmanager, suppress
 import os
@@ -13,6 +13,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from scripts.next.dashboard.documentation import DocumentationFiles
 from scripts.next.dashboard.models import RunRequest, TemplateRequest
+from scripts.next.dashboard.network import validate_tailnet_addresses
 from scripts.next.dashboard.runner import BusyError, RunManager, TERMINAL
 from scripts.next.dashboard.schema import get_schema
 from scripts.next.dashboard.templates import TemplateConflict, TemplateStore
@@ -21,7 +22,10 @@ from scripts.next.dashboard.templates import TemplateConflict, TemplateStore
 def _trusted_origin(origin, host):
     if origin is None:
         return True  # Command-line clients do not send Origin.
-    parsed = urlsplit(origin)
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
     return (parsed.scheme in ('http', 'https') and
             (parsed.netloc == host or parsed.netloc in ('localhost:5173', '127.0.0.1:5173')))
 
@@ -63,7 +67,14 @@ class _FullLogResponse(StreamingResponse):
             self.stream.close()
 
 
-def create_app(repo_root: Path | None = None):
+def create_app(repo_root: Path | None = None, *, tailnet_ips: tuple[str, ...] = ()):
+    allowed_hosts = ['localhost', '127.0.0.1', '[::1]']
+    if tailnet_ips:
+        addresses = validate_tailnet_addresses(tailnet_ips)
+        allowed_hosts.extend(f'[{address}]' if ':' in address else address for address in addresses)
+        # Serve preserves the original Host. Tailscale routing/access policies,
+        # not hostname matching or forwarded identity headers, control access.
+        allowed_hosts.append('*.ts.net')
     root = (repo_root or Path(__file__).resolve().parents[3]).resolve()
     manager = RunManager(root)
     templates = TemplateStore(root)
@@ -78,7 +89,7 @@ def create_app(repo_root: Path | None = None):
                   openapi_url='/api/openapi.json',
                   swagger_ui_oauth2_redirect_url='/api/docs/oauth2-redirect')
     app.state.repo_root, app.state.runner = root, manager
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=['localhost', '127.0.0.1', '[::1]'])
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
     @app.middleware('http')
     async def local_mutations(request: Request, call_next):

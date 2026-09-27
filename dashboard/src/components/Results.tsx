@@ -36,6 +36,7 @@ import { CopyButton, Empty, Loading, Notice, Stat, Status } from "./shared";
 import ConfidenceChart from "./ConfidenceChart";
 import { FigureGallery, SupportingFiles, TableBrowser } from "./Artifacts";
 import { LegacyTrustNotice } from "./LegacyTrust";
+import { LoadingRegion } from "./LoadingRegion";
 
 const resultTabs = [
   { id: "overview", label: "Overview", icon: BarChart3 },
@@ -217,6 +218,8 @@ export default function Results({
   const filtered = filterRuns(runs, query, statusFilter, sort);
   const hasFilters = Boolean(query.trim()) || statusFilter !== "all";
   const statuses = runStatuses(runs, statusFilter);
+  const loadingSession =
+    Boolean(detail?.sessions.length) && !data && !sessionError;
   function resetFilters() {
     setQuery("");
     setStatusFilter("all");
@@ -426,12 +429,17 @@ export default function Results({
         )}
       </section>
       {selectedId && (
-        <section className="result-workspace">
+        <LoadingRegion
+          className="result-workspace"
+          loading={
+            (!detail && !detailError) || (tab === "overview" && loadingSession)
+          }
+          retainChildren={Boolean(detail)}
+          label="Reading run results…"
+        >
           {detailError ? (
             <Notice>{detailError}</Notice>
-          ) : !detail ? (
-            <Loading label="Reading run results…" />
-          ) : (
+          ) : detail ? (
             <>
               <div className="result-heading">
                 <div>
@@ -531,104 +539,111 @@ export default function Results({
               >
                 {tab === "overview" && (
                   <>
-                    {sessionError ? (
-                      <Notice>{sessionError}</Notice>
-                    ) : !session ? (
-                      <Empty title="No session results yet">
-                        Run cell screening and decoding to populate this
-                        overview.
-                      </Empty>
-                    ) : !data ? (
-                      <Loading label="Reading session…" />
-                    ) : (
-                      <>
-                        {data.errors.map((e, i) => (
-                          <Notice key={i}>{e}</Notice>
-                        ))}
-                        {data.warnings.map((e, i) => (
-                          <Notice key={i} tone="info">
-                            {e}
-                          </Notice>
-                        ))}
-                        <SessionStats data={data} />
-                        <div className="overview-grid">
-                          <section className="panel chart-panel">
-                            <div className="section-heading">
-                              <div>
-                                <h3>Decoding confidence</h3>
-                                <p>
-                                  Observed estimate and the null shuffle
-                                  distribution
-                                </p>
+                    <LoadingRegion
+                      loading={loadingSession}
+                      label="Reading session…"
+                    >
+                      {sessionError ? (
+                        <Notice>{sessionError}</Notice>
+                      ) : !session ? (
+                        <Empty title="No session results yet">
+                          Run cell screening and decoding to populate this
+                          overview.
+                        </Empty>
+                      ) : data ? (
+                        <>
+                          {data.errors.map((e, i) => (
+                            <Notice key={i}>{e}</Notice>
+                          ))}
+                          {data.warnings.map((e, i) => (
+                            <Notice key={i} tone="info">
+                              {e}
+                            </Notice>
+                          ))}
+                          <SessionStats data={data} />
+                          <div className="overview-grid">
+                            <section className="panel chart-panel">
+                              <div className="section-heading">
+                                <div>
+                                  <h3>Decoding confidence</h3>
+                                  <p>
+                                    Observed estimate and the null shuffle
+                                    distribution
+                                  </p>
+                                </div>
+                                <span className="chart-tag">
+                                  Session {data.session}
+                                </span>
                               </div>
-                              <span className="chart-tag">
-                                Session {data.session}
-                              </span>
-                            </div>
-                            <ConfidenceChart
-                              series={[
-                                { label: "Observed", color: "#6559de", data },
-                              ]}
-                            />
-                          </section>
-                          <section className="panel summary-panel">
-                            <div className="section-heading">
-                              <h3>Session at a glance</h3>
-                              <CircleDot size={18} />
-                            </div>
-                            <dl>
-                              <div>
-                                <dt>Selected by screening</dt>
-                                <dd>{formatNumber(data.selected_cells)}</dd>
+                              <ConfidenceChart
+                                series={[
+                                  {
+                                    label: "Observed",
+                                    color: "#6559de",
+                                    data,
+                                  },
+                                ]}
+                              />
+                            </section>
+                            <section className="panel summary-panel">
+                              <div className="section-heading">
+                                <h3>Session at a glance</h3>
+                                <CircleDot size={18} />
                               </div>
-                              <div>
-                                <dt>Preferred cue</dt>
-                                <dd>{data.cue ?? "—"}</dd>
-                              </div>
-                              <div>
-                                <dt>Null shuffles</dt>
-                                <dd>{formatNumber(data.null_shuffles)}</dd>
-                              </div>
-                              <div>
-                                <dt>Brier score</dt>
-                                <dd>
-                                  {formatNumber(data.metrics.brier_score, 3)}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>Log loss</dt>
-                                <dd>
-                                  {formatNumber(data.metrics.log_loss, 3)}
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>Mean longest OFF</dt>
-                                <dd>
-                                  {formatNumber(
-                                    mean(data.max_off_durations),
-                                    1,
-                                  )}{" "}
-                                  ms
-                                </dd>
-                              </div>
-                            </dl>
-                            <p className="fine-print">
-                              Metrics reflect the stored evaluation window. Null
-                              bands show the middle 95% of shuffled trial-mean
-                              curves.
-                            </p>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setTab("figures")}
-                            >
-                              Explore session figures
-                              <ArrowRight />
-                            </Button>
-                          </section>
-                        </div>
-                      </>
-                    )}
+                              <dl>
+                                <div>
+                                  <dt>Selected by screening</dt>
+                                  <dd>{formatNumber(data.selected_cells)}</dd>
+                                </div>
+                                <div>
+                                  <dt>Preferred cue</dt>
+                                  <dd>{data.cue ?? "—"}</dd>
+                                </div>
+                                <div>
+                                  <dt>Null shuffles</dt>
+                                  <dd>{formatNumber(data.null_shuffles)}</dd>
+                                </div>
+                                <div>
+                                  <dt>Brier score</dt>
+                                  <dd>
+                                    {formatNumber(data.metrics.brier_score, 3)}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Log loss</dt>
+                                  <dd>
+                                    {formatNumber(data.metrics.log_loss, 3)}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Mean longest OFF</dt>
+                                  <dd>
+                                    {formatNumber(
+                                      mean(data.max_off_durations),
+                                      1,
+                                    )}{" "}
+                                    ms
+                                  </dd>
+                                </div>
+                              </dl>
+                              <p className="fine-print">
+                                Metrics reflect the stored evaluation window.
+                                Null bands show the middle 95% of shuffled
+                                trial-mean curves.
+                              </p>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setTab("figures")}
+                              >
+                                Explore session figures
+                                <ArrowRight />
+                              </Button>
+                            </section>
+                          </div>
+                        </>
+                      ) : null}
+                    </LoadingRegion>
                     <div className="panel stages-summary">
                       <div className="section-heading">
                         <h3>Recorded stage outcomes</h3>
@@ -736,8 +751,8 @@ export default function Results({
                 )}
               </div>
             </>
-          )}
-        </section>
+          ) : null}
+        </LoadingRegion>
       )}
     </>
   );

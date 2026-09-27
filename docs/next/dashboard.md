@@ -1,19 +1,19 @@
 # Dashboard
 
-The local dashboard configures and runs the complete `next` pipeline, shows
+The dashboard configures and runs the complete `next` pipeline, shows
 processing status, and brings session results and saved figures into one viewer.
 It uses the same Python stages, JSON settings, caches, and manifest history as
-the command-line runner.
+the command-line runner. It starts locally by default; optional tailnet access
+lets you use the same dashboard and guide from your other Tailscale devices.
 
 ## First-time setup
 
 Open a terminal in the repository root: the directory containing `README.md`,
 `pyproject.toml`, and `dashboard/`. Run every command on this page from there.
-You need `uv`, Python 3.12, and Node.js **22.12 or newer** with npm. Node.js 24
-is used for validation.
+You need `uv` and Python 3.12. **`--build` requires Node.js 22.12+ with npm**,
+installed separately from `uv`. Serving an existing build needs Python only.
 
-Check your Node version with `node --version`. If you already use nvm, you can
-install and select Node.js 24 with:
+Check `node --version` and `npm --version`. With nvm, install Node.js 24 using:
 
 ```bash
 nvm install 24
@@ -88,11 +88,109 @@ Only development previews need separate ports. If you moved the dashboard to
 `--group dashboard --group docs` in `uv` commands when sharing one environment
 so it retains both dependency groups.
 
-The dashboard is intended for one trusted user on their own computer. Its
-launcher binds to loopback addresses and it has no account or authentication
-system. It reads Python pickle caches on the server: only place caches you trust
-in this repository's `cache/` directory. Do not expose the service through a
-public reverse proxy.
+The dashboard has no account system or read-only role. Everyone who can reach
+it can view results, access available server paths, save templates, and start or
+cancel analyses. It reads Python pickle caches on the server: only place caches
+you trust in this repository's `cache/` directory. Keep access limited to trusted
+users, either locally or through the tailnet setup below.
+
+## Local and tailnet access
+
+Use `--tailnet` to make one dashboard available through localhost and the
+machine's Tailscale IP addresses. Tailscale Serve is optional: direct HTTP access
+through the tailnet IP works without it.
+
+### Start with direct IP access
+
+Install and connect Tailscale on the server and the devices that will use the
+dashboard, then start it from the repository root:
+
+```bash
+uv run --group dashboard --group docs --locked python -m scripts.next.dashboard --tailnet
+```
+
+Add `--build` for the first launch after frontend or documentation updates.
+The launcher reads the connected device's addresses from the Tailscale CLI and
+prints the available HTTP links. It finds `tailscale` on `PATH` or at the
+standard macOS application location; no hostname list needs maintenance.
+Without `--tailnet`, normal localhost access works without installing or running
+Tailscale.
+
+| Access | Dashboard address | Guide address | Requirements |
+| --- | --- | --- | --- |
+| Local HTTP | `http://127.0.0.1:8000/` | `http://127.0.0.1:8000/docs/` | Dashboard running |
+| Tailnet IP HTTP | `http://100.x.y.z:8000/` | `http://100.x.y.z:8000/docs/` | `--tailnet`, Tailscale connected, access to port 8000 |
+| Tailnet hostname HTTPS | `https://<device>.<tailnet>.ts.net:8443/` | `https://<device>.<tailnet>.ts.net:8443/docs/` | `--tailnet` and the optional Serve setup below |
+
+Replace `100.x.y.z` with a printed address. IPv6 links use brackets, for example
+`http://[<tailscale-ipv6>]:8000/`; copy the complete link from the terminal.
+If you use `--port 8001`, use that port for both direct HTTP addresses and the
+local destination in your Serve command.
+
+All addresses reach the same process, job queue, result library, and built guide.
+Analysis and file access take place on the server computer; paths entered from
+another device still refer to that server. Remote HTTP supports run creation
+and copy controls, with a manual-copy option if the browser blocks clipboard
+access. Live progress connects through the same address as the page.
+
+The launcher binds only loopback and the discovered Tailscale addresses. It does
+not open a listener on your ordinary LAN interfaces. If discovery or binding
+fails, startup stops with an error. Reconnect Tailscale and restart; after an
+address changes, restart the dashboard to discover it again. Wait for active
+analyses to finish before restarting, because stopping the server cancels them.
+
+### Add optional HTTPS beside an existing service
+
+Keep the `--tailnet` dashboard running. In a second terminal, inspect the current
+Serve mappings before choosing a port:
+
+```bash
+tailscale serve status
+```
+
+If WebDAV already uses HTTPS port 443 and 8443 is unused, add the dashboard on
+8443:
+
+```bash
+tailscale serve --bg --https=8443 http://127.0.0.1:8000
+tailscale serve status
+```
+
+Open the HTTPS URL printed by Tailscale, and append `/docs/` for the guide.
+Using the unused port leaves the WebDAV mapping intact. Serve manages the HTTPS
+certificate; it may ask you to enable HTTPS in your tailnet if this has not
+already been done. The dashboard's `--tailnet` flag does not change Serve,
+certificate settings, or Tailscale access policies. See the
+[Serve guide](https://tailscale.com/docs/features/tailscale-serve) and
+[CLI reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
+
+To remove only the dashboard's HTTPS mapping later:
+
+```bash
+tailscale serve --bg --https=8443 off
+```
+
+Keep your existing service mappings: `tailscale serve reset` would remove them
+too. Removing the 8443 mapping leaves local HTTP and direct tailnet IP HTTP
+available while the dashboard is running. Serve should forward the root `/`
+of its dedicated port; hosting the dashboard under `/dashboard/` is not
+supported.
+
+### Access controls
+
+Your Tailscale policy must allow the intended users/devices to reach the
+dashboard's direct HTTP port (8000 by default) and the optional Serve HTTPS port
+(8443 in this example). Incoming connections must also be enabled on the server.
+Serve follows the tailnet's access rules; see
+[Tailscale access control](https://tailscale.com/docs/features/access-control).
+
+The app automatically accepts localhost, its discovered Tailscale IP addresses,
+and `*.ts.net` hostnames. Host checks and browser same-origin checks remain in
+place, but neither supplies a user login. Restrict tailnet access to people you
+trust with the full dashboard. Do not publish it through Tailscale Funnel or a
+public reverse proxy. The guide can still be published separately on
+[GitHub Pages](../development.md#publish-the-guide-on-github-pages) without
+exposing dashboard controls or local results.
 
 ## Get help without leaving your work
 
@@ -577,6 +675,7 @@ frontend source, despite the repository's older generic `lib/` ignore rule.
 | Python cannot find `scripts.next.dashboard` | Run the start command from the repository root, not from `dashboard/` or `scripts/next/`. |
 | Missing `fastapi`, `uvicorn`, or `mkdocs` | Use the documented command with both `--group dashboard --group docs`; the docs group is required for building the guide. |
 | Browser says it cannot connect | Check that the server terminal is still running and that the browser port matches `--port`. Inspect the terminal for a startup error. |
+| Local access works but tailnet access fails | Start with `--tailnet`, use a printed address, and check Tailscale connectivity and the policy for the selected port. See [tailnet troubleshooting](troubleshooting.md#tailnet-dashboard-access-does-not-work). |
 | `Frontend is not built` or `Documentation is not built` | Follow [first-time setup](#first-time-setup) with `--build`. The missing guide page also gives a docs-only build command. |
 | `Address already in use` | Use a free dashboard port. Both dashboard and guide share that port. See [Use another port](#use-another-port). |
 | Recent frontend changes are missing | Rebuild with `npm --prefix dashboard run build`, then refresh the browser. Use [frontend development](#frontend-development) for automatic updates while editing. |

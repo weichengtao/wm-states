@@ -19,7 +19,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "./ui/dialog";
-import { Empty, Loading, Notice } from "./shared";
+import { Empty, Notice } from "./shared";
+import { LoadingRegion } from "./LoadingRegion";
 export function FigurePreview({
   artifact,
   compact = false,
@@ -290,66 +291,66 @@ export function TableBrowser({
           </Button>
         )}
       </div>
-      {error ? (
-        <Notice>{error}</Notice>
-      ) : !data ? (
-        <Loading label="Reading table…" />
-      ) : (
-        <>
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {data.columns.map((c) => (
-                    <th key={c}>{c.replaceAll("_", " ")}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((row, index) => (
-                  <tr key={index}>
+      <LoadingRegion loading={!data && !error} label="Reading table…">
+        {error ? (
+          <Notice>{error}</Notice>
+        ) : data ? (
+          <>
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr>
                     {data.columns.map((c) => (
-                      <td key={c}>
-                        {row[c] === null
-                          ? "—"
-                          : typeof row[c] === "object"
-                            ? JSON.stringify(row[c])
-                            : String(row[c] ?? "—")}
-                      </td>
+                      <th key={c}>{c.replaceAll("_", " ")}</th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="table-footer">
-            <span>
-              {data.total
-                ? `${page * 50 + 1}–${Math.min((page + 1) * 50, data.total)}`
-                : "0"}{" "}
-              of {data.total} rows
-            </span>
-            <div className="heading-actions">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!page}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Previous
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={(page + 1) * 50 >= data.total}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </Button>
+                </thead>
+                <tbody>
+                  {data.rows.map((row, index) => (
+                    <tr key={index}>
+                      {data.columns.map((c) => (
+                        <td key={c}>
+                          {row[c] === null
+                            ? "—"
+                            : typeof row[c] === "object"
+                              ? JSON.stringify(row[c])
+                              : String(row[c] ?? "—")}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-        </>
-      )}
+            <div className="table-footer">
+              <span>
+                {data.total
+                  ? `${page * 50 + 1}–${Math.min((page + 1) * 50, data.total)}`
+                  : "0"}{" "}
+                of {data.total} rows
+              </span>
+              <div className="heading-actions">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!page}
+                  onClick={() => setPage((p) => p - 1)}
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={(page + 1) * 50 >= data.total}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </>
+        ) : null}
+      </LoadingRegion>
     </>
   );
 }

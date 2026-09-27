@@ -91,6 +91,12 @@
   },
   "helpTopics": [
     {
+      "title": "Open the dashboard from another Tailscale device",
+      "keywords": "tailnet tailscale local remote http https serve ip hostname port WebDAV clipboard",
+      "answer": "Start the server with --tailnet to keep local HTTP and add direct HTTP on its discovered Tailscale IPs. Direct IP access needs Tailscale connectivity, but not Serve. Optionally use Serve on an unused HTTPS port such as 8443 beside WebDAV on 443. The guide remains at /docs/. There is no app login or read-only role: limit tailnet access to trusted users/devices. Paths still refer to the server computer.",
+      "path": "next/dashboard/#local-and-tailnet-access"
+    },
+    {
       "title": "Choosing stages",
       "keywords": "order dependency prerequisites select decode states",
       "answer": "The dashboard initially selects all eleven stages. Core stages cover screening through activity; the command-line runner uses those five by default. A partial run needs its earlier stages' caches.",
@@ -215,6 +221,10 @@
     "mixed_models": "next/methods/#mixed-effects-estimation"
   },
   "troubleshooting": [
+    {
+      "pattern": "tailscale|tailnet|invalid host|same.origin|origin.*reject",
+      "anchor": "tailnet-dashboard-access-does-not-work"
+    },
     {
       "pattern": "fingerprint|provenance|stale",
       "anchor": "activity-or-preparation-reports-stale-provenance"

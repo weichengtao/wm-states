@@ -11,7 +11,11 @@ import { api } from "./api";
 
 export function newCacheDirectory() {
   const timestamp = new Date().toISOString().replace(/[-:.]/g, "");
-  return `cache/dashboard_${timestamp}_${crypto.randomUUID().slice(0, 8)}`;
+  // Unlike randomUUID(), getRandomValues() also works on tailnet HTTP pages.
+  const suffix = Array.from(crypto.getRandomValues(new Uint8Array(4)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return `cache/dashboard_${timestamp}_${suffix}`;
 }
 
 export function initialRun(

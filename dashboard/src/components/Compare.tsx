@@ -16,7 +16,8 @@ import {
 import { humanize } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
-import { Empty, Loading, Notice } from "./shared";
+import { Empty, Notice } from "./shared";
+import { LoadingRegion } from "./LoadingRegion";
 import {
   SessionSelect,
   SessionStats,
@@ -116,46 +117,47 @@ function Pane({
       className="panel comparison-pane"
       style={{ "--pane-color": color } as React.CSSProperties}
     >
-      <div className="comparison-pane-heading">
-        <span className="comparison-letter">{label}</span>
-        <div>
-          <h3>{data ? `Session ${data.session}` : "Session results"}</h3>
-          <p>
-            {detail?.run.name ?? "Choose a run"}
-            {data && ` · preferred cue ${data.cue ?? "—"}`}
-          </p>
+      <LoadingRegion
+        loading={!error && (!detail || (detail.sessions.length > 0 && !data))}
+        label="Reading session…"
+      >
+        <div className="comparison-pane-heading">
+          <span className="comparison-letter">{label}</span>
+          <div>
+            <h3>{data ? `Session ${data.session}` : "Session results"}</h3>
+            <p>
+              {detail?.run.name ?? "Choose a run"}
+              {data && ` · preferred cue ${data.cue ?? "—"}`}
+            </p>
+          </div>
         </div>
-      </div>
-      {error ? (
-        <Notice>{error}</Notice>
-      ) : !detail ? (
-        <Loading />
-      ) : !detail.sessions.length ? (
-        <Empty title="No sessions to compare">
-          Choose a run that has screening or decoding results.
-        </Empty>
-      ) : !data ? (
-        <Loading label="Reading session…" />
-      ) : (
-        <>
-          <SessionStats data={data} />
-          {data.errors.map((e, i) => (
-            <Notice key={i}>{e}</Notice>
-          ))}
-          {data.warnings.map((w, i) => (
-            <Notice key={i} tone="info">
-              {w}
-            </Notice>
-          ))}
-          {split && (
-            <ConfidenceChart
-              series={[{ label: `${label} · ${data.session}`, color, data }]}
-              height={230}
-            />
-          )}
-          <FigureChoice detail={detail} session={data.session} side={label} />
-        </>
-      )}
+        {error ? (
+          <Notice>{error}</Notice>
+        ) : detail && !detail.sessions.length ? (
+          <Empty title="No sessions to compare">
+            Choose a run that has screening or decoding results.
+          </Empty>
+        ) : detail && data ? (
+          <>
+            <SessionStats data={data} />
+            {data.errors.map((e, i) => (
+              <Notice key={i}>{e}</Notice>
+            ))}
+            {data.warnings.map((w, i) => (
+              <Notice key={i} tone="info">
+                {w}
+              </Notice>
+            ))}
+            {split && (
+              <ConfidenceChart
+                series={[{ label: `${label} · ${data.session}`, color, data }]}
+                height={230}
+              />
+            )}
+            <FigureChoice detail={detail} session={data.session} side={label} />
+          </>
+        ) : null}
+      </LoadingRegion>
     </section>
   );
 }
@@ -240,6 +242,13 @@ export default function Compare({
     left.detail && right.detail
       ? settingsDifferences(left.detail.manifests, right.detail.manifests)
       : [];
+  const loadingResults =
+    (!left.error &&
+      (!left.detail ||
+        (left.detail.sessions.length > 0 && !a.data && !a.error))) ||
+    (!right.error &&
+      (!right.detail ||
+        (right.detail.sessions.length > 0 && !b.data && !b.error)));
   return (
     <>
       <div className="page-heading">
@@ -414,111 +423,120 @@ export default function Compare({
               </button>
             </div>
           </div>
-          {warnings.map((w, i) => (
-            <Notice tone="info" key={i}>
-              {w}
-            </Notice>
-          ))}
-          {leftRun === rightRun &&
-            leftSession === rightSession &&
-            leftSession && (
-              <Notice tone="info">
-                Both sides show the same session and run. Choose another session
-                or switch to across runs.
+          <LoadingRegion loading={loadingResults} retainChildren>
+            {warnings.map((w, i) => (
+              <Notice tone="info" key={i}>
+                {w}
               </Notice>
-            )}
-          {view === "overlay" && a.data && b.data && (
-            <section className="panel overlay-panel">
-              <div className="section-heading">
-                <div>
-                  <h3>Decoding confidence overlay</h3>
-                  <p>
-                    Each curve retains its original time grid and null
-                    distribution.
-                  </p>
-                </div>
-              </div>
-              <ConfidenceChart
-                series={[
-                  {
-                    label: `A · ${a.data.session}`,
-                    color: "#6559de",
-                    data: a.data,
-                  },
-                  {
-                    label: `B · ${b.data.session}`,
-                    color: "#2caaa6",
-                    data: b.data,
-                  },
-                ]}
-                height={300}
-              />
-            </section>
-          )}
-          {mode === "runs" && left.detail && right.detail && (
-            <details className="panel config-comparison">
-              <summary>
-                Configuration differences{" "}
-                <span className="count-badge">{differences.length}</span>
-              </summary>
-              <p className="fine-print">
-                Latest recorded settings per stage across invocation history.
-                Cache and data paths are omitted; missing history cannot verify
-                equivalent configurations.
-              </p>
-              {differences.length ? (
-                <div className="table-scroll">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Stage / parameter</th>
-                        <th>Run A</th>
-                        <th>Run B</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {differences.map((d) => (
-                        <tr key={`${d.stage}.${d.parameter}`}>
-                          <td>
-                            {d.stage} / {d.parameter}
-                          </td>
-                          <td>{d.left}</td>
-                          <td>{d.right}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="muted">
-                  No differences in recorded stage parameters.
-                </p>
+            ))}
+            {leftRun === rightRun &&
+              leftSession === rightSession &&
+              leftSession && (
+                <Notice tone="info">
+                  Both sides show the same session and run. Choose another
+                  session or switch to across runs.
+                </Notice>
               )}
-            </details>
-          )}
-          <div className="comparison-grid">
-            <Pane
-              detail={left.detail}
-              data={a.data}
-              error={left.error || a.error}
-              label="A"
-              color="#6559de"
-              split={view === "split"}
-            />
-            <Pane
-              detail={right.detail}
-              data={b.data}
-              error={right.error || b.error}
-              label="B"
-              color="#2caaa6"
-              split={view === "split"}
-            />
-          </div>
-          <p className="fine-print compare-footnote">
-            Compare the configuration and trial sets before interpreting
-            differences. Figures retain the axes and scales used when they were
-            generated.
-          </p>
+            {view === "overlay" && (
+              <LoadingRegion
+                loading={loadingResults}
+                label="Reading comparison curves…"
+              >
+                {a.data && b.data && (
+                  <section className="panel overlay-panel">
+                    <div className="section-heading">
+                      <div>
+                        <h3>Decoding confidence overlay</h3>
+                        <p>
+                          Each curve retains its original time grid and null
+                          distribution.
+                        </p>
+                      </div>
+                    </div>
+                    <ConfidenceChart
+                      series={[
+                        {
+                          label: `A · ${a.data.session}`,
+                          color: "#6559de",
+                          data: a.data,
+                        },
+                        {
+                          label: `B · ${b.data.session}`,
+                          color: "#2caaa6",
+                          data: b.data,
+                        },
+                      ]}
+                      height={300}
+                    />
+                  </section>
+                )}
+              </LoadingRegion>
+            )}
+            {mode === "runs" && left.detail && right.detail && (
+              <details className="panel config-comparison">
+                <summary>
+                  Configuration differences{" "}
+                  <span className="count-badge">{differences.length}</span>
+                </summary>
+                <p className="fine-print">
+                  Latest recorded settings per stage across invocation history.
+                  Cache and data paths are omitted; missing history cannot
+                  verify equivalent configurations.
+                </p>
+                {differences.length ? (
+                  <div className="table-scroll">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Stage / parameter</th>
+                          <th>Run A</th>
+                          <th>Run B</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {differences.map((d) => (
+                          <tr key={`${d.stage}.${d.parameter}`}>
+                            <td>
+                              {d.stage} / {d.parameter}
+                            </td>
+                            <td>{d.left}</td>
+                            <td>{d.right}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="muted">
+                    No differences in recorded stage parameters.
+                  </p>
+                )}
+              </details>
+            )}
+            <div className="comparison-grid">
+              <Pane
+                detail={left.detail}
+                data={a.data}
+                error={left.error || a.error}
+                label="A"
+                color="#6559de"
+                split={view === "split"}
+              />
+              <Pane
+                detail={right.detail}
+                data={b.data}
+                error={right.error || b.error}
+                label="B"
+                color="#2caaa6"
+                split={view === "split"}
+              />
+            </div>
+            <p className="fine-print compare-footnote">
+              Compare the configuration and trial sets before interpreting
+              differences. Figures retain the axes and scales used when they
+              were generated.
+            </p>
+          </LoadingRegion>
         </>
       )}
     </>

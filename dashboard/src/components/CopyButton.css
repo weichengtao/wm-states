@@ -1,0 +1,36 @@
+.manual-copy-dialog {
+  max-width: 40rem;
+}
+.manual-copy-dialog > h2 {
+  margin: 0 2rem 0.6rem 0;
+  font-size: 1.3rem;
+  font-weight: 650;
+}
+.manual-copy-dialog > p {
+  margin: 0 0 1rem;
+  color: #627770;
+  line-height: 1.6;
+}
+.manual-copy-dialog textarea {
+  width: 100%;
+  max-height: 45vh;
+  resize: vertical;
+  padding: 0.85rem;
+  border: 1px solid #d3e0d6;
+  border-radius: 0.65rem;
+  background: #f2f6f4;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.manual-copy-dialog textarea:focus-visible {
+  outline: 2px solid #11786e;
+  outline-offset: 2px;
+}
+.manual-copy-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}

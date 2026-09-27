@@ -14,6 +14,29 @@ reports an occupied port, follow [Use another port](dashboard.md#use-another-por
 For the normal launch command, see
 [Open the dashboard again](dashboard.md#open-the-dashboard-again).
 
+## Tailnet dashboard access does not work
+
+Start the dashboard with `--tailnet` and open one of the addresses printed in
+its terminal. Without that flag, the default listener accepts local connections
+only. Follow [local and tailnet access](dashboard.md#local-and-tailnet-access)
+for the full setup.
+
+| What you see | What to check |
+| --- | --- |
+| Tailscale CLI missing, disconnected, or discovery timed out | Install/connect Tailscale, then restart the dashboard. The launcher searches `PATH` and the standard macOS app location. It does not install Tailscale or sign you in. |
+| An address cannot be bound | Check that Tailscale is connected and the chosen port is free on every displayed address. Restart after a Tailscale address changes. The launcher does not silently switch to a LAN-wide listener. |
+| Local HTTP works, but `http://100.x.y.z:8000/` does not | Both devices need Tailscale connectivity. Check the exact printed IP/port, incoming connections on the server, host firewall, and tailnet policy for port 8000 (or your `--port`). Direct IP access does not need Serve. |
+| Direct IP works, but the HTTPS hostname does not | Check `tailscale serve status`, its local destination, and access policy for the HTTPS port. Use the full `.ts.net` hostname and port printed by Serve, with `https://`. |
+| `Invalid host` or a rejected browser origin | Confirm the server was started with `--tailnet`. Use localhost, a discovered Tailscale IP, or the full `.ts.net` Serve URL; a short machine name or unrelated custom hostname is not supported. Refresh the page at that same address. |
+| The HTTPS page opens, but an API request or live progress fails | Forward the whole site from `/` on its own Serve port, not under `/dashboard/`. Restart the updated backend and rebuild the frontend; API and WebSocket URLs follow the page's origin automatically. |
+| A copy button offers manual copying on HTTP | The browser blocked direct clipboard access. Use the supplied text and copy shortcut, or use the optional HTTPS URL. Run creation works on direct HTTP without secure-context browser APIs. |
+
+If WebDAV already uses Serve on port 443, choose an unused separate port such as
+8443 for this dashboard. Remove only that mapping with
+`tailscale serve --bg --https=8443 off`; do not reset the existing Serve setup.
+Before restarting the dashboard, let active analyses finish: stopping its
+server cancels them.
+
 ## Dashboard help or documentation is unavailable
 
 The **Help** panel's short guidance is part of the dashboard build. Full guide
