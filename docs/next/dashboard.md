@@ -204,7 +204,8 @@ includes them.
 
 To start from a previous invocation, choose **Reuse settings** in the run
 library. This copies its resolved analysis settings and shared run arguments
-into a new form with a fresh output directory. It does not copy existing output
+into a new form with a fresh output directory. Manual legacy trust starts off;
+it is never inherited from an earlier invocation. This action does not copy existing output
 files. A copied partial invocation still requires upstream results: choose the
 required stages for a new run, or deliberately reuse the existing directory.
 **Reset setup** restores the form's initial values, including its run details
@@ -299,7 +300,7 @@ or saving a template.
 
 The saved setup contains selected stages, effective parameters for all stages,
 worker count, session limit, figure formats, and figure font. It excludes the run name,
-cache directory, and permission to reuse outputs. Included paths are path
+cache directory, permission to reuse outputs, and manual legacy trust. Included paths are path
 strings; saving does not copy recordings or the files they reference.
 
 Saving always creates a new template. Existing templates, including the
@@ -348,6 +349,33 @@ Earlier invocation records survive partial reruns, while
 ran and with which command and settings; it does not version every cache or
 figure. Use a new run directory to preserve both result sets for comparison.
 See [run manifest history](outputs.md#run-manifest-history).
+
+### Trust unverified legacy results {#trust-unverified-legacy-results}
+
+Leave **Trust unverified legacy results** off for normal runs. An older result
+may pass the pipeline's historical verification without this option. If it
+cannot be verified and you have independently decided to reuse it, choose its
+existing cache directory, enable **Reuse existing outputs**, then enable this
+separate trust option. The run folder must already contain decoding results.
+
+The option applies to this invocation and is meaningful only for unversioned
+legacy fingerprints. It acknowledges uncertainty about the original inputs,
+scientific implementation, and environment. It does not make a current v2
+fingerprint match, repair inconsistent caches, or bypass schema and state-link
+checks. Review the visible explanation before starting the run.
+
+When manual trust is used, the processing log warns for each affected session,
+and the job record and pipeline manifest retain the decision and its reason.
+An enabled option with no events means the exception was not used; inspect the
+run status to see whether the requested stages completed. Cached keys are retained; completing this run does
+not upgrade their verification status.
+
+Templates do not save this permission. **Reuse settings** starts with it off,
+and changing the cache directory clears it so the decision stays associated
+with the intended results. Use [the strict read-only verifier](configuration.md#verify-an-existing-run-without-refitting)
+when you want a provenance assessment rather than starting an analysis. See
+[the full trust policy](configuration.md#trust-unverified-legacy-results) for
+CLI usage and the checks that remain enforced.
 
 ## Follow processing
 

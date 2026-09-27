@@ -19,10 +19,12 @@ import {
 import { api, errorMessage } from "@/lib/api";
 import type { Job } from "@/lib/types";
 import { stageElapsedSeconds } from "@/lib/progress";
+import { legacyTrustStatus } from "@/lib/legacy-trust";
 import { cn, duration, formatDate, humanize } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
 import { CopyButton, Empty, Loading, Notice, Status } from "./shared";
+import { LegacyTrustNotice } from "./LegacyTrust";
 
 const terminal = (status: string) =>
   ["complete", "failed", "cancelled"].includes(status);
@@ -274,6 +276,12 @@ export default function LiveMonitor({
       ) : (
         <>
           <section className="panel monitor-summary">
+            <LegacyTrustNotice
+              status={legacyTrustStatus(
+                job.trust_unverified_legacy_results,
+                job.legacy_trust,
+              )}
+            />
             <div className="monitor-summary-top">
               <div>
                 <div className="monitor-title">

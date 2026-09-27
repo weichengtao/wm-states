@@ -70,6 +70,20 @@ class DashboardResultsTest(unittest.TestCase):
         ):
             cache_io.save(payload, self.run / relative)
 
+    def test_manifest_history_preserves_manual_trust_evidence_after_partial_rerun(self):
+        evidence = {'enabled': True, 'manual_trust_used': True,
+                    'events': [{'session': '0102', 'stage': 'activity', 'reason': 'Unverified source'}]}
+        self.write('manifests/trusted.json', json.dumps({
+            'run_id': 'trusted', 'status': 'complete',
+            'runner_config': {'trust_unverified_legacy_results': True},
+            'legacy_trust': evidence,
+        }))
+        manifests = self.client.get('/api/runs/example').json()['manifests']
+        trusted = next(item for item in manifests if item['id'] == 'trusted')
+        self.assertEqual(trusted['legacy_trust'], evidence)
+        self.assertTrue(trusted['runner_config']['trust_unverified_legacy_results'])
+        self.assertIsNone(next(item for item in manifests if item['id'] == 'latest')['legacy_trust'])
+
     def test_run_listing_uses_lightweight_tables_and_excludes_legacy_and_hidden(self):
         legacy = self.root / "cache" / "legacy"
         legacy.mkdir()

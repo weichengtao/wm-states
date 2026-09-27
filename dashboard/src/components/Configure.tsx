@@ -36,11 +36,14 @@ import {
   parameterMatchesQuery,
   presetName,
   sameFieldValue,
+  updateRunDraft,
+  launchRun,
 } from "@/lib/configuration";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
 import SaveTemplateDialog from "./SaveTemplateDialog";
+import { LegacyTrustPanel } from "./LegacyTrust";
 import PathInput from "./PathInput";
 import {
   builtInTemplates,
@@ -273,7 +276,7 @@ export default function Configure({
   } | null>(null);
   const update = (patch: Partial<RunRequest>) => {
     revision.current += 1;
-    setForm((v) => ({ ...v, ...patch }));
+    setForm((v) => updateRunDraft(v, patch));
     setUndo(null);
     setValidation(null);
     setError("");
@@ -321,7 +324,7 @@ export default function Configure({
       jsonMode,
       template: selectedTemplate,
     });
-    update(next);
+    update({ ...next, trust_unverified_legacy_results: false });
     setJsonText(JSON.stringify(next.settings, null, 2));
     setJsonDirty(false);
     setUndo(previous);
@@ -422,9 +425,15 @@ export default function Configure({
         );
       if (launch) {
         onStarted(
-          await api<Job>("/jobs", {
-            method: "POST",
-            body: JSON.stringify(form),
+          await launchRun(form, () => {
+            revision.current += 1;
+            // Clear only consent: edits made while the request was pending stay.
+            setForm((current) => ({
+              ...current,
+              trust_unverified_legacy_results: false,
+            }));
+            setUndo(null);
+            setValidation(null);
           }),
         );
       } else {
@@ -482,6 +491,11 @@ export default function Configure({
           />
           <Button
             onClick={() => submit(true)}
+            className={
+              form.trust_unverified_legacy_results
+                ? "legacy-trust-launch"
+                : undefined
+            }
             disabled={!!busy || jsonDirty || !form.stages.length || running}
             title={
               running
@@ -494,7 +508,11 @@ export default function Configure({
             ) : (
               <Play />
             )}
-            {busy === "launch" ? "Starting…" : "Start pipeline"}
+            {busy === "launch"
+              ? "Starting…"
+              : form.trust_unverified_legacy_results
+                ? "Start with legacy trust"
+                : "Start pipeline"}
           </Button>
         </div>
       </div>
@@ -659,7 +677,7 @@ export default function Configure({
             variant="outline"
             size="sm"
             onClick={() => {
-              update(undo.form);
+              update({ ...undo.form, trust_unverified_legacy_results: false });
               setJsonText(undo.jsonText);
               setJsonDirty(undo.jsonDirty);
               setJsonMode(undo.jsonMode);
@@ -830,10 +848,18 @@ export default function Configure({
           </label>
         </div>
         {form.allow_existing && (
-          <Notice tone="info">
-            Selected stages can replace existing outputs. Earlier invocation
-            records will be preserved.
-          </Notice>
+          <>
+            <Notice tone="info">
+              Selected stages can replace existing outputs. Earlier invocation
+              records will be preserved.
+            </Notice>
+            <LegacyTrustPanel
+              enabled={form.trust_unverified_legacy_results}
+              onChange={(enabled) =>
+                update({ trust_unverified_legacy_results: enabled })
+              }
+            />
+          </>
         )}
       </section>
       <div className="section-heading standalone">
@@ -1085,6 +1111,12 @@ export default function Configure({
                 ? "Select at least one stage to continue."
                 : `${form.stages.length} stages · ${form.figure_formats.map((format) => format.toUpperCase()).join(" + ") || "No figure format selected"} · ${form.max_sessions_to_run ? `up to ${form.max_sessions_to_run} sessions` : "all eligible sessions"}`}
           </p>
+          {form.trust_unverified_legacy_results && (
+            <p className="legacy-trust-launch-note">
+              Manual legacy trust is enabled for this invocation and will be
+              recorded in its manifest.
+            </p>
+          )}
         </div>
         <div className="heading-actions">
           <Button
@@ -1101,9 +1133,18 @@ export default function Configure({
           </Button>
           <Button
             onClick={() => submit(true)}
+            className={
+              form.trust_unverified_legacy_results
+                ? "legacy-trust-launch"
+                : undefined
+            }
             disabled={!!busy || jsonDirty || !form.stages.length || running}
           >
-            {busy === "launch" ? "Starting…" : "Start pipeline"}
+            {busy === "launch"
+              ? "Starting…"
+              : form.trust_unverified_legacy_results
+                ? "Start with legacy trust"
+                : "Start pipeline"}
             {busy === "launch" ? (
               <LoaderCircle className="animate-spin" />
             ) : (

@@ -36,6 +36,8 @@ export function templateConfig(
   // Keep unknown overrides for server validation; saving must not silently fix a
   // misspelled field or discard a stage from a user's JSON draft.
   const settings = structuredClone(form.settings);
+  for (const overrides of Object.values(settings))
+    delete overrides.trust_unverified_legacy_results;
   for (const stage of schema.stages) {
     settings[stage.id] ??= {};
     for (const field of stage.fields) {
@@ -46,7 +48,8 @@ export function templateConfig(
         field.name === "cache_dir" ||
         field.name === "data_dir" ||
         field.name === "figure_formats" ||
-        field.name === "figure_font"
+        field.name === "figure_font" ||
+        field.name === "trust_unverified_legacy_results"
       )
         continue;
       if (!Object.hasOwn(settings[stage.id], field.name)) {
@@ -81,14 +84,18 @@ export function templateRun(
   template: PipelineTemplate,
 ): RunRequest {
   const { config } = template;
+  const settings = structuredClone(config.settings);
+  for (const overrides of Object.values(settings))
+    delete overrides.trust_unverified_legacy_results;
   const next = structuredClone({
     ...form,
-    settings: config.settings,
+    settings,
     stages: config.stages,
     n_jobs: config.n_jobs,
     max_sessions_to_run: config.max_sessions_to_run,
     figure_formats: config.figure_formats,
     figure_font: config.figure_font ?? "DejaVu Sans",
+    trust_unverified_legacy_results: false,
     ...(Object.hasOwn(config, "data_dir")
       ? { data_dir: config.data_dir! }
       : {}),

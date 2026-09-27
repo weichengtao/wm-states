@@ -32,6 +32,15 @@ function renderJob(overrides: Partial<Job> = {}) {
 }
 
 describe("live monitor controls", () => {
+  it("shows legacy permission and actual acceptance without conflating them", () => {
+    expect(renderJob()).not.toContain("Legacy trust enabled");
+    expect(renderJob({ trust_unverified_legacy_results: true })).toContain(
+      "Legacy trust enabled",
+    );
+    expect(
+      renderJob({ legacy_trust: { enabled: true, manual_trust_used: true } }),
+    ).toContain("Unverified legacy results accepted");
+  });
   it("labels stage progress and offers a separate stop confirmation", () => {
     const html = renderJob();
     expect(html).toContain('aria-valuenow="1"');

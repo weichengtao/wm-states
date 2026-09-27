@@ -28,12 +28,14 @@ import type {
 import { api, errorMessage, runPath } from "@/lib/api";
 import { duration, formatDate, formatNumber, humanize } from "@/lib/utils";
 import { manifestSeed } from "@/lib/configuration";
+import { historyLegacyTrust, manifestLegacyTrust } from "@/lib/legacy-trust";
 import { filterRuns, runStatuses, type RunSort } from "@/lib/run-library";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
 import { CopyButton, Empty, Loading, Notice, Stat, Status } from "./shared";
 import ConfidenceChart from "./ConfidenceChart";
 import { FigureGallery, SupportingFiles, TableBrowser } from "./Artifacts";
+import { LegacyTrustNotice } from "./LegacyTrust";
 
 const resultTabs = [
   { id: "overview", label: "Overview", icon: BarChart3 },
@@ -439,7 +441,7 @@ export default function Results({
                     <CalendarDays size={13} />
                     {formatDate(detail.run.updated_at)}
                     <span>·</span>
-                    {detail.run.path}
+                    <span className="result-cache-path">{detail.run.path}</span>
                   </p>
                 </div>
                 <div className="heading-actions">
@@ -465,6 +467,10 @@ export default function Results({
               {detail.errors?.map((e, i) => (
                 <Notice key={i}>{e}</Notice>
               ))}
+              <LegacyTrustNotice
+                status={historyLegacyTrust(detail.manifests)}
+                scope="history"
+              />
               <div className="result-toolbar">
                 <div className="tabs" role="tablist" aria-label="Run results">
                   {resultTabs.map((t, index) => (
@@ -692,6 +698,9 @@ export default function Results({
                             <ChevronDown size={16} />
                           </summary>
                           <div className="manifest-body">
+                            <LegacyTrustNotice
+                              status={manifestLegacyTrust(m)}
+                            />
                             <div className="section-heading">
                               <span className="eyebrow">EXACT INVOCATION</span>
                               {m.invocation?.command && (

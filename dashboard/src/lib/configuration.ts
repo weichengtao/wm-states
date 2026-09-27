@@ -1,11 +1,13 @@
 import type {
   Field,
   Json,
+  Job,
   Manifest,
   RunRequest,
   Schema,
   Settings,
 } from "./types";
+import { api } from "./api";
 
 export function newCacheDirectory() {
   const timestamp = new Date().toISOString().replace(/[-:.]/g, "");
@@ -31,7 +33,36 @@ export function initialRun(
     cache_dir: cache,
     settings: schema.presets.example,
     ...seed,
+    // Trust is an explicit decision for this invocation, never an inherited default.
+    trust_unverified_legacy_results: false,
   });
+}
+
+export function updateRunDraft(
+  form: RunRequest,
+  patch: Partial<RunRequest>,
+): RunRequest {
+  const next = { ...form, ...patch };
+  if (
+    !next.allow_existing ||
+    next.cache_dir !== form.cache_dir ||
+    next.data_dir !== form.data_dir
+  )
+    next.trust_unverified_legacy_results = false;
+  return next;
+}
+
+/** Consume one-invocation consent only after the server accepts the launch. */
+export async function launchRun(
+  form: RunRequest,
+  onAccepted: () => void,
+): Promise<Job> {
+  const job = await api<Job>("/jobs", {
+    method: "POST",
+    body: JSON.stringify(form),
+  });
+  onAccepted();
+  return job;
 }
 
 const sharedFields: Record<string, keyof RunRequest> = {
@@ -143,6 +174,7 @@ export function manifestSeed(
   const seed: Partial<RunRequest> = {
     name: `${name} · copy`,
     allow_existing: false,
+    trust_unverified_legacy_results: false,
   };
   // Do not forward runner-only flags, old output paths, or a settings filename to RunRequest.
   for (const key of [
@@ -157,6 +189,7 @@ export function manifestSeed(
   }
   const settings = structuredClone(manifest.settings ?? {});
   for (const overrides of Object.values(settings)) {
+    delete overrides.trust_unverified_legacy_results;
     delete overrides.cache_dir;
     delete overrides.data_dir;
     for (const [field, shared] of Object.entries(sharedFields)) {

@@ -354,8 +354,20 @@ record nor automatically reruns downstream stages.
 
 The runner runs every requested stage on each invocation; only decoding
 automatically reuses matching per-session checkpoints. A checkpoint
-is reused when its analysis settings, source data, selection cache, and code
-fingerprint match. Changing the worker count does not invalidate it.
+is reused when its analysis settings, source data, selection cache, scientific
+implementation, and recorded runtime identity match. Current fingerprints use
+the `decode-v2:` scheme: they include the resolved input paths and file contents,
+science-relevant source code, and installed NumPy, SciPy, scikit-learn, joblib,
+and threadpoolctl versions. This covers decoding behavior without hashing every
+unrelated script in `scripts/next/`.
+
+Worker counts, progress verbosity, resume/plot switches, session allowlists and
+run limits do not invalidate a session's decoding estimate. Dashboard code,
+runner logging/manifests, plotting, fonts, and downstream analyses are also
+outside the decoder's scientific source identity. Changes to decoding methods,
+scientific settings, selection/data inputs, or those numerical package versions
+still require a matching estimate or refitting. Input paths remain part of
+provenance: moving a run or dataset is not a transparent cache migration.
 
 To force decoding to refit, set `"resume": false` in the JSON's `decode` object,
 or pass `--no-resume` to the standalone decoder. After changing decoding, rerun
@@ -366,11 +378,108 @@ analysis settings or migrating from the historical scripts.
 Activity comparison and mixed-effects preparation validate cache provenance
 before analysis. State fingerprints, preferred cues, trial IDs, and time bins
 must match the decoding cache. Decoding fingerprints must also match the current
-selection cache, session files, and implementation code. Both stages therefore
+selection cache, session files, and scientific implementation. Both stages therefore
 require `decode/decoding_confidence.pkl`, `select/cell_screening.pkl`, and
 `states/on_off_states.pkl` under the same run root.
 Stale or missing provenance stops the stage with instructions to rerun decoding
-and its dependents. This also applies to caches generated before a code change.
+and its dependents. A scientifically equivalent legacy fingerprint can pass the
+same check without rewriting its saved key; see below.
+
+### Verify an existing run without refitting
+
+```bash
+uv run python scripts/next/verify_decoding_cache.py \
+  --data-dir data/nature --cache-dir cache/next_run_001
+```
+
+This command reads trusted local caches and prints a JSON report. It performs
+no fitting, plotting, cache writes, or manifest updates. It verifies every
+primary decoding session; every available per-session checkpoint, including
+checkpoints left from a partial rerun; and state-to-decoding provenance when a
+state cache exists. Matching primary/checkpoint pairs must have matching keys,
+scientific settings, and complete result payloads, including arrays. Missing
+checkpoints are allowed. Extra checkpoint sessions are listed separately and
+verified against their own recording files. The report gives counts by
+fingerprint scheme and the historical revisions used to verify older keys.
+
+Earlier unversioned decoding fingerprints included all top-level next scripts,
+so harmless logging or figure changes could appear to make them stale. Legacy
+compatibility is deliberately limited to a finite set of pinned Git revisions.
+The verifier reads those source blobs from local Git objects without executing
+historical code or accessing the network. It accepts an old key only when its
+original fingerprint is reproduced exactly from the saved settings and current
+inputs, and the historical scientific source digest equals the current one.
+Saved fingerprints and state links are retained unchanged.
+
+Resume verifies all requested checkpoints before fitting or writing a partial
+primary cache. If a later checkpoint cannot be verified because local history
+is missing, the existing primary cache remains intact. Reused legacy sessions
+keep their original keys; newly fitted sessions use v2, so one run can contain
+both schemes.
+
+By default, missing local Git history, unsupported keys, changed science, or
+changed inputs produce an error rather than silently trusting a cache. Legacy fingerprints did
+not record their original numerical package versions, so verification cannot
+retroactively establish that historical environment; v2 fingerprints add that
+check for newly fitted estimates. See
+[legacy cache verification](migration.md#verify-legacy-decoding-fingerprints)
+and [provenance troubleshooting](troubleshooting.md#activity-or-preparation-reports-stale-provenance).
+
+### Trust unverified legacy results
+
+**Default: off.** Use this run-level exception only when you have independently
+decided that an existing legacy result is appropriate for the analysis you are
+about to run, although its original provenance cannot be established. It is
+separate from enabling reuse of an output directory. Normal verification still
+runs first; a legacy result that can be verified does not need manual trust.
+
+In the dashboard, enable **Reuse existing outputs** for the existing run folder,
+then explicitly enable **Trust unverified legacy results**. On the pipeline CLI,
+append this option to the command for that existing run:
+
+```bash
+--trust-unverified-legacy-results
+```
+
+The option requires an existing primary decoding cache. Keep the original
+analysis settings when reusing estimates; changing the requested decoder
+settings still requires refitting. With the option enabled, an otherwise
+unverifiable **unversioned, 64-character hexadecimal legacy key** may be used for
+this invocation. That decision can cover a decoding checkpoint, a figure-only
+refresh, or a later stage that consumes existing decoding results. It does not
+refit the old estimate or establish that its historical inputs, scientific code,
+or numerical environment match the present analysis.
+
+The exception does not accept malformed or current `decode-v2:` fingerprints,
+corrupted historical source snapshots, incompatible cache schemas, inconsistent
+cache records, or mismatched state-to-decoding links. Required input files and
+the ordinary stage checks still apply. Only the legacy provenance decision is
+relaxed; a failed structural or integrity check remains an error.
+
+Every manually trusted session produces a warning in the run log. The invocation
+manifest records `legacy_trust.enabled`, whether manual trust was actually used,
+and events identifying the stage, session, original key, reason, and current
+input paths and hashes. Current input hashes document what was present at the
+time of the decision; they do not prove which inputs originally produced the
+cached values. See [trust records](outputs.md#manual-legacy-trust-records).
+
+Original fingerprints and state links remain unchanged. Successful downstream
+work does not convert a trusted legacy estimate into a verified v2 estimate.
+Trust recorded by one invocation is never inherited by a later invocation;
+each run must explicitly enable the option. Dashboard templates do not store this permission, **Reuse
+settings** starts with it off, and changing the cache directory clears it.
+The read-only `verify_decoding_cache.py` command remains strict and never treats
+manual trust as verification. To remove the uncertainty, intentionally refit with
+`decode.resume: false`, then regenerate the dependent results.
+
+### Refresh existing figures
+
+For a figure refresh, reuse the run's original analysis settings and existing
+cache directory, set `decode.plot_only` to `true`, and select the plotting and
+downstream stages you need. Keep the existing screening cache unless screening
+itself needs to change. Changing the font or export formats does not require
+another fit. Plot-only decoding renders the saved results without fitting;
+the command above is the read-only check for their provenance before a refresh.
 
 ## Useful controls
 
@@ -384,6 +493,7 @@ and its dependents. This also applies to caches generated before a code change.
 | `preserve_null_time_structure` | `decode` JSON; dashboard decoding controls | Reuse a training-label permutation across time bins when `true`; default `false` |
 | `seed` | `decode` JSON | Reproduce trial balancing, null permutations, and model randomness |
 | `resume` | `decode` JSON | Reuse matching per-session checkpoints |
+| `trust_unverified_legacy_results` | Runner CLI; dashboard run options | Default off; explicitly accept unverifiable unversioned legacy estimates for this invocation, with warnings and audit records |
 | `cv_shuffles` | Mixed-effects stage JSON | Number of trial-holdout repetitions |
 
 To see all available fields, run the relevant script with `--help`. The runner

@@ -240,6 +240,26 @@ class DashboardSchemaTests(unittest.TestCase):
         sessions.write_text('sample # selected\nmissing\n')
         self.manager.validate(request(session_list_file='sessions.txt').model_copy(update={'stages': ['select']}))
 
+    def test_legacy_trust_is_explicit_boolean_and_requires_existing_outputs(self):
+        self.assertFalse(RunRequest().trust_unverified_legacy_results)
+        self.assertFalse(get_schema(self.root)['defaults']['trust_unverified_legacy_results'])
+        for value in ('true', 'false', 0, 1, None, []):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                RunRequest(trust_unverified_legacy_results=value)
+        self.assertNotIn('--trust-unverified-legacy-results', self.manager.validate(request())['argv'])
+        with self.assertRaisesRegex(ValueError, 'requires reuse'):
+            self.manager.validate(request(trust_unverified_legacy_results=True))
+        with self.assertRaisesRegex(ValueError, 'existing run with decode/decoding_confidence.pkl'):
+            self.manager.validate(request(trust_unverified_legacy_results=True, allow_existing=True))
+        decoded = self.root / 'cache/first/decode/decoding_confidence.pkl'
+        decoded.parent.mkdir(parents=True)
+        decoded.write_bytes(b'existing cache placeholder; validation does not unpickle')
+        enabled = self.manager.validate(request(trust_unverified_legacy_results=True, allow_existing=True))
+        self.assertEqual(enabled['argv'].count('--trust-unverified-legacy-results'), 1)
+        self.assertIn('--trust-unverified-legacy-results', shlex.split(enabled['command']))
+        disabled = self.manager.validate(request(allow_existing=True))
+        self.assertNotIn('--trust-unverified-legacy-results', disabled['argv'])
+
     def test_restored_crashed_job_does_not_count_offline_time_as_stage_runtime(self):
         job_id = 'd' * 32
         self.manager.storage.mkdir(parents=True)
@@ -545,6 +565,65 @@ while not (cache / 'continue').exists():
         for key, payload in originals.items():
             self.assertEqual(Path(live[key]).read_bytes(), payload)
 
+    async def test_manual_trust_flag_and_live_audit_are_mirrored_without_stage_change(self):
+        decoded = self.root / 'cache/first/decode/decoding_confidence.pkl'
+        decoded.parent.mkdir(parents=True)
+        decoded.write_bytes(b'existing fixture cache')
+        self.script('''import json, pathlib, sys, time
+cache = pathlib.Path(sys.argv[sys.argv.index('--cache-dir') + 1])
+record = {'run_id': 'trusted-invocation', 'invocation': {'argv': sys.orig_argv},
+          'stages': [{'stage': 'evaluate', 'status': 'running'}],
+          'legacy_trust': {'enabled': True, 'manual_trust_used': False, 'events': []}}
+manifest = cache / 'pipeline_manifest.json'
+manifest.write_text(json.dumps(record))
+print('initial audit', flush=True)
+while not (cache / 'record_trust').exists():
+    time.sleep(.01)
+record['legacy_trust'].update(manual_trust_used=True, events=[{
+    'stage': 'evaluate', 'session': 'fixture', 'manual_trust': True,
+    'original_fingerprint': 'b' * 64, 'reason': 'fixture verification failure',
+    'verification_status': 'unverified-legacy'}])
+manifest.write_text(json.dumps(record))
+print('trust recorded', flush=True)
+while not (cache / 'finish').exists():
+    time.sleep(.01)
+record['stages'][0]['status'] = 'complete'
+manifest.write_text(json.dumps(record))
+''')
+        job = await self.manager.start(request(allow_existing=True, trust_unverified_legacy_results=True))
+        self.assertTrue(job['trust_unverified_legacy_results'])
+        self.assertTrue(json.loads(Path(job['run_record_path']).read_text())['request']['trust_unverified_legacy_results'])
+        for _ in range(100):
+            if self.manager.jobs[job['id']]['logs'][-1:] == ['initial audit']:
+                break
+            await asyncio.sleep(.01)
+        else:
+            self.fail('Initial trust audit did not arrive')
+        initial = self.manager.snapshot(job['id'])
+        self.assertFalse(initial['legacy_trust']['manual_trust_used'])
+        (Path(job['cache_dir']) / 'record_trust').touch()
+        for _ in range(100):
+            if self.manager.jobs[job['id']]['logs'][-1:] == ['trust recorded']:
+                break
+            await asyncio.sleep(.01)
+        else:
+            self.fail('Updated trust audit did not arrive')
+        updated = self.manager.snapshot(job['id'])
+        self.assertEqual(updated['stages'], initial['stages'])
+        self.assertTrue(updated['legacy_trust']['manual_trust_used'])
+        self.assertEqual(updated['legacy_trust']['events'][0]['original_fingerprint'], 'b' * 64)
+        for record_path in (Path(updated['run_record_path']), self.manager.storage / f"{job['id']}.json"):
+            persisted = json.loads(record_path.read_text())
+            self.assertTrue(persisted['trust_unverified_legacy_results'])
+            self.assertEqual(persisted['legacy_trust'], updated['legacy_trust'])
+        (Path(job['cache_dir']) / 'finish').touch()
+        await asyncio.wait_for(self.manager.tasks[job['id']], 5)
+        final = self.manager.snapshot(job['id'])
+        self.assertEqual(final['status'], 'complete')
+        restored = RunManager(self.root).snapshot(job['id'])
+        self.assertTrue(restored['trust_unverified_legacy_results'])
+        self.assertEqual(restored['legacy_trust'], final['legacy_trust'])
+
     async def test_log_paths_reject_unknown_jobs_and_symlink_files(self):
         self.script('print("recorded")\n')
         job = await self.manager.start(request())
@@ -568,6 +647,7 @@ while not (cache / 'continue').exists():
         job = await self.manager.start(request(allow_existing=True))
         self.assertEqual(job['stages'][0]['status'], 'pending')
         self.assertIsNone(job['manifest_id'])
+        self.assertIsNone(job.get('legacy_trust'))
         final = await self.manager.cancel(job['id'])
         self.assertEqual(final['status'], 'cancelled')
         self.assertEqual(final['stages'][0]['status'], 'pending')

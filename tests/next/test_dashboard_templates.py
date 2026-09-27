@@ -69,7 +69,8 @@ class DashboardTemplateTests(unittest.TestCase):
             self.assertEqual(config['settings'], json.loads((self.root / record['path']).read_text()))
             for field in ('stages', 'n_jobs', 'max_sessions_to_run', 'figure_formats', 'figure_font'):
                 self.assertEqual(config[field], defaults[field])
-            for field in ('data_dir', 'session_list_file', 'cache_dir', 'name', 'allow_existing'):
+            for field in ('data_dir', 'session_list_file', 'cache_dir', 'name', 'allow_existing',
+                          'trust_unverified_legacy_results'):
                 self.assertNotIn(field, config)
         path = self.root / 'configs/next/smoke_pipeline.json'
         source = json.loads(path.read_text())
@@ -106,6 +107,19 @@ class DashboardTemplateTests(unittest.TestCase):
             request = payload()
             request['config']['figure_font'] = font
             self.assertEqual(self.post(request).status_code, 422)
+
+    def test_manual_trust_cannot_be_stored_as_a_reusable_template_choice(self):
+        for enabled in (True, False):
+            request = payload()
+            request['config']['trust_unverified_legacy_results'] = enabled
+            with self.subTest(enabled=enabled):
+                response = self.post(request)
+                self.assertEqual(response.status_code, 422)
+                self.assertIn('trust_unverified_legacy_results', response.json()['detail'])
+        saved = self.post().json()
+        self.assertNotIn('trust_unverified_legacy_results', saved['config'])
+        stored = json.loads((self.root / saved['path']).read_text())
+        self.assertNotIn('trust_unverified_legacy_results', stored['config'])
 
     def test_save_is_durable_and_preserves_sparse_config_nulls_and_enum_spelling(self):
         request = payload()

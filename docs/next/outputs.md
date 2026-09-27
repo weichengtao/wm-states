@@ -141,12 +141,39 @@ Each new record has these fields:
 | `invocation` | Command origin, exact Python argument vector, quoted command, working directory, and interpreter path |
 | `settings` | Resolved configuration for every requested stage, including inherited defaults and overrides |
 | `stages` | Ordered execution entries for attempted stages, with status, UTC `started_at`/`finished_at`, elapsed `seconds` when the attempt ends, and `error` when applicable |
+| `legacy_trust` | Whether manual legacy trust was enabled, whether it was used, and the affected stage/session decisions |
 
 The preset's path is recorded, but the preset file and source code are not
 copied into history. Keep the code revision and relevant input data with any
 reported analysis. `settings` preserves the effective settings for requested
 stages even if the preset is later edited. See [Resume and rerun](configuration.md#resume-and-rerun)
 for status transitions and interrupted executions.
+
+### Manual legacy trust records
+
+The [manual legacy trust option](configuration.md#trust-unverified-legacy-results)
+defaults to off. Each new invocation records `legacy_trust.enabled`,
+`legacy_trust.manual_trust_used`, and an `events` array. Enabling the option does
+not itself mean it was used. A completed invocation with no events did not need
+the exception; a failed or interrupted invocation may have stopped before
+verification. Older manifests without this field do not establish a trust
+decision.
+
+Each event names the stage and session, preserves the `original_fingerprint`,
+and records `reason`, `reason_type`, UTC `recorded_at`, `manual_trust: true`,
+`verification_status: "unverified-legacy"`, and
+`original_runtime_versions: "unknown"`. Under `current_input_checksums`, both
+`selection` and `data` contain the resolved `path`, `sha256`, and `size_bytes` of
+the files present when the decision was recorded. These current-file hashes
+document the decision's context; they cannot prove which files, code, or
+package versions originally produced the cached estimate.
+
+The dashboard job JSON mirrors this audit, including its copy under the run's
+`dashboard/` directory. The full run log also warns for affected stage/session
+pairs. Retained invocation manifests keep the decision visible after later
+partial runs. Original decoding fingerprints and state links stay unchanged:
+manual trust does not create a verified v2 identity, and a later invocation must
+explicitly enable the exception again if strict verification still fails.
 
 ### Inspect saved invocations
 
@@ -293,6 +320,7 @@ These optional scripts are separate from the eleven-stage runner:
 | Script in `scripts/next/` | Purpose |
 | --- | --- |
 | `inspect_decoding_results.py` | Plot observed/null confidence and state assignments |
+| `verify_decoding_cache.py` | Verify decoding, checkpoints, and state provenance without fitting or writing artifacts |
 | `eval_confidence_across_runs.py` | Compare evaluated runs on common sessions |
 | `reject_reason_histograms.py` | Summarize saved screening rejection diagnostics |
 

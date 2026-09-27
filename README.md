@@ -135,10 +135,17 @@ Earlier flat caches and the shared `mixedlm/` layout require a fresh full run.
 
 Keep all stage directories under the same run root. Activity comparison and
 mixed-effects preparation verify that the state results match decoding and that
-decoding matches the current selection cache, session data, and implementation
-code. Stale inputs stop the analysis with rerun instructions. After updating
-the code, rerun decoding and downstream stages; rerun selection first if data
-or screening settings changed. See [checkpoint reuse](docs/next/configuration.md#resume-and-rerun).
+decoding matches the current selection cache, session data, and scientific
+implementation. Dashboard, logging, and figure-only changes do not invalidate
+decoding. Check an existing run without refitting or modifying it with
+`uv run python scripts/next/verify_decoding_cache.py --data-dir data/nature --cache-dir cache/next_run_001`.
+Supported earlier fingerprints are verified against pinned local Git history;
+unverifiable or stale caches fail explicitly by default. For an older result you
+have independently decided to reuse, the run-level **Trust unverified legacy
+results** option records that decision and its affected sessions. It preserves
+the original keys and keeps current-fingerprint and cache-integrity checks. See
+[manual legacy trust](docs/next/configuration.md#trust-unverified-legacy-results) and
+[checkpoint reuse and verification](docs/next/configuration.md#resume-and-rerun).
 
 Each screening check has an explicit `--check-*` / `--no-check-*` switch and
 validated settings; see [screening controls](docs/next/configuration.md#screening-checks).

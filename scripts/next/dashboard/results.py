@@ -109,6 +109,7 @@ def _read_manifests(root: Path) -> tuple[list[dict], list[str]]:
                 "invocation": payload.get("invocation"),
                 "settings": payload.get("settings", {}),
                 "runner_config": payload.get("runner_config"),
+                "legacy_trust": payload.get("legacy_trust"),
             }
             # The latest view wins over its history copy and must sort last.
             records.pop(identity, None)

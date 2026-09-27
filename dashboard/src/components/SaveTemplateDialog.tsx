@@ -149,7 +149,7 @@ export default function SaveTemplateDialog({
             </p>
             <p>
               Run name, cache directory, and permission to reuse outputs stay
-              with each run.
+              with each run. Manual legacy trust is never saved in a template.
             </p>
           </div>
           <label className="template-path-option">

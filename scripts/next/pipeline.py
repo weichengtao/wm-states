@@ -20,7 +20,10 @@ import tyro
 from threadpoolctl import threadpool_limits
 
 from scripts.next.common import json_value
+from scripts.next.cache_paths import primary_cache
 from scripts.next.diagnostic_config import load_diagnostic_config
+from scripts.next.legacy_run_checks import audit_cached_decoding
+from scripts.next.legacy_trust import legacy_trust_context
 from scripts.next.figure_exports import (
     DEFAULT_FIGURE_FONT, FigureFormat, figure_font_context, figure_format_context,
     validate_figure_font, validate_figure_formats,
@@ -55,6 +58,7 @@ class Config:
     max_sessions_to_run: int | None = None
     figure_formats: tuple[FigureFormat, ...] = ('png',)
     figure_font: str = DEFAULT_FIGURE_FONT  # Font family for all figures; unavailable fonts warn and fall back to DejaVu Sans.
+    trust_unverified_legacy_results: bool = False  # Manually accept unverifiable legacy decoding keys for this invocation; recorded in the manifest.
     dry_run: bool = False  # Print resolved settings without running any analysis.
 
 
@@ -88,6 +92,11 @@ def main(config: Config, *, argv=None):
     invocation = invocation_context(argv)
     validate_figure_formats(config.figure_formats)
     validate_figure_font(config.figure_font)
+    if not isinstance(config.trust_unverified_legacy_results, bool):
+        raise ValueError('trust_unverified_legacy_results must be true or false.')
+    if (config.trust_unverified_legacy_results
+            and not primary_cache(config.cache_dir, 'decoding_confidence.pkl').is_file()):
+        raise ValueError('Trusting legacy results requires an existing run with decode/decoding_confidence.pkl.')
     stages = config.stages
     if stages == ('all',):
         stages = tuple(STAGES)
@@ -129,27 +138,40 @@ def main(config: Config, *, argv=None):
     with figure_format_context(config.figure_formats), figure_font_context(config.figure_font) as resolved_font:
         manifest = RunManifest(config.cache_dir, {s: asdict(c) for s, _, c in resolved},
                                {**asdict(config), 'resolved_figure_font': resolved_font}, invocation=invocation)
+        def persist_trust(audit):
+            manifest.record['legacy_trust'] = audit
+            manifest.save()
+
         try:
-            for stage, module, stage_config in resolved:
-                started = time.monotonic()
-                entry = {'stage': stage, 'status': 'running',
-                         'started_at': utc_now().isoformat(), 'finished_at': None}
-                manifest.record['stages'].append(entry)
-                manifest.save()
-                print(f'\n[{stage}]', flush=True)
-                try:
-                    with threadpool_limits(limits=1):
-                        module.main(stage_config)
-                except BaseException as exc:
-                    entry.update(status='failed' if isinstance(exc, Exception) else 'interrupted',
-                                 error=f'{type(exc).__name__}: {exc}')
-                    raise
-                else:
-                    entry['status'] = 'complete'
-                finally:
-                    entry['seconds'] = round(time.monotonic() - started, 3)
-                    entry['finished_at'] = utc_now().isoformat()
+            with legacy_trust_context(config.cache_dir, enabled=config.trust_unverified_legacy_results,
+                                      on_update=persist_trust) as trust:
+                persist_trust(trust.audit)
+                for stage, module, stage_config in resolved:
+                    trust.set_stage(stage)
+                    started = time.monotonic()
+                    entry = {'stage': stage, 'status': 'running',
+                             'started_at': utc_now().isoformat(), 'finished_at': None}
+                    manifest.record['stages'].append(entry)
                     manifest.save()
+                    print(f'\n[{stage}]', flush=True)
+                    try:
+                        # Fitting mode checks the checkpoints it actually reuses.
+                        # Plotting/downstream-only stages need an explicit audit.
+                        if (config.trust_unverified_legacy_results and stage != 'select'
+                                and (stage != 'decode' or stage_config.plot_only)):
+                            audit_cached_decoding(config.cache_dir, config.data_dir)
+                        with threadpool_limits(limits=1):
+                            module.main(stage_config)
+                    except BaseException as exc:
+                        entry.update(status='failed' if isinstance(exc, Exception) else 'interrupted',
+                                     error=f'{type(exc).__name__}: {exc}')
+                        raise
+                    else:
+                        entry['status'] = 'complete'
+                    finally:
+                        entry['seconds'] = round(time.monotonic() - started, 3)
+                        entry['finished_at'] = utc_now().isoformat()
+                        manifest.save()
         except BaseException as exc:
             manifest.finish('failed' if isinstance(exc, Exception) else 'interrupted')
             raise

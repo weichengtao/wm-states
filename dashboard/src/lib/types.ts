@@ -33,6 +33,7 @@ export type RunRequest = {
   figure_font: string;
   settings: Settings;
   allow_existing: boolean;
+  trust_unverified_legacy_results: boolean;
 };
 export type TemplateConfig = {
   settings: Settings;
@@ -86,6 +87,13 @@ export type Job = {
   run_record_path?: string;
   run_log_path?: string;
   run_settings_path?: string;
+  trust_unverified_legacy_results?: boolean;
+  legacy_trust?: LegacyTrust;
+};
+export type LegacyTrust = {
+  enabled?: boolean;
+  manual_trust_used?: boolean;
+  events?: Record<string, Json>[];
 };
 export type Run = {
   id: string;
@@ -139,6 +147,7 @@ export type Manifest = {
   stages: StageProgress[];
   settings?: Settings;
   invocation?: { command?: string; cwd?: string };
+  legacy_trust?: LegacyTrust;
   [key: string]: unknown;
 };
 export type RunDetail = {

@@ -73,6 +73,29 @@ function saved(form: RunRequest, includePaths = false): PipelineTemplate {
 }
 
 describe("pipeline templates", () => {
+  it("never saves manual trust and clears it when a template is applied", () => {
+    const form = {
+      ...draft({ allow_existing: true }),
+      trust_unverified_legacy_results: true,
+    };
+    form.settings.decode.trust_unverified_legacy_results = true;
+    const template = saved(form);
+    expect(template.config).not.toHaveProperty(
+      "trust_unverified_legacy_results",
+    );
+    expect(template.config.settings.decode).not.toHaveProperty(
+      "trust_unverified_legacy_results",
+    );
+    expect(templateRun(form, template).trust_unverified_legacy_results).toBe(
+      false,
+    );
+    expect(templateRun(form, template).allow_existing).toBe(true);
+    // Defensive support for older hand-edited templates must not reinstate trust.
+    template.config.settings.decode.trust_unverified_legacy_results = true;
+    expect(templateRun(form, template).settings.decode).not.toHaveProperty(
+      "trust_unverified_legacy_results",
+    );
+  });
   it("captures and compares a run-wide figure font, with a default for older templates", () => {
     const form = draft({ figure_font: "DejaVu Serif" });
     const template = saved(form);
@@ -125,6 +148,9 @@ describe("pipeline templates", () => {
     expect(template.config).not.toHaveProperty("name");
     expect(template.config).not.toHaveProperty("cache_dir");
     expect(template.config).not.toHaveProperty("allow_existing");
+    expect(template.config).not.toHaveProperty(
+      "trust_unverified_legacy_results",
+    );
   });
 
   it("retains explicit hidden worker overrides and unknown JSON for server validation", () => {

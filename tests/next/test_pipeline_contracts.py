@@ -35,7 +35,10 @@ class CacheContractTest(unittest.TestCase):
             cache_io.save([{'session': 'session', 'num_trials': 400, 'max_num_cells_per_group': 4}],
                           cache / 'select/cell_screening.pkl')
             config = Config(data_dir=data, cache_dir=cache, save_figures=False)
-            with patch.object(decoder, 'decode_session', return_value={'session': 'session'}) as fit:
+            with patch.object(decoder, 'decode_session', side_effect=lambda path, selection, config: {
+                'session': 'session',
+                'config': json.loads(json.dumps(dataclasses.asdict(config), default=decoder.json_value)),
+            }) as fit:
                 decoder.main(config)
                 decoder.main(dataclasses.replace(config, n_jobs=2))
                 self.assertEqual(fit.call_count, 1)

@@ -117,6 +117,11 @@ class RunManager:
             raise ValueError('cache_dir already exists and is not a directory.')
         if cache_dir.exists() and any(cache_dir.iterdir()) and not request.allow_existing:
             raise ValueError('This cache directory is not empty. Enable reuse of existing outputs to run additional stages or resume.')
+        if request.trust_unverified_legacy_results:
+            if not request.allow_existing:
+                raise ValueError('Trusting unverified legacy results requires reuse of existing outputs.')
+            if not (cache_dir / 'decode' / 'decoding_confidence.pkl').is_file():
+                raise ValueError('Trusting legacy results requires an existing run with decode/decoding_confidence.pkl.')
         # Existing symlinks can redirect scientific writers that predate this dashboard.
         if cache_dir.exists() and any(path.is_symlink() for path in cache_dir.rglob('*')):
             raise ValueError('The dashboard cannot write a run directory containing symlinks.')
@@ -147,6 +152,8 @@ class RunManager:
             argv.extend(['--max-sessions-to-run', str(request.max_sessions_to_run)])
         if session_file is not None:
             argv.extend(['--session-list-file', str(session_path)])
+        if request.trust_unverified_legacy_results:
+            argv.append('--trust-unverified-legacy-results')
         return {'valid': True, 'command': shlex.join(argv), 'resolved': resolved,
                 'argv': argv, 'cache_dir': str(cache_dir), 'settings_path': settings_path}
 
@@ -203,8 +210,10 @@ class RunManager:
             entries = {entry['stage']: entry for entry in manifest.get('stages', [])}
             stages = [entries.get(stage, {'stage': stage, 'status': 'pending'})
                       for stage in job['requested_stages']]
-            if manifest_id != job.get('manifest_id') or stages != job['stages']:
-                job.update(manifest_id=manifest_id, stages=stages)
+            legacy_trust = manifest.get('legacy_trust')
+            if (manifest_id != job.get('manifest_id') or stages != job['stages']
+                    or legacy_trust != job.get('legacy_trust')):
+                job.update(manifest_id=manifest_id, stages=stages, legacy_trust=legacy_trust)
                 self._save(job)
         except (OSError, ValueError, KeyError, TypeError):
             pass
@@ -242,6 +251,7 @@ class RunManager:
                        stages=[{'stage': stage, 'status': 'pending'} for stage in request.stages],
                        logs=[], exit_code=None, error=None, manifest_id=None,
                        request=request.model_dump(),
+                       trust_unverified_legacy_results=request.trust_unverified_legacy_results,
                        run_record_path=str(run_directory / f'{job_id}.json'),
                        run_log_path=str(run_directory / f'{job_id}.log'),
                        run_settings_path=str(run_directory / f'{job_id}.settings.json'))

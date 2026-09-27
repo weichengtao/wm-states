@@ -1,9 +1,6 @@
 """Shared session validation, binning, provenance and bounded parallelism."""
 from scripts.next.cache_paths import primary_cache
-from dataclasses import asdict, is_dataclass
 from enum import Enum
-import hashlib
-import json
 from pathlib import Path
 
 import numpy as np
@@ -93,32 +90,21 @@ def json_value(value):
 
 
 def fingerprint(config, paths=(), *, exclude=()):
-    settings = asdict(config) if is_dataclass(config) else dict(config)
-    settings = {k: v for k, v in settings.items() if k not in exclude}
-    digest = hashlib.sha256(json.dumps(settings, sort_keys=True, default=json_value).encode())
-    # Include code so checkpoints cannot outlive a changed implementation.
-    for path in sorted(Path(__file__).parent.glob('*.py')):
-        digest.update(path.read_bytes())
-    for path in paths:
-        path = Path(path)
-        digest.update(str(path.resolve()).encode())
-        with path.open('rb') as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b''):
-                digest.update(block)
-    return digest.hexdigest()
+    # Keep the public helper available to existing Python callers.
+    from scripts.next.decoding_provenance import fingerprint as scientific_fingerprint
+    return scientific_fingerprint(config, paths, exclude=exclude)
 
 
 def decoding_fingerprint(config, selection_path, data_path):
     """Use the same provenance rules for decoder resume and downstream checks."""
-    return fingerprint(config, [selection_path, data_path], exclude=(
-        'n_jobs', 'par_verbose', 'resume', 'plot_only', 'save_figures',
-        'plot_actual_trial_id', 'session_list_file', 'max_sessions_to_run',
-    ))
+    from scripts.next.decoding_provenance import decoding_fingerprint as scientific_fingerprint
+    return scientific_fingerprint(config, selection_path, data_path)
 
 
 def validate_state_provenance(state_results, cache_dir, data_dir):
     """Reject stale state/decoding/selection/data combinations before analysis."""
     from scripts.next import cache_io
+    from scripts.next.decoding_provenance import DecodingCacheMismatch, verify_decoding_fingerprint
 
     cache_dir, data_dir = Path(cache_dir), Path(data_dir)
     decoding_path = primary_cache(cache_dir, 'decoding_confidence.pkl')
@@ -142,10 +128,13 @@ def validate_state_provenance(state_results, cache_dir, data_dir):
                 raise ValueError(f'Session {session}: state/decoding {field} mismatch. {rerun}')
         if not isinstance(result.get('config'), dict) or not result['config']:
             raise ValueError(f'Session {session}: missing decoding settings for provenance validation. {rerun}')
-        current = decoding_fingerprint(result['config'], primary_cache(cache_dir, 'cell_screening.pkl'),
+        try:
+            verify_decoding_fingerprint(key, result['config'],
+                                       primary_cache(cache_dir, 'cell_screening.pkl'),
                                        data_dir / f'{session}.mat')
-        if current != key:
-            raise ValueError(f'Session {session}: decoding cache is stale for the current selection, data, or code. {rerun}')
+        except DecodingCacheMismatch as exc:
+            raise ValueError(f'Session {session}: decoding cache is stale for the current selection, '
+                             f'data, settings, scientific code, or package versions. {rerun}') from exc
 
 
 def session_files(data_dir, session_list_file=None, max_sessions_to_run=None):

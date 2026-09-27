@@ -147,12 +147,17 @@ off-state mask.
 ## Decoder checkpoints are not reused
 
 Reuse requires matching analysis settings, source data, selection cache contents,
-and implementation code. Changes to any of these can trigger refitting; a change
-to worker count alone does not. Ensure `decode.resume` is `true`. The runner
+scientific source, and (for v2 estimates) numerical package versions. Changes to
+these can trigger refitting; worker counts, figure options, logging, and dashboard
+updates do not. Ensure `decode.resume` is `true`. The runner
 itself reruns every requested stage; checkpoint reuse occurs inside decoding.
 Changing `preserve_null_time_structure` also invalidates reuse. Its value,
 resolved settings, and `null_policy` are retained in decoder caches; use a
 separate run directory when comparing the two policies.
+For an earlier next cache, run the
+[read-only verifier](configuration.md#verify-an-existing-run-without-refitting)
+to distinguish a supported historical fingerprint from changed inputs or missing
+local Git history before starting another long decode.
 
 ## A cache is incompatible
 
@@ -183,11 +188,47 @@ fits with withheld coefficient inference may still be assessed for prediction.
 ## Activity or preparation reports stale provenance
 
 Keep `decode/decoding_confidence.pkl`, `select/cell_screening.pkl`, and
-`states/on_off_states.pkl` under the same run root. Rerun `decode evaluate states` with the current selection and data, then
+`states/on_off_states.pkl` under the same run root. First inspect provenance
+without changing the run:
+
+```bash
+uv run python scripts/next/verify_decoding_cache.py \
+  --data-dir data/nature --cache-dir cache/next_run_001
+```
+
+The JSON report includes primary sessions, checkpoints, state links, and
+verified legacy source revisions. It does not refit models or modify caches.
+An extra checkpoint can be valid after a partial rerun; it is checked separately
+and listed in the report. Mismatching primary/checkpoint payloads, repeated
+session IDs, missing inputs, or stale fingerprints fail validation.
+
+Current fingerprints exclude dashboard, plotting, and logging changes. By default, older
+fingerprints are accepted only after the original key is reproduced from a
+pinned historical revision whose scientific code matches the current code.
+If the error says historical Git objects are missing, restore the repository's
+local history (for example, use a full clone instead of a source archive or
+shallow clone) and run verification again. The verifier never downloads or
+executes historical code, and it does not offer a manual-trust override.
+
+If you have independently decided to reuse an older estimate despite unresolved
+provenance, the pipeline and dashboard provide a separate, default-off
+[Trust unverified legacy results](configuration.md#trust-unverified-legacy-results)
+option. It applies only to unversioned legacy keys and records warnings and
+per-stage/session audit events. Original inputs, source, and environment remain
+unverified. Malformed keys, current v2 mismatches, damaged historical source
+snapshots, incompatible schemas, cache inconsistencies, and broken state links
+still fail. The permission is not saved in templates or inferred from an earlier
+trusted run. Do not edit or copy fingerprints to bypass verification.
+
+When inputs, scientific code/settings, or a current fingerprint's numerical
+package versions changed, rerun `decode evaluate states` with the current selection and data, then
 rerun activity and mixed-effects preparation before their dependent analyses.
 If the session data or screening settings changed, rerun `select` first.
-Code changes can also invalidate decoding fingerprints. Do not copy fingerprints
-between caches to bypass the check.
+To intentionally replace an unverifiable legacy decoder, set `decode.resume`
+to `false` (standalone decoder: `--no-resume`), then rerun its dependents. Use a
+new cache directory when preserving the original analysis matters. Do not copy
+fingerprints between caches to bypass the check. See
+[verification details](configuration.md#verify-an-existing-run-without-refitting).
 
 ## Activity warns that no off-state points are available
 

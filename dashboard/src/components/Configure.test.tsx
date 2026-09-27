@@ -72,6 +72,19 @@ function buttonsNamed(html: string, label: string) {
 const disabledAttribute = /\sdisabled(?:=|\s|>)/;
 
 describe("configuration templates", () => {
+  it("keeps manual legacy trust off for copied runs and only offers it beside existing-cache reuse", () => {
+    expect(renderConfigure()).not.toContain("Trust unverified legacy results");
+    const html = renderConfigure({
+      seed: { allow_existing: true, trust_unverified_legacy_results: true },
+    });
+    expect(html).toContain("Trust unverified legacy results");
+    expect(html).toContain("Off by default; never saved in templates");
+    expect(html).not.toContain(
+      "You are manually accepting unverified legacy results",
+    );
+    expect(html).not.toContain("Start with legacy trust");
+    expect(buttonsNamed(html, "Start pipeline")).toHaveLength(2);
+  });
   it("keeps template saving and editing available while another job blocks both launch buttons", () => {
     const html = renderConfigure({ running: true });
     expect(visibleText(html)).toContain("An analysis is running.");

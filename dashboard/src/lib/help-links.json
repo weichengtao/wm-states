@@ -145,9 +145,15 @@
       "path": "next/configuration/#resume-and-rerun"
     },
     {
+      "title": "Trust unverified legacy results",
+      "keywords": "trust_unverified_legacy_results legacy provenance manual fingerprint existing results",
+      "answer": "This default-off run option explicitly accepts otherwise unverifiable legacy estimates whose original inputs, scientific source, or environment cannot be established. It requires existing decoding outputs and records warnings and manifest decisions for affected sessions. Current v2 mismatches, malformed caches, and broken state links still fail. Templates never retain this permission.",
+      "path": "next/dashboard/#trust-unverified-legacy-results"
+    },
+    {
       "title": "Keep a reusable configuration",
       "keywords": "template preset settings json save export import recording paths reusable",
-      "answer": "Use Save as template to keep a named setup with selected stages, all effective stage parameters, workers, session limit, figure formats, and figure font. Recording paths are optional; the run name and output directory are excluded. Templates can be saved while another analysis runs, and are stored in configs/next/templates for deliberate sharing or commits.",
+      "answer": "Use Save as template to keep a named setup with selected stages, all effective stage parameters, workers, session limit, figure formats, and figure font. Recording paths are optional; the run name, output directory, and manual legacy trust are excluded. Templates can be saved while another analysis runs, and are stored in configs/next/templates for deliberate sharing or commits.",
       "path": "next/dashboard/#analysis-templates"
     },
     {

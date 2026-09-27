@@ -28,6 +28,9 @@ from scripts.next.decoder_models import (
     CLASSIFIER_C_GRID, CLASSIFIER_C_GRID_SEARCH_CV,
 )
 from scripts.next.decoding_plots import plot_session
+from scripts.next.decoding_provenance import (
+    DecodingCacheMismatch, decoding_settings_match, verify_decoding_fingerprint,
+)
 from scripts.next.screening_metadata import ScreeningMetadata
 
 save_pickle_atomic = cache_io.save
@@ -289,15 +292,41 @@ def main(config: Config):
         eligible = eligible[:config.max_sessions_to_run]
     if not eligible:
         raise ValueError('No sessions passed decoding selection thresholds.')
-    results = []
     checkpoint_dir = stage_path(config.cache_dir, 'decode', 'checkpoints')
+    plans = []
+    # Verify every requested checkpoint before publishing a partial primary
+    # cache or launching any fit. Missing legacy history must be a safe stop.
     for file in eligible:
-        key = decoding_fingerprint(config, selection_path, file)
         checkpoint = checkpoint_dir / f'{file.stem}.pkl'
         cached = cache_io.read(checkpoint) if config.resume and checkpoint.exists() else None
-        if cached is not None and cached['fingerprint'] == key:
+        verification = None
+        if cached is not None:
+            if (not isinstance(cached, dict) or not isinstance(cached.get('result'), dict)
+                    or not cached.get('fingerprint')
+                    or cached['fingerprint'] != cached['result'].get('fingerprint')
+                    or not isinstance(cached['result'].get('config'), dict)
+                    or not cached['result']['config']
+                    or str(cached['result'].get('session')) != file.stem):
+                raise ValueError(f'{file.stem}: inconsistent decoding checkpoint metadata. '
+                                 'Inspect the checkpoint or disable resume to intentionally recompute.')
+            if not decoding_settings_match(config, cached['result']['config']):
+                print(f'{file.stem}: requested analysis settings changed; refitting', flush=True)
+            else:
+                try:
+                    verification = verify_decoding_fingerprint(
+                        cached['fingerprint'], cached['result']['config'], selection_path, file)
+                except DecodingCacheMismatch as exc:
+                    print(f'{file.stem}: checkpoint does not match this analysis ({exc}); refitting', flush=True)
+        key = None if verification is not None else decoding_fingerprint(config, selection_path, file)
+        plans.append((file, checkpoint, cached if verification is not None else None, verification, key))
+    results = []
+    for file, checkpoint, cached, verification, key in plans:
+        if verification is not None:
             result = cached['result']
-            print(f'{file.stem}: reused completed decoding checkpoint', flush=True)
+            suffix = (f' (verified legacy source {verification.source_revision[:12]})'
+                      if verification.scheme == 'legacy' else
+                      ' (MANUALLY TRUSTED legacy results; unverified)' if verification.scheme == 'trusted-legacy' else '')
+            print(f'{file.stem}: reused completed decoding checkpoint{suffix}', flush=True)
         else:
             print(f'{file.stem}: decoding one observed + {config.n_decode_shuffle} null estimates', flush=True)
             result = decode_session(file, selection_by_session[file.stem], config)

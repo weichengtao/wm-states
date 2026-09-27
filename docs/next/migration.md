@@ -50,9 +50,52 @@ command reference. Earlier records are not backfilled with guessed commands.
 An existing root manifest is archived automatically before replacement, including old-format records.
 This cannot recover manifests overwritten by earlier versions. The history
 upgrade itself needs no manual manifest migration; the cache-layout migration
-below still requires regenerated caches. As with other code updates, decoding
-fingerprints may change and trigger refitting when decoding next runs. See
+below still requires regenerated caches. Scientific decoding changes may
+require refitting; current fingerprints exclude runner-history changes. See
 [Run manifest history](outputs.md#run-manifest-history).
+
+### Verify legacy decoding fingerprints
+
+Earlier next decoding keys hashed every top-level next script, which caused
+unrelated figure, logging, or dashboard-support changes to invalidate estimates.
+New estimates use a `decode-v2:` fingerprint covering scientific source,
+analysis settings, selection and recording contents/paths, and numerical
+package versions. Operational and presentation settings are excluded.
+
+Existing stage-layout caches can remain in place when their provenance is
+verifiable. Run this read-only check before resuming an older analysis:
+
+```bash
+uv run python scripts/next/verify_decoding_cache.py \
+  --data-dir data/nature --cache-dir cache/next_run_001
+```
+
+The compatibility check supports a finite, pinned set of historical Git source
+revisions. It reads local source blobs without importing or executing them,
+recomputes the exact old key with the current inputs and saved settings, and
+requires the old and current scientific source digests to match. Successful
+verification preserves existing keys and state links; it does not relabel or
+rewrite caches. The report lists each session's scheme and any historical
+revision used, and also checks available checkpoints and state provenance.
+
+Missing local historical objects or mismatched/unsupported keys are errors by default.
+Restore missing repository history and retry; if compatibility cannot be
+established, intentionally refit with `decode.resume: false` and rerun dependent
+stages. Legacy records lack the original package versions, so that part of the
+historical environment cannot be reconstructed from their fingerprints. Newly
+fitted v2 estimates include it. This compatibility path does not migrate flat
+cache layouts, historical-script caches, or old screening cache schemas.
+See [verification details](configuration.md#verify-an-existing-run-without-refitting).
+
+If you have independently decided to reuse an otherwise unverifiable legacy
+estimate, the run-level [Trust unverified legacy results](configuration.md#trust-unverified-legacy-results)
+option makes that decision explicit and records the affected stage/session
+pairs. It defaults to off and applies only to unversioned legacy fingerprints.
+It does not establish the original inputs, scientific source, or runtime
+environment; change schemas; or bypass integrity and state-link checks. The
+strict read-only verifier still reports unverifiable provenance, and the old
+keys remain unchanged after a trusted run. Refitting is the way to establish a
+new verified estimate.
 
 ### Update diagnostic figure settings
 
@@ -233,19 +276,20 @@ Existing model group keys, predictor columns, and CLI options are unchanged.
 Activity labels and preparation metadata describe the enabled screening checks;
 they do not infer selectivity from a historical group-key name. Shared validation
 rejects malformed cell and trial IDs instead of silently coercing them. These
-changes preserve the numerical methods and normalization populations, but the
-implementation fingerprint changes, so earlier decoding checkpoints require
-regeneration as described below.
+changes preserve the numerical methods and normalization populations. Verify
+existing decoding provenance before deciding whether a refit is necessary;
+downstream-only refactors are excluded from the current decoder identity.
 
 Activity comparison and mixed-effects preparation now require the decoding
 cache to validate the selection/data provenance and the state's decoding
 fingerprint, preferred cue, trial IDs, and time bins. Matching array shapes
 alone are insufficient. Missing or stale provenance stops these stages.
 
-After updating the code, rerun `decode evaluate states` using the original
-preset, data directory, and cache directory, then rerun downstream analyses.
-Rerun `select` first if data or screening settings changed. Decoder fingerprints
-include implementation code, so checkpoints from an earlier revision may refit.
+When verification identifies changed decoding science or inputs, rerun
+`decode evaluate states` using the intended preset, data directory, and cache
+directory, then rerun downstream analyses. Rerun `select` first if data or
+screening settings changed. A code update by itself does not mandate refitting;
+compatible earlier fingerprints can be verified as described above.
 See [Resume and rerun](configuration.md#resume-and-rerun).
 
 To refresh presence ratios in an existing diagnostic CSV, rerun selection with

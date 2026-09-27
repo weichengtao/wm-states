@@ -1,5 +1,100 @@
 # Next pipeline validation
 
+## Run-scoped manual legacy trust — 2026-09-27
+
+The explicit legacy trust override passed **513 Python tests** in **17.695
+seconds** and **94 frontend tests** across **15 files**. TypeScript checking,
+the production Vite build, frontend formatting, the strict MkDocs build, and
+`git diff --check` passed.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m unittest discover -s tests -v
+npm --prefix dashboard test
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
+- The runner and dashboard default `trust_unverified_legacy_results` to false.
+  Enabling it requires an existing decoding cache; dashboard submissions also
+  require explicit reuse of the cache directory. Templates exclude the choice.
+- Tests verify legacy-only fallback, scope isolation, readable current inputs,
+  audit persistence before acceptance, and retained audit events when a later
+  stage fails. Native v2 mismatches, malformed keys, broken state links, corrupt
+  historical Git objects, and input I/O errors are not bypassed.
+- Plot-only and downstream-only invocations audit their cached decoding input.
+  Normal decoding audits only checkpoints selected for reuse; disabled resume
+  and changed settings do not claim that discarded caches were trusted.
+  Preflight checks complete before fitting or replacing the primary cache.
+- Reused estimates retain their original fingerprints. Manual acceptance does
+  not certify their original inputs, scientific implementation, or package
+  versions. The read-only verifier remains strict even when called from within
+  an enabled manual-trust context.
+- Desktop review at **1440 × 1000** and mobile review at **390 × 844** verified
+  the default-off checkbox, keyboard operation, explanatory help link, amber
+  launch actions, cache/reuse resets, and reset after a successful launch.
+  Live progress and run history distinguish permission from actual acceptance.
+  Long cache paths wrap on mobile; the reviewed workflows have no horizontal
+  overflow or browser errors.
+
+Browser review used an isolated temporary repository and dashboard on port 8013.
+Launch requests were intercepted: no analysis job was started. The temporary
+server and browser were closed after review. The actual `next_run_001` was
+checked again without the override: all **25 primary sessions**, **25
+checkpoints**, and **25 state-session links** still pass verified legacy
+compatibility. No user cache was changed or full scientific analysis rerun.
+
+## Scientific fingerprints and verified legacy decoding reuse — 2026-09-27
+
+The narrowed decoding fingerprint and legacy compatibility path passed
+**490 Python tests** in **16.858 seconds**, including **44 new tests** covering
+scientific source identity, historical source verification, resume behavior,
+and the read-only cache verifier. The strict MkDocs build and `git diff --check`
+also passed. Frontend code and scientific decoding calculations are unchanged.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m unittest discover -s tests -v
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python scripts/next/verify_decoding_cache.py \
+  --data-dir data/nature --cache-dir cache/next_run_001
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
+- Current fingerprints cover scientific source dependencies, analysis settings,
+  input paths/contents, and numerical package versions. Tests confirm that
+  plotting, fonts, dashboard code, runner dispatch, worker initialization,
+  and downstream population labels do not invalidate estimates. Analytical
+  changes, imported dependencies, relevant defaults/constants, and newly
+  referenced helpers do affect identity.
+- Historical compatibility reads only pinned local Git objects, verifies their
+  source checksums and original fingerprint algorithm, and requires an equal
+  current scientific signature plus an exact reproduction of the old key.
+  Tests reject changed inputs/settings/science, unsupported keys, altered
+  historical objects, and missing history. Historical Python is never executed.
+- Resume and downstream state checks retain verified legacy keys. Tests cover
+  mismatched checkpoint/result keys and tampered result settings. All requested
+  checkpoints are checked before fitting or publishing a partial primary cache;
+  failure on a later session leaves the original primary cache intact.
+- The read-only verifier checks every primary session and checkpoint, compares
+  complete result payloads, and validates state links. Extra checkpoints from
+  partial runs are checked independently; missing checkpoints are permitted.
+
+The actual `next_run_001` passed verification in **6.589 seconds**: all **25 primary
+sessions**, **25 checkpoints**, and **25 state-session links** were valid against
+historical source revision `4843a39b529d9b9649981fb09b97356fda630c21` and the
+current scientific implementation. There were no extra checkpoints.
+
+A guarded execution of its normal decoder resume path reused all **25 sessions**
+with **zero fitting and zero plotting calls**. Cache writes were intercepted for
+that check. SHA-256 comparisons before and after both checks confirmed all
+**30 decoding/checkpoint, screening, state, and manifest files** were unchanged.
+No figures were regenerated and no user analysis job was launched or stopped.
+
+Legacy keys never recorded numerical package versions, so this verification
+establishes matching source, settings, and inputs rather than reconstructing an
+unrecorded historical environment. Newly fitted v2 keys include package versions.
+
 ## Live timing, run records, figure fonts, and path completion — 2026-09-27
 
 The changes passed **446 Python tests** in **12.933 seconds**, including all

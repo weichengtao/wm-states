@@ -24,6 +24,7 @@ class RunRequest(BaseModel):
     figure_font: str = DEFAULT_FIGURE_FONT
     settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
     allow_existing: bool = False
+    trust_unverified_legacy_results: bool = False
 
     @field_validator('figure_font')
     @classmethod

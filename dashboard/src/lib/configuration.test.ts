@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   choiceValue,
   fieldValue,
@@ -9,8 +9,13 @@ import {
   parameterMatchesQuery,
   presetName,
   sameFieldValue,
+  updateRunDraft,
+  launchRun,
 } from "./configuration";
-import type { Field, Manifest, Schema } from "./types";
+import type { Field, Job, Manifest, Schema } from "./types";
+import { api } from "./api";
+
+vi.mock("./api", () => ({ api: vi.fn() }));
 
 const field: Field = {
   name: "max_points",
@@ -28,6 +33,102 @@ const schema: Schema = {
 };
 
 describe("configuration defaults and manual overrides", () => {
+  it("submits enabled trust before consuming consent after an accepted launch", async () => {
+    const form = {
+      ...initialRun(schema, { allow_existing: true }),
+      trust_unverified_legacy_results: true,
+    };
+    let draft = form;
+    let resolve!: (job: Job) => void;
+    const pending = new Promise<Job>((done) => {
+      resolve = done;
+    });
+    vi.mocked(api).mockReturnValueOnce(pending);
+    const accepted = vi.fn(() => {
+      draft = { ...draft, trust_unverified_legacy_results: false };
+    });
+    const launch = launchRun(form, accepted);
+    expect(
+      JSON.parse(vi.mocked(api).mock.calls.at(-1)![1]!.body as string)
+        .trust_unverified_legacy_results,
+    ).toBe(true);
+    expect(accepted).not.toHaveBeenCalled();
+    draft = { ...draft, name: "Edited while starting" };
+    const job = {
+      id: "accepted-job",
+      trust_unverified_legacy_results: true,
+    } as Job;
+    resolve(job);
+    expect(await launch).toBe(job);
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(draft.trust_unverified_legacy_results).toBe(false);
+    expect(draft.name).toBe("Edited while starting");
+    expect(form.trust_unverified_legacy_results).toBe(true);
+  });
+
+  it("retains explicit trust when a launch fails so the user can correct the request", async () => {
+    const form = {
+      ...initialRun(schema, { allow_existing: true }),
+      trust_unverified_legacy_results: true,
+    };
+    vi.mocked(api).mockRejectedValueOnce(new Error("Missing required input"));
+    const accepted = vi.fn();
+    await expect(launchRun(form, accepted)).rejects.toThrow(
+      "Missing required input",
+    );
+    expect(accepted).not.toHaveBeenCalled();
+    expect(form.trust_unverified_legacy_results).toBe(true);
+  });
+  it("never inherits legacy trust from backend defaults or a copied seed", () => {
+    const trusted = {
+      ...schema,
+      defaults: { ...schema.defaults, trust_unverified_legacy_results: true },
+    };
+    expect(
+      initialRun(trusted, {
+        allow_existing: true,
+        trust_unverified_legacy_results: true,
+      }).trust_unverified_legacy_results,
+    ).toBe(false);
+    const seed = manifestSeed(
+      {
+        id: "old",
+        status: "complete",
+        stages: [],
+        runner_config: { trust_unverified_legacy_results: true },
+        settings: { decode: { trust_unverified_legacy_results: true } },
+      },
+      "Old run",
+    );
+    expect(seed.trust_unverified_legacy_results).toBe(false);
+    expect(seed.settings?.decode).not.toHaveProperty(
+      "trust_unverified_legacy_results",
+    );
+  });
+
+  it("scopes explicit legacy trust to the current input and reusable output directory", () => {
+    const initial = initialRun(schema, { allow_existing: true });
+    const trusted = updateRunDraft(initial, {
+      trust_unverified_legacy_results: true,
+    });
+    expect(trusted.trust_unverified_legacy_results).toBe(true);
+    expect(
+      updateRunDraft(trusted, { n_jobs: 4 }).trust_unverified_legacy_results,
+    ).toBe(true);
+    for (const change of [
+      { cache_dir: "cache/another" },
+      { data_dir: "data/other" },
+      { allow_existing: false },
+    ])
+      expect(
+        updateRunDraft(trusted, change).trust_unverified_legacy_results,
+      ).toBe(false);
+    expect(
+      updateRunDraft(initialRun(schema), {
+        trust_unverified_legacy_results: true,
+      }).trust_unverified_legacy_results,
+    ).toBe(false);
+  });
   it("starts with example settings and a unique cache rather than the backend placeholder", () => {
     const form = initialRun(schema, null, "cache/unique");
     expect(form.cache_dir).toBe("cache/unique");
