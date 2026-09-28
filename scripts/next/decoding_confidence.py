@@ -16,16 +16,16 @@ import warnings
 import numpy as np
 import tyro
 from joblib import Parallel, delayed
-from sklearn.calibration import CalibratedClassifierCV
 from threadpoolctl import threadpool_limits
 
 from scripts.next import cache_io
 from scripts.next.common import compute_binned_rates, decoding_fingerprint, json_value, load_session, session_files, worker_context
 from scripts.next.decoder_models import (
-    CellsUsedForDecoder, DecoderModel, SVMKernel, LogisticCalibrationMethod,
+    CellsUsedForDecoder, DecoderModel, SVMKernel, LogisticCalibrationMethod, TrainingBalance,
     create_base_decoder, decoder_cells_for_session, preferred_cue_from_cells,
     make_logistic_calibration_cv_splits, make_grouped_stratified_cv_splits, select_classifier_c,
-    CLASSIFIER_C_GRID, CLASSIFIER_C_GRID_SEARCH_CV,
+    fit_calibrated_decoder, normalize_training_balance_settings,
+    CLASSIFIER_C_GRID, CLASSIFIER_C_GRID_SEARCH_CV, SVM_CALIBRATION_CV,
 )
 from scripts.next.decoding_plots import plot_session
 from scripts.next.decoding_provenance import (
@@ -48,9 +48,10 @@ class Config:
     cells_used_for_decoder: CellsUsedForDecoder = CellsUsedForDecoder.STATIONARY  # Cell pool from full-session screening; selection is outside decoder CV.
     decoder_model: DecoderModel = DecoderModel.LOGISTIC_REGRESSION  # Binary classifier for the session's preferred versus opposite cue.
     svm_kernel: SVMKernel = SVMKernel.LINEAR  # Used only by the SVM decoder.
-    balance_decoder_training_trials: bool = True  # Downsample training classes equally after holding out the test trial.
+    # Balanced class weights retain all trials and balance classifier and calibration fits; balanced training trials randomly downsamples cue groups; none fits all trials unweighted. The default template selects class weights; the bare script retains historical downsampling.
+    training_balance: TrainingBalance = TrainingBalance.BALANCED_TRAINING_TRIALS
     classifier_c: float = 1.0  # Inverse regularization strength; used only when C search is disabled.
-    grid_search_for_c: bool = False  # Search C = 1, 0.1, 0.01 by five-fold balanced accuracy; enabled in the example preset.
+    grid_search_for_c: bool = False  # Search C = 1, 0.1, 0.01 by five-fold balanced accuracy; enabled in the default and example presets.
     logistic_calibration_method: LogisticCalibrationMethod = LogisticCalibrationMethod.SIGMOID  # Logistic-only probability calibration; none uses the classifier's raw probabilities.
     logistic_calibration_cv: int = 5  # Requested source-trial-grouped calibration folds; reduced with a warning when class counts require it.
     min_cell_per_group: int = 1  # Minimum selected cells in the session's largest preferred-cue group, independent of decoder pool choice.
@@ -79,6 +80,7 @@ class Config:
         self.decoder_model = DecoderModel(self.decoder_model)
         self.svm_kernel = SVMKernel(self.svm_kernel)
         self.logistic_calibration_method = LogisticCalibrationMethod(self.logistic_calibration_method)
+        self.training_balance = TrainingBalance(self.training_balance)
         if not isinstance(self.preserve_null_time_structure, bool):
             raise ValueError('preserve_null_time_structure must be true or false.')
         if self.n_decode_shuffle < 0 or self.seed < 0:
@@ -93,13 +95,30 @@ class Config:
             raise ValueError('Invalid worker count or session screening threshold.')
 
 
+def normalize_settings(settings):
+    """Accept previous pipeline/dashboard JSON using the balancing boolean."""
+    return normalize_training_balance_settings(settings)
+
+
+def calibration_settings(config):
+    """Return the explicit calibration policy (SVM's legacy native fit is None)."""
+    if config.decoder_model is DecoderModel.LOGISTIC_REGRESSION:
+        if config.logistic_calibration_method is not LogisticCalibrationMethod.NONE:
+            return config.logistic_calibration_method.value, config.logistic_calibration_cv
+    elif config.training_balance is TrainingBalance.BALANCED_CLASS_WEIGHTS:
+        # libsvm's internal probability fit cannot balance its calibration loss.
+        # Use the same grouped, weighted OOF procedure as the logistic decoder.
+        return 'sigmoid', SVM_CALIBRATION_CV
+    return None, None
+
+
 def training_trials(labels, test_idx, seed, balance):
     """Select the outer training set once, before any null permutation."""
     indices = np.delete(np.arange(labels.size), test_idx)
     by_class = [indices[labels[indices] == value] for value in (1, 0)]
     if min(map(len, by_class)) < 1:
         raise ValueError(f'Trial {test_idx}: both classes must remain after holding out the test trial.')
-    if balance:
+    if TrainingBalance(balance) is TrainingBalance.BALANCED_TRAINING_TRIALS:
         rng = np.random.default_rng(np.random.SeedSequence([seed, int(test_idx), 0]))
         size = min(map(len, by_class))
         indices = np.concatenate([rng.choice(group, size, replace=False) for group in by_class])
@@ -110,11 +129,11 @@ def validate_training_class_counts(labels, config, *, context):
     """Preflight every preferred-trial holdout before launching fit workers."""
     preferred = int(np.count_nonzero(labels == 1))
     opposite = int(np.count_nonzero(labels == 0))
+    calibration_method, calibration_cv = calibration_settings(config)
     required = 1
     if config.grid_search_for_c:
         required = CLASSIFIER_C_GRID_SEARCH_CV
-    elif (config.decoder_model is DecoderModel.LOGISTIC_REGRESSION
-          and config.logistic_calibration_method is not LogisticCalibrationMethod.NONE):
+    elif calibration_method is not None:
         required = 2
     if preferred < required + 1 or opposite < required:
         raise ValueError(
@@ -124,12 +143,11 @@ def validate_training_class_counts(labels, config, *, context):
             f'found {preferred} and {opposite}. Check trial eligibility or '
             'explicitly revise the decoder settings.'
         )
-    if (config.decoder_model is DecoderModel.LOGISTIC_REGRESSION
-            and config.logistic_calibration_method is not LogisticCalibrationMethod.NONE
-            and min(preferred - 1, opposite) < config.logistic_calibration_cv):
+    if calibration_method is not None and min(preferred - 1, opposite) < calibration_cv:
+        name = 'logistic' if config.decoder_model is DecoderModel.LOGISTIC_REGRESSION else 'weighted SVM'
         warnings.warn(
-            f'{context}: reducing logistic calibration from '
-            f'{config.logistic_calibration_cv} to {min(preferred - 1, opposite)} '
+            f'{context}: reducing {name} calibration from '
+            f'{calibration_cv} to {min(preferred - 1, opposite)} '
             'folds because of available training class counts.',
             RuntimeWarning, stacklevel=2,
         )
@@ -153,7 +171,10 @@ def decode_one_trial(test_idx, binned_rates, labels, bin_starts, config):
     bins = np.asarray(bin_starts)
     if bins.shape != (rates.shape[1],):
         raise ValueError('time_bins must match the activity bin axis.')
-    train = training_trials(labels, test_idx, config.seed, config.balance_decoder_training_trials)
+    train = training_trials(labels, test_idx, config.seed, config.training_balance)
+    weighted = config.training_balance is TrainingBalance.BALANCED_CLASS_WEIGHTS
+    class_weight = 'balanced' if weighted else None
+    calibration_method, calibration_cv = calibration_settings(config)
     train_rates = rates[train].astype(np.float64)
     test_rates = rates[test_idx].astype(np.float64)
     train_labels = labels[train]
@@ -193,17 +214,19 @@ def decode_one_trial(test_idx, binned_rates, labels, bin_starts, config):
                 selected_c = select_classifier_c(X, y, groups, config.decoder_model,
                     config.svm_kernel, config.seed,
                     fit_context=f'Trial {test_idx}, bin {b}, estimate {estimate}',
-                    cv_splits=search_splits[split_key])
-            model = create_base_decoder(selected_c, config.decoder_model, config.svm_kernel, config.seed)
-            if config.decoder_model is DecoderModel.LOGISTIC_REGRESSION and config.logistic_calibration_method is not LogisticCalibrationMethod.NONE:
+                    cv_splits=search_splits[split_key], class_weight=class_weight)
+            model = create_base_decoder(selected_c, config.decoder_model, config.svm_kernel, config.seed,
+                class_weight=class_weight, svm_probability=not (weighted and config.decoder_model is DecoderModel.SVM))
+            if calibration_method is not None:
                 if split_key not in calibration_splits:
                     calibration_splits[split_key] = make_logistic_calibration_cv_splits(
-                        y, groups, config.logistic_calibration_cv, config.seed)
+                        y, groups, calibration_cv, config.seed)
                 splits, folds = calibration_splits[split_key]
                 effective_folds.add(folds)
-                model = CalibratedClassifierCV(estimator=model,
-                    method=config.logistic_calibration_method.value, cv=splits, ensemble=False, n_jobs=1)
-            model.fit(X, y)
+                model = fit_calibrated_decoder(model, X, y, calibration_method, splits,
+                    balanced_class_weights=weighted)
+            else:
+                model.fit(X, y)
             test_sample = test_rates[b:b + 1]
             probability = model.predict_proba(test_sample)[0, np.flatnonzero(model.classes_ == 1)[0]]
             if not np.isfinite(probability) or not 0 <= probability <= 1:
@@ -254,7 +277,13 @@ def decode_session(path, selection, config):
         'decoding_confidence_null': null, 'decoding_classifier_c_null': null_c,
         'n_decode_shuffle': config.n_decode_shuffle,
         'preserve_null_time_structure': config.preserve_null_time_structure,
-        'logistic_calibration_effective_cv_folds': sorted({n for d in decoded for n in d[5]}),
+        'training_balance': config.training_balance.value,
+        'probability_calibration_method': calibration_settings(config)[0] or (
+            'libsvm' if config.decoder_model is DecoderModel.SVM else 'none'),
+        'calibration_effective_cv_folds': sorted({n for d in decoded for n in d[5]}),
+        'logistic_calibration_effective_cv_folds': (
+            sorted({n for d in decoded for n in d[5]})
+            if config.decoder_model is DecoderModel.LOGISTIC_REGRESSION else []),
         'classifier_c_grid': CLASSIFIER_C_GRID,
         'classifier_c_grid_search_cv_folds': CLASSIFIER_C_GRID_SEARCH_CV,
         'null_policy': (

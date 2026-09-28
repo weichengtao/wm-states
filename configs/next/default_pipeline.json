@@ -28,7 +28,7 @@
     "classifier_c": 1,
     "grid_search_for_c": true,
     "seed": 42,
-    "training_balance": "BALANCED_TRAINING_TRIALS"
+    "training_balance": "BALANCED_CLASS_WEIGHTS"
   },
   "states": {
     "cc_method_on": "one_tailed",

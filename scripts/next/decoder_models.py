@@ -1,6 +1,7 @@
 """Decoder estimators and source-trial-grouped inner cross-validation."""
 from enum import Enum
 import numpy as np
+from sklearn import config_context
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import balanced_accuracy_score
@@ -8,12 +9,39 @@ from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+from sklearn.utils.class_weight import compute_sample_weight
 
 from scripts.next.screening_metadata import ScreeningMetadata, validate_cue
 
 CLASSIFIER_C_GRID = (1.0, 0.1, 0.01)
 CLASSIFIER_C_GRID_SEARCH_CV = 5
 CLASSIFIER_C_GRID_SEARCH_SCORING = 'balanced_accuracy'
+SVM_CALIBRATION_CV = 5
+
+
+class TrainingBalance(str, Enum):
+    """How the outer training pool and its probability target are balanced."""
+
+    BALANCED_CLASS_WEIGHTS = 'balanced_class_weights'
+    BALANCED_TRAINING_TRIALS = 'balanced_training_trials'
+    NONE = 'none'
+
+
+def normalize_training_balance_settings(settings):
+    """Translate the former JSON boolean without changing historical intent."""
+    settings = dict(settings)
+    if 'balance_decoder_training_trials' in settings:
+        previous = settings.pop('balance_decoder_training_trials')
+        if type(previous) is not bool:
+            raise ValueError('balance_decoder_training_trials must be true or false.')
+        mode = TrainingBalance.BALANCED_TRAINING_TRIALS if previous else TrainingBalance.NONE
+        if 'training_balance' in settings:
+            value = settings['training_balance']
+            current = TrainingBalance.__members__.get(str(value)) or TrainingBalance(value)
+            if current is not mode:
+                raise ValueError('Conflicting training_balance and balance_decoder_training_trials settings.')
+        settings['training_balance'] = mode.value
+    return settings
 
 class CellsUsedForDecoder(str, Enum):
     """Cell pool to use as decoder features."""
@@ -232,6 +260,7 @@ def create_base_decoder(
     seed: int,
     *,
     svm_probability: bool = True,
+    class_weight: str | None = None,
 ):
     """Create the scaled, uncalibrated classifier used by one decoder fit."""
     decoder_model = DecoderModel(decoder_model)
@@ -242,6 +271,7 @@ def create_base_decoder(
             C=float(classifier_c),
             probability=svm_probability,
             random_state=seed,
+            class_weight=class_weight,
         )
     elif decoder_model is DecoderModel.LOGISTIC_REGRESSION:
         classifier = LogisticRegression(
@@ -249,6 +279,7 @@ def create_base_decoder(
             C=float(classifier_c),
             max_iter=1000,
             random_state=seed,
+            class_weight=class_weight,
         )
     else:
         raise ValueError(f'Unsupported decoder model: {decoder_model}')
@@ -256,6 +287,27 @@ def create_base_decoder(
         ('scaler', StandardScaler()),
         ('classifier', classifier),
     ])
+
+
+def fit_calibrated_decoder(base, X, y, method, cv_splits, *, balanced_class_weights=False):
+    """Fit pooled out-of-fold calibration and refit the base on all training rows.
+
+    Balanced calibration weights apply ONLY to the calibrator. Each cloned base
+    classifier already recomputes class_weight='balanced' from its own fitting
+    labels. Forwarding outer weights to it would double-weight the loss and use
+    the wrong class counts inside folds. Scaling remains unweighted and local
+    to each training fold. Metadata routing makes these separate roles explicit.
+    """
+    model = CalibratedClassifierCV(
+        estimator=base, method=method, cv=cv_splits, ensemble=False, n_jobs=1)
+    if balanced_class_weights:
+        with config_context(enable_metadata_routing=True):
+            base.named_steps['scaler'].set_fit_request(sample_weight=False)
+            base.named_steps['classifier'].set_fit_request(sample_weight=False)
+            model.fit(X, y, sample_weight=compute_sample_weight('balanced', y))
+    else:
+        model.fit(X, y)
+    return model
 
 def select_classifier_c(
     X_train,
@@ -267,6 +319,7 @@ def select_classifier_c(
     *,
     fit_context: str = 'Decoder',
     cv_splits=None,
+    class_weight: str | None = None,
 ) -> float:
     """Grouped five-fold C search, scaling each fold once for all candidates.
 
@@ -289,7 +342,8 @@ def select_classifier_c(
         y_score = y_train[validation]
         for candidate, c in enumerate(CLASSIFIER_C_GRID):
             classifier = create_base_decoder(c, decoder_model, svm_kernel, seed,
-                                             svm_probability=False).named_steps['classifier']
+                                             svm_probability=False,
+                                             class_weight=class_weight).named_steps['classifier']
             classifier.fit(x_fit, y_fit)
             prediction = classifier.predict(x_score)
             scores[candidate, fold] = balanced_accuracy_score(y_score, prediction)

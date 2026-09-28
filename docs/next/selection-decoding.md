@@ -7,10 +7,10 @@ for [screening](methods.md#select), [decoding](methods.md#decode),
 Those sections link to papers and library documentation beside the relevant
 choices, and distinguish standard estimators from the custom state rules.
 
-For the evidence behind proposed training-class weighting, retained confidence
+For the evidence behind training-class weighting, retained confidence
 calibration, and C search, see [Statistical choices](statistical-choices.md).
 That page distinguishes completed-run comparisons from the focal weighting
-experiment and the intended analysis policy.
+experiment and the implemented analysis policy.
 
 - Screening always uses a full session. Each selection result contains
   `num_trials` and one set of selected, stationary, and presence-passing cells.
@@ -38,9 +38,15 @@ experiment and the intended analysis policy.
   `(trial, bin, N)`. Observed predictions also have shape `(trial, bin)`.
   N=0 produces an empty null axis and supports evaluation, but state detection
   requires at least two null estimates. No repeat axis or repeat-selection option exists.
-- Observed and null fits use the same selected training trials, balanced by
-  default. With `decode.preserve_null_time_structure=false` (the default and
-  example), each null estimate independently permutes training-trial labels for
+- `decode.training_balance` offers balanced class weights, balanced training
+  trials (downsampling), and none. The **Default pipeline** and smoke templates
+  retain all training trials and weight each classifier fit using its own class
+  counts, including every C-search/calibration fold. The calibration loss also
+  has equal total weight per cue. **Example pipeline** and bare script defaults
+  retain downsampling. See [training-class balance](configuration.md#training-class-balance).
+- Observed and null fits always use the same training membership. With
+  `decode.preserve_null_time_structure=false` (the default), each null estimate
+  independently permutes training-trial labels for
   each bin. With `true`, one permutation is reused across all bins for each
   held-out trial and shuffle. Both policies operate **after** the outer split
   and training-trial selection/balancing. Every observed and null fit uses only
@@ -55,8 +61,11 @@ experiment and the intended analysis policy.
   Preflight checks require at least six correct preferred-cue trials and five
   correct opposite-cue trials with C search enabled, so five of each remain
   after the preferred trial is held out. Calibration fold reductions warn.
-  The example uses L2-regularized logistic regression; smaller C applies
-  stronger regularization. Its sigmoid calibration follows balanced subsampling.
+  The default uses L2-regularized logistic regression; smaller C applies
+  stronger regularization. Its weighted sigmoid calibration targets an equal
+  cue prior. Null fits recompute weights using their permuted labels. Weighted
+  SVM uses explicit grouped, weighted sigmoid calibration; other SVM modes
+  retain the native probability routine.
 - Unknown and ineligible sessions produce warnings. `--max-sessions-to-run`
   on the runner caps selection as well as decoding. Selection caps the candidate
   file list; decoding caps eligible sessions after screening.

@@ -91,6 +91,12 @@
   },
   "helpTopics": [
     {
+      "title": "Balance decoder training classes",
+      "keywords": "training_balance class weights imbalance balanced training trials downsampling calibration none",
+      "answer": "Default pipeline retains all eligible training trials and balances classifier weights within each fit and fold. Calibration gives equal total weight to each cue, including in shuffled null fits. Choose Balanced training trials for the historical downsampling procedure, or None for all trials with unweighted fitting and calibration.",
+      "path": "next/configuration/#training-class-balance"
+    },
+    {
       "title": "Open the dashboard from another Tailscale device",
       "keywords": "tailnet tailscale local remote http https serve ip hostname port WebDAV clipboard",
       "answer": "Start the server with --tailnet to keep local HTTP and add direct HTTP on its discovered Tailscale IPs. Direct IP access needs Tailscale connectivity, but not Serve. Optionally use Serve on an unused HTTPS port such as 8443 beside WebDAV on 443. The guide remains at /docs/. There is no app login or read-only role: limit tailnet access to trusted users/devices. Paths still refer to the server computer.",
@@ -117,13 +123,13 @@
     {
       "title": "Null shuffles through time",
       "keywords": "preserve_null_time_structure null temporal permutation n_decode_shuffle",
-      "answer": "The example uses 100 null estimates and exactly one observed estimate. Labels are shuffled independently at each bin by default. Preserve null time structure reuses each permutation and its inner folds across bins; models are fitted separately, and permutations remain independent between held-out trials.",
+      "answer": "The default template uses 100 null estimates and exactly one observed estimate. Labels are shuffled independently at each bin by default. Preserve null time structure reuses each permutation and its inner folds across bins; models are fitted separately, and permutations remain independent between held-out trials.",
       "path": "next/configuration/#null-shuffle-time-structure"
     },
     {
       "title": "What does calibrated confidence mean?",
       "keywords": "probability logistic_calibration_method logistic_calibration_cv sigmoid isotonic classifier_c grid_search_for_c sklearn reference",
-      "answer": "The example fits logistic regression and sigmoid calibration using held-out inner-fold predictions, then evaluates one untouched outer test trial. C is selected before calibration, not separately inside every calibration fold. Screening and cue selection use the full session, so performance is conditional on those choices.",
+      "answer": "The default template fits logistic regression and sigmoid calibration using held-out inner-fold predictions, then evaluates one untouched outer test trial. C is selected before calibration, not separately inside every calibration fold. Screening and cue selection use the full session, so performance is conditional on those choices.",
       "path": "next/methods/#decode",
       "reference": {
         "label": "scikit-learn: probability calibration",
@@ -149,7 +155,7 @@
     {
       "title": "Interpret model validation and uncertainty",
       "keywords": "models mixedlm statsmodels cv_shuffles cv_holdout_fraction significance_alpha inference_valid rank_eligible p values reference",
-      "answer": "The example repeats 20% within-session holdouts 50 times and reports both fixed-effect-only predictions and predictions that include fitted training-session intercepts. These holdouts do not measure prediction for new sessions or future trials. Check inference_valid and rank_eligible: a usable point prediction can coexist with unavailable coefficient uncertainty.",
+      "answer": "The default template repeats 20% within-session holdouts 50 times and reports both fixed-effect-only predictions and predictions that include fitted training-session intercepts. These holdouts do not measure prediction for new sessions or future trials. Check inference_valid and rank_eligible: a usable point prediction can coexist with unavailable coefficient uncertainty.",
       "path": "next/methods/#mixed-effects-estimation",
       "reference": {
         "label": "statsmodels: linear mixed-effects models",
@@ -230,7 +236,8 @@
     "session_selection": "next/configuration/#session-selection",
     "screening_checks": "next/configuration/#screening-checks",
     "screening_diagnostics": "next/configuration/#screening-diagnostics",
-    "mixed_models": "next/methods/#mixed-effects-estimation"
+    "mixed_models": "next/methods/#mixed-effects-estimation",
+    "training_balance": "next/configuration/#training-class-balance"
   },
   "troubleshooting": [
     {

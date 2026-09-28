@@ -4,6 +4,23 @@ The new implementation lives in `scripts/next/`, presets in `configs/next/`, and
 tests in `tests/next/`. Historical scripts remain available in their original
 locations. Start each migrated analysis with a fresh cache directory.
 
+## Decoder training balance
+
+The new **Default pipeline** template (`configs/next/default_pipeline.json`)
+uses all eligible training trials with balanced class weights and weighted
+calibration. `training_balance` selects `BALANCED_CLASS_WEIGHTS`,
+`BALANCED_TRAINING_TRIALS`, or `NONE`. The older example template explicitly
+retains downsampling; bare decoder defaults do too.
+
+Existing JSON and saved templates with `balance_decoder_training_trials=true`
+map to `BALANCED_TRAINING_TRIALS`; `false` maps to `NONE`. Conflicting old/new
+settings are rejected. The old standalone CLI switches are replaced by
+`--training-balance BALANCED_TRAINING_TRIALS` or `--training-balance NONE`.
+Saved historical manifests remain unchanged. Fresh runs record the resolved
+enum and scientific fingerprint. Use a new cache directory and regenerate
+observed estimates, nulls, evaluation, states, and downstream analyses for the
+weighted procedure. See [training-class balance](configuration.md#training-class-balance).
+
 ## Removed behavior
 
 | Historical behavior | Next pipeline |
@@ -24,7 +41,7 @@ cell-count predictors remain supported.
 
 ## Update an existing run
 
-1. Copy `configs/next/example_pipeline.json` and edit supported stage settings.
+1. Copy `configs/next/default_pipeline.json` and edit supported stage settings.
 2. Remove `baseline` and `cell-count` objects from older pipeline JSON files.
    The runner rejects these names even when another stage is selected.
 3. Remove partition, repeat-selection, pooled-delay, and label-preserving shuffle
@@ -117,7 +134,7 @@ CLI commands. Its replacement, `plots.show_not_applicable_reasons`, lives in
 the diagnostic file and has the inverse meaning: set it to `false` to hide
 those title details. The complete rejection reasons remain in the CSV.
 
-Diagnostics remain disabled by default in both pipeline presets. When enabled,
+Diagnostics remain disabled by default in all pipeline presets. When enabled,
 the new supplied figure config caps output at the first 12 sorted cells per
 available session and warns about truncation. Set
 `plots.max_cells_per_session` to `null` to plot all requested cells. Setting
@@ -161,7 +178,7 @@ depends on the source path and implementation code. Historical scripts outside
 
 Replace sentinel thresholds with explicit screening switches:
 
-| Old selection setting used to avoid rejection | Replacement in the example |
+| Old selection setting used to avoid rejection | Replacement in the default template |
 | --- | --- |
 | `min_fr_test: -1` | `check_firing_rate: false` |
 | `var_ratio_threshold_delay_over_baseline: -1` | `check_delay_variance: false` |
@@ -171,7 +188,7 @@ Replace sentinel thresholds with explicit screening switches:
 Remove the obsolete threshold entries or replace them with valid values. Remove
 `temp_dep_detection` and set each temporal check independently. Remove selection's
 unused `min_cell_per_group` and `seed`; keep `decode.min_cell_per_group` and
-`decode.seed` where needed. Both current presets list all screening switches.
+`decode.seed` where needed. All current presets list all screening switches.
 See [Screening checks](configuration.md#screening-checks) for CLI equivalents.
 
 This is a deliberate behavior change: disabled checks no longer reject cells

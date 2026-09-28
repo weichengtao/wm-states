@@ -381,7 +381,7 @@ export default function Results({
             <p>
               {hasFilters
                 ? "Try a different name or status, or reset the filters to see every run."
-                : "Launch an analysis using the example configuration, or browse an existing next pipeline cache."}
+                : "Launch an analysis using the default configuration, or browse an existing next pipeline cache."}
             </p>
             {hasFilters ? (
               <Button variant="outline" onClick={resetFilters}>

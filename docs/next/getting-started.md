@@ -62,14 +62,14 @@ uv run python scripts/next/pipeline.py \
 
 This runs all 11 stages with a 400 ms decoding stride, three null shuffles,
 one mixed-effects holdout, one activity threshold, and a reduced optimization
-budget. It checks integration; use the example preset for scientific analyses.
+budget. It checks integration; use the default preset for scientific analyses.
 Small smoke runs can produce rank-deficient or nonconverged statistical fits.
 
-For the full dataset, use the example preset:
+For the full dataset, use the default preset:
 
 ```bash
 uv run python scripts/next/pipeline.py \
-  --settings configs/next/example_pipeline.json \
+  --settings configs/next/default_pipeline.json \
   --data-dir data/nature \
   --cache-dir cache/next_run_034_full_session \
   --session-list-file configs/decoding_sessions.txt \

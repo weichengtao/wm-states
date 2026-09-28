@@ -39,6 +39,42 @@ const schema: Schema = {
 };
 
 describe("configuration defaults and manual overrides", () => {
+  it("starts new runs from the weighted default template and preserves explicit old choices", () => {
+    const current: Schema = {
+      ...schema,
+      presets: {
+        ...schema.presets,
+        default: {
+          decode: {
+            training_balance: "BALANCED_CLASS_WEIGHTS",
+            grid_search_for_c: true,
+          },
+        },
+      },
+    };
+    const form = initialRun(current, null, "cache/new");
+    expect(form.settings.decode.training_balance).toBe(
+      "BALANCED_CLASS_WEIGHTS",
+    );
+    expect(presetName(form.settings, current)).toBe("default");
+    const previous = { decode: { balance_decoder_training_trials: false } };
+    const copied = initialRun(current, { settings: previous }, "cache/copied");
+    expect(copied.settings.decode).toEqual({ training_balance: "none" });
+    expect(previous.decode.balance_decoder_training_trials).toBe(false);
+    expect(
+      parseSettings('{"decode":{"balance_decoder_training_trials":true}}'),
+    ).toEqual({
+      decode: { training_balance: "balanced_training_trials" },
+    });
+    expect(() =>
+      parseSettings(
+        '{"decode":{"balance_decoder_training_trials":true,"training_balance":"balanced_class_weights"}}',
+      ),
+    ).toThrow("Conflicting");
+    expect(() =>
+      parseSettings('{"decode":{"balance_decoder_training_trials":"false"}}'),
+    ).toThrow("true or false");
+  });
   it("carries an independent recorded template baseline when copying a run", () => {
     const manifest: Manifest = {
       id: "previous",

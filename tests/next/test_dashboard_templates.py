@@ -23,7 +23,7 @@ REPO = Path(__file__).resolve().parents[2]
 def fixture_root(directory):
     root = Path(directory)
     (root / 'configs/next').mkdir(parents=True)
-    for name in ('example', 'smoke'):
+    for name in ('default', 'example', 'smoke'):
         shutil.copyfile(REPO / f'configs/next/{name}_pipeline.json',
                         root / f'configs/next/{name}_pipeline.json')
     return root
@@ -61,7 +61,7 @@ class DashboardTemplateTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()['warnings'], [])
         records = response.json()['templates']
-        self.assertEqual([record['id'] for record in records], ['example', 'smoke'])
+        self.assertEqual([record['id'] for record in records], ['default', 'example', 'smoke'])
         defaults = RunRequest().model_dump()
         for record in records:
             self.assertTrue(record['builtin'])
@@ -76,7 +76,7 @@ class DashboardTemplateTests(unittest.TestCase):
         source = json.loads(path.read_text())
         source['decode']['seed'] = 71
         path.write_text(json.dumps(source))
-        refreshed = self.client.get('/api/templates').json()['templates'][1]
+        refreshed = self.client.get('/api/templates').json()['templates'][2]
         self.assertEqual(refreshed['config']['settings']['decode']['seed'], 71)
         self.assertFalse(self.storage.exists())
         self.assertFalse((self.root / 'cache').exists())
@@ -142,7 +142,7 @@ class DashboardTemplateTests(unittest.TestCase):
         self.addCleanup(reopened.close)
         listing = reopened.get('/api/templates').json()
         self.assertEqual(listing['warnings'], [])
-        self.assertEqual(listing['templates'][2], saved)
+        self.assertEqual(listing['templates'][3], saved)
         self.assertFalse((self.root / 'cache').exists())
         self.assertFalse((self.root / 'configs/next/.dashboard').exists())
 
@@ -235,8 +235,8 @@ class DashboardTemplateTests(unittest.TestCase):
         saved = response.json()
         original = (self.root / saved['path']).read_bytes()
         builtins = {name: (self.root / f'configs/next/{name}_pipeline.json').read_bytes()
-                    for name in ('example', 'smoke')}
-        for name in ('MY ANALYSIS TEMPLATE', '  My analysis template  ', 'example PIPELINE', 'Smoke test'):
+                    for name in ('default', 'example', 'smoke')}
+        for name in ('MY ANALYSIS TEMPLATE', '  My analysis template  ', 'example PIPELINE', 'Default pipeline', 'Smoke test'):
             with self.subTest(name=name):
                 response = self.post(payload(name=name))
                 self.assertEqual(response.status_code, 409, response.text)
@@ -255,7 +255,7 @@ class DashboardTemplateTests(unittest.TestCase):
         response = self.post(payload(name='../../display name'))
         self.assertEqual(response.status_code, 201, response.text)
         self.assertEqual((self.root / response.json()['path']).parent, self.storage)
-        self.assertEqual(len(list(self.root.rglob('*.json'))), 3)
+        self.assertEqual(len(list(self.root.rglob('*.json'))), 4)
 
     def test_corrupt_unsupported_and_mismatched_saved_files_warn_and_are_skipped(self):
         saved = self.post().json()
@@ -268,7 +268,7 @@ class DashboardTemplateTests(unittest.TestCase):
                    'config': {**envelope['config'], 'n_jobs': 0}}
         (self.storage / f'{invalid_id}.json').write_text(json.dumps(invalid))
         listing = self.client.get('/api/templates').json()
-        self.assertEqual([record['id'] for record in listing['templates']], ['example', 'smoke', saved['id']])
+        self.assertEqual([record['id'] for record in listing['templates']], ['default', 'example', 'smoke', saved['id']])
         self.assertEqual(len(listing['warnings']), 4)
         for identifier in (corrupt_id, version_id, mismatch_id, invalid_id):
             self.assertTrue(any(identifier in warning for warning in listing['warnings']))
@@ -283,7 +283,7 @@ class DashboardTemplateTests(unittest.TestCase):
         original = outside.read_bytes()
         (self.storage / f'{identifier}.json').symlink_to(outside)
         listing = self.client.get('/api/templates').json()
-        self.assertEqual(len(listing['templates']), 3)
+        self.assertEqual(len(listing['templates']), 4)
         self.assertTrue(any(identifier in warning for warning in listing['warnings']))
         (self.storage / '.templates.lock').unlink()
         (self.storage / '.templates.lock').symlink_to(outside)
@@ -333,7 +333,7 @@ class DashboardTemplateTests(unittest.TestCase):
                          [response.json() for response in responses])
         self.assertEqual(len(list(self.storage.glob('*.json'))), 1)
         listing = self.client.get('/api/templates').json()
-        self.assertEqual(len(listing['templates']), 3)
+        self.assertEqual(len(listing['templates']), 4)
         self.assertEqual(listing['warnings'], [])
         self.assertFalse(list(self.storage.glob('.*.tmp')))
 

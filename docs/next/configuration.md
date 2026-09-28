@@ -18,7 +18,7 @@ For example, edit this field inside the preset's existing `decode` object:
 }
 ```
 
-`decode.n_decode_shuffle` controls the number of null estimates. The example
+`decode.n_decode_shuffle` controls the number of null estimates. The default
 preset uses 100, the smoke preset uses 3, and the decoder default is 100.
 The pipeline runner has no `--n-decode-shuffle` flag. When running
 `decoding_confidence.py` directly, use `--n-decode-shuffle 100`.
@@ -34,7 +34,7 @@ Preview every stage's resolved settings without running analyses:
 
 ```bash
 uv run python scripts/next/pipeline.py \
-  --settings configs/next/example_pipeline.json --stages all --dry-run
+  --settings configs/next/default_pipeline.json --stages all --dry-run
 ```
 
 `--n-jobs` controls selection session workers, decoding trial workers, and
@@ -99,7 +99,7 @@ To follow a journal's typography requirements, set one family for a whole run:
 
 ```bash
 uv run python scripts/next/pipeline.py \
-  --settings configs/next/example_pipeline.json --stages all \
+  --settings configs/next/default_pipeline.json --stages all \
   --cache-dir cache/journal_run --figure-font "Arial" --figure-formats png pdf
 ```
 
@@ -162,7 +162,7 @@ not paths.
 Criticality reads shared holdout features from `prepare/`, while its own
 threshold-specific preparations stay under `criticality/`. Changing a model's
 `output_subdir` relocates its result subtree without changing its input location.
-Both supplied presets use the default directory layout.
+All supplied presets use the default directory layout.
 
 ## Screening checks
 
@@ -172,7 +172,7 @@ The standalone CLI enables it with `--check-<name>` and disables it with
 check is disabled. Negative rates/ratios, correlations outside [0, 1], and
 nonfinite values are errors; they never mean "off".
 
-| CLI enable flag / JSON key | Example and script default | Parameters (CLI names) |
+| CLI enable flag / JSON key | Default template and script default | Parameters (CLI names) |
 | --- | --- | --- |
 | `--check-min-trials` / `check_min_trials` | On | `--min-trials-per-session` (320 total trials) |
 | `--check-firing-rate` / `check_firing_rate` | Off | `--min-test-firing-rate-hz` (default 0 Hz; nonnegative), test period |
@@ -237,7 +237,7 @@ where it previously had no effect. The unused selection `seed` and combined
 ## Screening diagnostics
 
 `select.save_extended_diagnostics` controls the additional per-cell CSV and
-optional activity plots. Both pipeline presets leave it `false`. Enable it in a
+optional activity plots. All pipeline presets leave it `false`. Enable it in a
 copy of the preset to inspect screening without changing the screening rules.
 
 `select.diagnostics_figure_config` points to a separate JSON file that controls
@@ -519,13 +519,77 @@ at least two null estimates, so run only `select decode evaluate` for an
 observed-only analysis. Preserve the other preset settings when editing this
 field; unspecified values revert to script defaults.
 
+## Training-class balance
+
+`decode.training_balance` chooses one complete fitting policy. The dashboard's
+**Default pipeline** uses `configs/next/default_pipeline.json`, with balanced
+class weights, C search, and sigmoid calibration enabled. **Smoke test** uses
+the same weighting policy with reduced computation. **Example pipeline** retains
+the historical downsampling settings in `configs/next/example_pipeline.json`.
+
+| Setting / dashboard choice | Training membership after holdout | Classifier loss | Calibration target |
+| --- | --- | --- | --- |
+| `BALANCED_CLASS_WEIGHTS` / Balanced class weights | All eligible trials | Inverse-class-frequency weights within every fitting fold | Equal total weight per cue |
+| `BALANCED_TRAINING_TRIALS` / Balanced training trials | Random equal-sized cue groups, selected once per held-out trial | Unweighted | Equal cue counts in the selected pool |
+| `NONE` / None | All eligible trials | Unweighted | Empirical cue proportions in the training pool |
+
+JSON also accepts lowercase enum values. For example, change the existing
+`decode` section in a copy of the default template:
+
+```json
+{
+  "decode": {
+    "training_balance": "BALANCED_CLASS_WEIGHTS"
+  }
+}
+```
+
+The standalone decoder accepts
+`--training-balance BALANCED_CLASS_WEIGHTS`. Bare stage defaults and a pipeline
+invoked without a settings file retain historical downsampling; use the default
+template for the complete weighted analysis settings.
+
+In weighted mode, each class-k observation receives `n / (2 * n_k)` loss weight.
+`n` and `n_k` are recalculated from each fitting fold's labels, including C-search
+folds, out-of-fold calibration predictors, and the final full-training refit.
+The scaler remains unweighted and sees only that fitting fold. C is still
+selected by five-fold balanced accuracy in all three modes; “None” changes
+training and calibration weights, not this model-selection objective.
+
+Calibration pools held-out inner-fold margins and weights them to equal total
+mass per cue. Those sample weights apply only to calibration; they are never
+multiplied into the already class-weighted base fit. Sigmoid and isotonic
+logistic calibration follow this rule. Disabling logistic calibration retains
+weighted logistic probabilities. Weighted SVM uses explicit sigmoid calibration
+with five grouped folds (reduced when needed), `ensemble=False`, and
+`SVC(probability=False)`; its internal probability routine is not used. Logistic
+calibration options do not control SVM. Other SVM modes retain the native
+probability routine.
+
+Each null fit uses exactly the observed fit's training membership. Labels are
+permuted first, then C search, fold-local weights, and calibration are refitted
+under those labels. Class counts are preserved by permutation; weights follow
+the current labels. Both null time-structure policies support every balance mode.
+No held-out trial activity participates in these steps. Class weighting removes
+random trial omission, but finite-sample influence, CV randomness, and null Monte
+Carlo variation remain. See [Statistical choices](statistical-choices.md) for the
+supporting experiment and its limits.
+
+Old JSON and saved templates using `balance_decoder_training_trials=true/false`
+map to `BALANCED_TRAINING_TRIALS`/`NONE`; conflicting old and new settings are
+rejected. Replace the old standalone CLI boolean with `--training-balance`.
+Resolved manifests and new caches record `training_balance`. The balance mode
+and weighted fitting implementation enter the scientific fingerprint: changing
+modes or upgrading the scientific code requires fresh decoding and downstream
+estimates. Do not reuse a downsampled null for a weighted observed fit.
+
 ## Null shuffle time structure
 
 `decode.preserve_null_time_structure` is a boolean, defaulting to `false`.
-Both supplied presets explicitly use `false`. Set it within the existing
-`decode` object in a copy of the example preset; preserve the other settings.
+All supplied presets explicitly use `false`. Set it within the existing
+`decode` object in a copy of the default preset; preserve the other settings.
 
-| Behavior | `false` (default and example) | `true` |
+| Behavior | `false` (default and all templates) | `true` |
 | --- | --- | --- |
 | Null labels | Independently permuted for every held-out trial, shuffle, and time bin | One permutation for each held-out trial and shuffle, reused across all its time bins |
 | When labels are permuted | After holding out the test trial and selecting/balancing the training trials | Same |
@@ -575,7 +639,7 @@ uv run python scripts/next/decoding_confidence.py \
 Run screening into that cache first. Replace the last flag with
 `--no-preserve-null-time-structure` to explicitly choose independent per-bin
 permutations. Standalone commands use decoder defaults for options not supplied;
-they do not read the example JSON automatically.
+they do not read the default JSON automatically.
 
 With a fixed seed and unchanged settings, increasing N preserves the existing
 null prefix in either mode and does not add observed estimates. Toggling the

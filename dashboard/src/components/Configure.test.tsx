@@ -72,6 +72,49 @@ function buttonsNamed(html: string, label: string) {
 const disabledAttribute = /\sdisabled(?:=|\s|>)/;
 
 describe("configuration templates", () => {
+  it("renders the weighted default template and the training-balance choice", () => {
+    const current: Schema = {
+      ...schema,
+      stages: [
+        {
+          id: "decode",
+          label: "Decode confidence",
+          description: "",
+          fields: [
+            {
+              name: "training_balance",
+              type: "string",
+              default: "balanced_training_trials",
+              choices: [
+                "balanced_class_weights",
+                "balanced_training_trials",
+                "none",
+              ],
+              description:
+                "Balance classifier fits and probability calibration.",
+            },
+          ],
+        },
+      ],
+      presets: {
+        ...schema.presets,
+        default: { decode: { training_balance: "balanced_class_weights" } },
+      },
+      defaults: { stages: ["decode"] },
+    };
+    const html = renderToStaticMarkup(
+      <Configure
+        schema={current}
+        running={false}
+        onStarted={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+    expect(visibleText(html)).toContain("Default pipeline");
+    expect(visibleText(html)).toContain("Training Balance");
+    expect(visibleText(html)).toContain("Balanced class weights");
+    expect(html).toContain("/docs/next/configuration/#training-class-balance");
+  });
   it("checks recordings immediately and keeps the recorded template when copying a run", () => {
     const html = renderConfigure({
       seed: {

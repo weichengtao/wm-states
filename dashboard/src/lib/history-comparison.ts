@@ -1,4 +1,4 @@
-import { sameFieldValue } from "./configuration";
+import { normalizeSettings, sameFieldValue } from "./configuration";
 import { formatTemplateValue } from "./templates";
 import { humanize } from "./utils";
 import type { Field, Json, Manifest, PipelineTemplate, Schema } from "./types";
@@ -90,6 +90,8 @@ export function historySettings(
   const runner = record(manifest.runner_config);
   const original = manifest.original_request;
   const baseline = template.config;
+  const recordedSettings = normalizeSettings(manifest.settings ?? {});
+  const baselineSettings = normalizeSettings(baseline.settings);
   const cwd = manifest.invocation?.cwd;
   function compare(
     stage: string,
@@ -145,8 +147,8 @@ export function historySettings(
     compare("shared", name, before, after, label, undefined, path);
   }
   for (const stage of historicalStages(manifest)) {
-    const recorded = manifest.settings?.[stage] ?? {};
-    const templateSettings = baseline.settings[stage] ?? {};
+    const recorded = recordedSettings[stage] ?? {};
+    const templateSettings = baselineSettings[stage] ?? {};
     const fields =
       schema?.stages.find((item) => item.id === stage)?.fields ?? [];
     for (const name of new Set([

@@ -23,11 +23,11 @@ uv sync --python 3.12 --locked
 
 Download the recordings from
 [Dryad](https://datadryad.org/dataset/doi:10.5061/dryad.kkwh70sct) and put the
-session `.mat` files in `data/nature/`. Then run the example preset:
+session `.mat` files in `data/nature/`. Then run the default preset:
 
 ```bash
 uv run python scripts/next/pipeline.py \
-  --settings configs/next/example_pipeline.json \
+  --settings configs/next/default_pipeline.json \
   --data-dir data/nature \
   --cache-dir cache/next_run_034_full_session \
   --session-list-file configs/decoding_sessions.txt \
@@ -40,7 +40,17 @@ mixed-effects analyses. Choose a worker count appropriate for your machine.
 The session list filters files present in the data directory; omit it to
 consider all available sessions.
 
-Set the null count in `decode.n_decode_shuffle` in the JSON preset. The example
+The **Default pipeline** template retains all eligible training trials with
+balanced class weights. Weighting is recomputed inside C-search and calibration
+folds; probability calibration also gives each cue equal total weight, for both
+observed and shuffled-null fits. `decode.training_balance` selects
+`BALANCED_CLASS_WEIGHTS`, `BALANCED_TRAINING_TRIALS` (random downsampling), or
+`NONE` (all trials, unweighted). The historical `example_pipeline.json` keeps
+downsampling; the smoke template uses weighting. See
+[training-class balance](docs/next/configuration.md#training-class-balance) for
+statistical details and migration. Use a fresh run directory when changing modes.
+
+Set the null count in `decode.n_decode_shuffle` in the JSON preset. The default
 uses 100; the smoke preset uses 3. Use `--dry-run` to inspect resolved settings
 before running. The runner has no `--n-decode-shuffle` flag.
 
@@ -214,7 +224,7 @@ The [documentation home](docs/index.md) links to the full guides:
 - [Dashboard: run, inspect, and compare](docs/next/dashboard.md)
 - [Configuration and checkpoint reuse](docs/next/configuration.md)
 - [Pipeline stages and standalone commands](docs/next/pipeline.md)
-- [Example-preset methods for all eleven stages](docs/next/methods.md), including
+- [Default-template methods for all eleven stages](docs/next/methods.md), including
   trial/cell populations, normalization, state rules, model validation, and
   contextual links to papers and library documentation
 - [Selection and decoding behavior](docs/next/selection-decoding.md)

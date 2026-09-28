@@ -23,7 +23,7 @@ export function initialRun(
   seed?: Partial<RunRequest> | null,
   cache = newCacheDirectory(),
 ): RunRequest {
-  return structuredClone({
+  const form = structuredClone({
     name: "Working memory analysis",
     data_dir: "data/nature",
     stages: schema.stages.map((stage) => stage.id),
@@ -35,11 +35,34 @@ export function initialRun(
     allow_existing: false,
     ...schema.defaults,
     cache_dir: cache,
-    settings: schema.presets.example,
+    settings: schema.presets.default ?? schema.presets.example,
     ...seed,
     // Trust is an explicit decision for this invocation, never an inherited default.
     trust_unverified_legacy_results: false,
   });
+  return { ...form, settings: normalizeSettings(form.settings) };
+}
+
+/** Preserve old JSON/template intent while exposing one current balancing choice. */
+export function normalizeSettings(settings: Settings): Settings {
+  const result = structuredClone(settings);
+  const decode = result.decode;
+  if (decode && Object.hasOwn(decode, "balance_decoder_training_trials")) {
+    const previous = decode.balance_decoder_training_trials;
+    if (typeof previous !== "boolean")
+      throw new Error("balance_decoder_training_trials must be true or false.");
+    const mode = previous ? "balanced_training_trials" : "none";
+    if (
+      Object.hasOwn(decode, "training_balance") &&
+      String(decode.training_balance).toLowerCase() !== mode
+    )
+      throw new Error(
+        "Conflicting training_balance and balance_decoder_training_trials settings.",
+      );
+    decode.training_balance = mode;
+    delete decode.balance_decoder_training_trials;
+  }
+  return result;
 }
 
 export function updateRunDraft(
@@ -142,7 +165,7 @@ export function parseSettings(text: string): Settings {
       );
     }
   }
-  return value as Settings;
+  return normalizeSettings(value as Settings);
 }
 
 function canonical(value: Json): string {
@@ -159,9 +182,10 @@ function canonical(value: Json): string {
 export function presetName(
   settings: Settings,
   schema: Schema,
-): "example" | "smoke" | "custom" {
-  for (const name of ["example", "smoke"] as const) {
-    if (canonical(settings) === canonical(schema.presets[name])) return name;
+): "default" | "example" | "smoke" | "custom" {
+  for (const name of ["default", "example", "smoke"] as const) {
+    const preset = schema.presets[name];
+    if (preset && canonical(settings) === canonical(preset)) return name;
   }
   return "custom";
 }
@@ -208,7 +232,7 @@ export function manifestSeed(
         delete overrides[field];
     }
   }
-  seed.settings = settings;
+  seed.settings = normalizeSettings(settings);
   // Resolved settings include every requested stage, even when a run failed early.
   if (Object.keys(settings).length) seed.stages = Object.keys(settings);
   else if (

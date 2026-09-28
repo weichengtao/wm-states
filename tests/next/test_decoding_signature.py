@@ -90,7 +90,7 @@ class DecodingSignatureTest(unittest.TestCase):
         edits = [
             ('common.py', 'from scipy.io import loadmat', 'from scipy.io import whosmat as loadmat'),
             ('common.py', 'import numpy as np', 'import numpy.linalg as np'),
-            ('decoding_confidence.py', 'from sklearn.calibration import CalibratedClassifierCV',
+            ('decoder_models.py', 'from sklearn.calibration import CalibratedClassifierCV',
              'from sklearn.svm import SVC as CalibratedClassifierCV'),
             ('decoding_confidence.py', 'from threadpoolctl import threadpool_limits',
              'from another_threads import threadpool_limits'),

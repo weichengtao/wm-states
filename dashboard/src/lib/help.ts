@@ -40,6 +40,8 @@ export function fieldHelpPath(stage: string, field: string): string | null {
   if (field === "preserve_null_time_structure")
     return links.fieldLinks.preserve_null_time_structure;
   if (field === "n_decode_shuffle") return links.fieldLinks.n_decode_shuffle;
+  if (stage === "decode" && field === "training_balance")
+    return links.fieldLinks.training_balance;
   if (field === "resume") return links.fieldLinks.resume;
   if (["session_list_file", "max_sessions_to_run"].includes(field))
     return links.fieldLinks.session_selection;
@@ -70,7 +72,6 @@ export function fieldHelpPath(stage: string, field: string): string | null {
       "classifier_c",
       "decoder_model",
       "cells_used_for_decoder",
-      "balance_decoder_training_trials",
       "svm_kernel",
       "min_cell_per_group",
       "min_trials_good_session",

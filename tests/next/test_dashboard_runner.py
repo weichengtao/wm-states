@@ -23,7 +23,7 @@ def fixture_root(directory):
     root = Path(directory)
     (root / 'data').mkdir()
     (root / 'configs/next').mkdir(parents=True)
-    for name in ('example', 'smoke'):
+    for name in ('default', 'example', 'smoke'):
         (root / f'configs/next/{name}_pipeline.json').write_bytes(
             (REPO / f'configs/next/{name}_pipeline.json').read_bytes())
     (root / 'scripts/next').mkdir(parents=True)
@@ -57,7 +57,12 @@ class DashboardSchemaTests(unittest.TestCase):
         self.assertFalse(schema['presets']['example']['decode']['preserve_null_time_structure'])
         self.assertIn('sigmoid', fields['logistic_calibration_method']['choices'])
         self.assertNotIn('cache_dir', fields)
-        self.assertEqual(schema['defaults']['settings'], schema['presets']['example'])
+        self.assertEqual(schema['defaults']['settings'], schema['presets']['default'])
+        self.assertEqual(fields['training_balance']['choices'],
+                         ['balanced_class_weights', 'balanced_training_trials', 'none'])
+        self.assertNotIn('balance_decoder_training_trials', fields)
+        self.assertEqual(schema['presets']['default']['decode']['training_balance'], 'BALANCED_CLASS_WEIGHTS')
+        self.assertEqual(schema['presets']['example']['decode']['training_balance'], 'BALANCED_TRAINING_TRIALS')
         self.assertTrue(next(field for field in stages['activity']['fields']
                              if field['name'] == 'max_points_per_color_group')['nullable'])
 
@@ -68,11 +73,25 @@ class DashboardSchemaTests(unittest.TestCase):
         plan = self.manager.validate(RunRequest(**values))
         self.assertEqual(list(plan['resolved']), list(pipeline.STAGES))
         self.assertTrue(plan['resolved']['decode']['grid_search_for_c'])
+        self.assertEqual(plan['resolved']['decode']['training_balance'], 'balanced_class_weights')
         self.assertEqual(shlex.split(plan['command']), plan['argv'])
         self.assertEqual(plan['argv'][1], '-u')
         self.assertIn(str((self.root / "cache/a 'quoted' name").resolve()), plan['argv'])
         self.assertFalse((self.root / 'cache').exists())
         self.assertFalse(plan['settings_path'].exists())
+
+    def test_balancing_json_migration_and_conflicts(self):
+        from scripts.next.dashboard.schema import resolve_settings
+        for old, mode in [(True, 'balanced_training_trials'), (False, 'none')]:
+            value = RunRequest(stages=['decode'], settings={'decode': {'balance_decoder_training_trials': old}})
+            resolved = resolve_settings(value, self.root, self.root / 'cache/new', self.root / 'data')
+            self.assertEqual(resolved['decode']['training_balance'], mode)
+            self.assertNotIn('balance_decoder_training_trials', resolved['decode'])
+        for overrides in ({'training_balance': 'invalid'}, {'balance_decoder_training_trials': 'false'},
+                          {'training_balance': 'balanced_class_weights', 'balance_decoder_training_trials': True}):
+            with self.assertRaises(ValueError):
+                resolve_settings(RunRequest(stages=['decode'], settings={'decode': overrides}),
+                                 self.root, self.root / 'cache/new', self.root / 'data')
 
     def test_unknown_and_wrong_types_fail_even_for_unselected_stage(self):
         cases = [({'typo-stage': {}}, 'Unknown settings stages'),

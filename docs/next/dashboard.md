@@ -237,18 +237,25 @@ be published separately, including on GitHub Pages; see
    or two run directories side by side.
 
 The smoke template reduces computation to check that the pipeline works. Use
-**Example pipeline** for the example scientific analysis; see
+**Default pipeline** for the weighted scientific analysis; see
 [Analysis methods](methods.md) for its choices. If you already have results,
 you can go straight to the run library without starting a new analysis.
 
 ## Configure an analysis
 
 The new-run form starts with the choices in
-`configs/next/example_pipeline.json`; settings omitted from that preset use the
+`configs/next/default_pipeline.json`; settings omitted from that preset use the
 corresponding Python stage defaults. The dashboard selects all eleven stages
 initially. The command-line runner still selects its first five stages unless
-`--stages` is specified. See [Analysis methods](methods.md) for the example
+`--stages` is specified. See [Analysis methods](methods.md) for the default
 preset's scientific choices and [Pipeline stages](pipeline.md) for dependencies.
+
+Under **Decode**, **Training balance** selects **Balanced class weights**,
+**Balanced training trials**, or **None**. Default pipeline and Smoke test use
+class weights throughout fitting, C search, and calibration, including nulls.
+Example pipeline keeps the historical downsampling procedure. Existing saved
+templates retain their prior choice; old balancing booleans are translated when
+used or imported. See [training-class balance](configuration.md#training-class-balance).
 
 1. Set the data directory containing the session `.mat` files and a new run
    directory, such as `cache/next_dashboard_001`.
@@ -294,7 +301,7 @@ for the schema, template, and full-session trace behavior.
 
 Use the **Smoke test** template for an integration check, with the four sessions prepared
 in [Getting started](getting-started.md). It reduces decoding and model work;
-it is not a substitute for the example preset's analysis settings. Selecting a
+it is not a substitute for the default preset's analysis settings. Selecting a
 template applies its stage settings, selected stages, worker count, session
 limit, and figure formats. It keeps the current run name, cache directory, and
 permission to reuse outputs. Recording paths change only when the template
@@ -376,7 +383,7 @@ modify the template or a running analysis.
 
 The selected **Analysis template** stays selected while you edit. For example,
 after changing a Smoke test parameter, the dashboard still compares with
-**Smoke test**; it does not switch the reference to Example pipeline or replace
+**Smoke test**; it does not switch the reference to Default pipeline or replace
 the name with a generic custom label.
 
 - The template panel reports whether your setup matches and how many values
@@ -417,7 +424,7 @@ cache directory, permission to reuse outputs, and manual legacy trust. Included 
 strings; saving does not copy recordings or the files they reference.
 
 Saving always creates a new template. Existing templates, including the
-built-in **Example pipeline** and **Smoke test**, are not overwritten. Names
+built-in **Default pipeline**, **Example pipeline**, and **Smoke test**, are not overwritten. Names
 must be unique without regard to case; choose a different name to keep a
 revised version. **Refresh templates** reloads the local collection. Invalid or
 unreadable files are skipped with a warning so other templates remain usable.
@@ -612,7 +619,7 @@ comparison does not change the run.
 
 New dashboard runs default to their **original template snapshot**, saved at
 launch and retained even if the template changes or is removed. Older or CLI
-runs without that record default to Example with an explicit unknown-original
+runs without that record default to Default pipeline with an explicit unknown-original
 notice. Partial invocations compare only their requested stages, and missing
 historical values are shown as unrecorded. Keep the run's `dashboard/` records
 when archiving it to retain its original template. Raw settings and the exact
@@ -684,7 +691,7 @@ discovery. Saved templates are kept in a separate, trackable directory.
 | `site/` | Built MkDocs guide, including its search index | Recreate with `uv run --group dashboard --group docs --locked mkdocs build --strict` |
 
 For a command-line stage-settings preset, save a named JSON such as
-`configs/next/my_analysis.json` outside `.dashboard/`. The supplied example and
+`configs/next/my_analysis.json` outside `.dashboard/`. The supplied default, example, and
 smoke presets are maintained this way; their format differs from the saved
 template envelope described [above](#analysis-templates). Run manifests retain resolved settings
 and the exact invocation, but the generated `--settings` file is also needed to

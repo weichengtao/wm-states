@@ -20,6 +20,7 @@ import numpy as np
 import tyro
 
 from scripts.next.decoding_confidence import save_pickle_atomic
+from scripts.next.decoder_models import normalize_training_balance_settings
 
 
 @dataclass
@@ -143,6 +144,9 @@ def evaluate_session(source):
         'preserve_null_time_structure': source.get(
             'preserve_null_time_structure', source.get('config', {}).get('preserve_null_time_structure', False)),
         'null_policy': source.get('null_policy', 'unrecorded; assume independent per-bin shuffles'),
+        'training_balance': source.get('training_balance',
+            normalize_training_balance_settings(source.get('config', {})).get('training_balance')),
+        'probability_calibration_method': source.get('probability_calibration_method'),
         'log_loss_epsilon': np.finfo(np.float64).eps,
         'observed': score_probabilities(observed[:, :, None], labels,
                                        context=f'Session {source["session"]}, observed'),

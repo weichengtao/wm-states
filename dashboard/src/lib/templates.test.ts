@@ -10,6 +10,66 @@ import {
 } from "./templates";
 import type { PipelineTemplate, RunRequest, Schema } from "./types";
 
+describe("weighted default template", () => {
+  it("lists all three built-ins and resolves saved balancing booleans without conflicting defaults", () => {
+    const current: Schema = {
+      stages: [
+        {
+          id: "decode",
+          label: "Decode",
+          description: "",
+          fields: [
+            {
+              name: "training_balance",
+              type: "string",
+              default: "balanced_training_trials",
+              choices: [
+                "balanced_class_weights",
+                "balanced_training_trials",
+                "none",
+              ],
+            },
+          ],
+        },
+      ],
+      defaults: {},
+      presets: {
+        default: { decode: { training_balance: "balanced_class_weights" } },
+        example: { decode: { training_balance: "balanced_training_trials" } },
+        smoke: {
+          decode: {
+            training_balance: "balanced_class_weights",
+            n_decode_shuffle: 3,
+          },
+        },
+      },
+    };
+    const templates = builtInTemplates(current);
+    expect(templates.map((item) => item.id)).toEqual([
+      "default",
+      "example",
+      "smoke",
+    ]);
+    const form = initialRun(current, null, "cache/new");
+    expect(templateChanges(form, templates[0], current)).toEqual([]);
+    const old = {
+      ...templates[1],
+      config: {
+        ...templates[1].config,
+        settings: { decode: { balance_decoder_training_trials: false } },
+      },
+    };
+    const applied = templateRun(form, old);
+    expect(applied.settings.decode).toEqual({ training_balance: "none" });
+    expect(templateConfig(applied, current, false).settings.decode).toEqual({
+      training_balance: "none",
+    });
+    expect(old.config.settings.decode.balance_decoder_training_trials).toBe(
+      false,
+    );
+  });
+});
+
 const schema: Schema = {
   stages: [
     {

@@ -1,4 +1,9 @@
-import { fieldValue, initialRun, sameFieldValue } from "./configuration";
+import {
+  fieldValue,
+  initialRun,
+  normalizeSettings,
+  sameFieldValue,
+} from "./configuration";
 import { humanize } from "./utils";
 import type {
   Field,
@@ -35,7 +40,7 @@ export function templateConfig(
 ): TemplateConfig {
   // Keep unknown overrides for server validation; saving must not silently fix a
   // misspelled field or discard a stage from a user's JSON draft.
-  const settings = structuredClone(form.settings);
+  const settings = normalizeSettings(form.settings);
   for (const overrides of Object.values(settings))
     delete overrides.trust_unverified_legacy_results;
   for (const stage of schema.stages) {
@@ -84,7 +89,7 @@ export function templateRun(
   template: PipelineTemplate,
 ): RunRequest {
   const { config } = template;
-  const settings = structuredClone(config.settings);
+  const settings = normalizeSettings(config.settings);
   for (const overrides of Object.values(settings))
     delete overrides.trust_unverified_legacy_results;
   const next = structuredClone({
@@ -133,13 +138,23 @@ export function freezeTemplate(
 }
 
 export function builtInTemplates(schema: Schema): PipelineTemplate[] {
-  return (["example", "smoke"] as const).map((id) => ({
+  const ids = schema.presets.default
+    ? (["default", "example", "smoke"] as const)
+    : (["example", "smoke"] as const);
+  return ids.map((id) => ({
     id,
-    name: id === "example" ? "Example pipeline" : "Smoke test",
+    name:
+      id === "default"
+        ? "Default pipeline"
+        : id === "example"
+          ? "Example pipeline"
+          : "Smoke test",
     description:
-      id === "example"
-        ? "The example pipeline's analysis settings."
-        : "Reduced decoding and model work for an integration check.",
+      id === "default"
+        ? "All training trials with balanced class weights and calibration."
+        : id === "example"
+          ? "Historical analysis with downsampled balanced training trials."
+          : "Reduced weighted decoding and model work for an integration check.",
     builtin: true,
     config: templateConfig(
       initialRun(

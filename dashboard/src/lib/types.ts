@@ -18,7 +18,7 @@ export type Stage = {
 };
 export type Schema = {
   stages: Stage[];
-  presets: { example: Settings; smoke: Settings };
+  presets: { default?: Settings; example: Settings; smoke: Settings };
   defaults: Partial<RunRequest>;
 };
 export type RunRequest = {

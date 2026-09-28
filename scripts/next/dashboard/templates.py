@@ -23,7 +23,8 @@ class TemplateStore:
     directory_parts = ('configs', 'next', 'templates')
     shared_fields = {'stages', 'n_jobs', 'max_sessions_to_run', 'figure_formats', 'figure_font'}
     builtin_details = {
-        'example': ('Example pipeline', 'Example scientific analysis settings.'),
+        'default': ('Default pipeline', 'All training trials with balanced class weights and calibration.'),
+        'example': ('Example pipeline', 'Historical analysis with downsampled balanced training trials.'),
         'smoke': ('Smoke test', 'Reduced computation for an integration check.'),
     }
 

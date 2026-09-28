@@ -13,7 +13,7 @@ the same preset and cache:
 
 ```bash
 uv run python scripts/next/pipeline.py \
-  --settings configs/next/example_pipeline.json \
+  --settings configs/next/default_pipeline.json \
   --data-dir data/nature \
   --cache-dir cache/next_run_034_full_session \
   --stages mixed --n-jobs 10

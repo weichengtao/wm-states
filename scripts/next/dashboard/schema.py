@@ -77,7 +77,7 @@ def _field_help(config_class):
 
 def get_schema(repo_root):
     presets = {name: json.loads((repo_root / f'configs/next/{name}_pipeline.json').read_text())
-               for name in ('example', 'smoke')}
+               for name in ('default', 'example', 'smoke')}
     stages = []
     for stage, (label, description) in STAGE_INFO.items():
         module = stage_module(stage)
@@ -92,7 +92,7 @@ def get_schema(repo_root):
                                  'default': jsonable(getattr(config, field.name)),
                                  'description': help_text.get(field.name, '')})
         stages.append({'id': stage, 'label': label, 'description': description, 'fields': stage_fields})
-    return {'stages': stages, 'presets': presets, 'defaults': {**RunRequest().model_dump(), 'settings': presets['example']}}
+    return {'stages': stages, 'presets': presets, 'defaults': {**RunRequest().model_dump(), 'settings': presets['default']}}
 
 
 def _validate_type(value, hint, field):
@@ -181,6 +181,8 @@ def resolve_settings(request: RunRequest, repo_root: Path, cache_dir: Path, data
     # Validate disabled stages too: spelling mistakes must never silently disappear.
     for stage in dict.fromkeys([*request.stages, *request.settings]):
         module, overrides = stage_module(stage), request.settings.get(stage, {})
+        if hasattr(module, 'normalize_settings'):
+            overrides = module.normalize_settings(overrides)
         hints = get_type_hints(module.Config)
         for name, value in overrides.items():
             if name in {'cache_dir', 'data_dir'}:

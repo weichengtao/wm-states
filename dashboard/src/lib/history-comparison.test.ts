@@ -63,6 +63,31 @@ function manifest(patch: Partial<Manifest> = {}): Manifest {
 }
 
 describe("historical template comparison", () => {
+  it("compares old balancing booleans with the equivalent mode without filling missing history", () => {
+    const actual = manifest({
+      settings: { decode: { balance_decoder_training_trials: false } },
+    });
+    const baseline = template({ decode: { training_balance: "none" } });
+    expect(
+      historySettings(actual, baseline, schema).find(
+        (row) => row.field === "training_balance",
+      )?.status,
+    ).toBe("same");
+    expect(actual.settings?.decode.balance_decoder_training_trials).toBe(false);
+    const missing = manifest({ settings: { decode: {} } });
+    expect(
+      historySettings(missing, baseline, schema).find(
+        (row) => row.field === "training_balance",
+      )?.status,
+    ).toBe("unavailable");
+    expect(
+      historySettings(
+        actual,
+        template({ decode: { training_balance: "balanced_class_weights" } }),
+        schema,
+      ).find((row) => row.field === "training_balance")?.status,
+    ).toBe("changed");
+  });
   it("compares only stages selected by this invocation and excludes run identity", () => {
     const source = template();
     source.config.stages = ["select", "decode"];

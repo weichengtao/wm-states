@@ -1,5 +1,58 @@
 # Next pipeline validation
 
+## Weighted decoder training and default template — 2026-09-28
+
+`decode.training_balance` selects `BALANCED_CLASS_WEIGHTS`,
+`BALANCED_TRAINING_TRIALS`, or `NONE`. The new
+`configs/next/default_pipeline.json` is the dashboard default and retains all
+eligible training trials with balanced class weights. The smoke template uses
+the same policy; the historical example and bare decoder defaults retain
+downsampling. See [training-class balance](../next/configuration.md#training-class-balance)
+for the statistical contract and JSON/CLI migration.
+
+- Classifier weights are recomputed from each fit's labels, including C-search
+  folds, calibration predictors, the final refit, and label-shuffled nulls.
+  Pooled calibration uses balanced sample weights for an equal cue prior.
+  Explicit metadata routing prevents double weighting the base classifier or
+  forwarding outer class counts into inner folds; scalers remain unweighted
+  and fit only training rows.
+- Weighted SVM uses grouped sigmoid calibration with five requested folds and
+  `probability=False` on its base estimator. Logistic sigmoid, isotonic, and
+  uncalibrated weighted fits are covered. Class-count preflight includes the
+  weighted SVM calibration requirements and fold-reduction warning.
+- **465 next-pipeline tests pass.** Independent manual out-of-fold reference
+  fits match weighted observed and null probabilities and selected C values.
+  Optimized C selection matches `GridSearchCV` for both models and both SVM
+  kernels. Tests also cover equal class totals, the calibration prior, absence
+  of double weighting, held-out activity isolation, deterministic parallel
+  fitting, shared-time nulls, JSON migration, and mode-sensitive cache reuse.
+- A real temporary MATLAB fixture exercises selection, decoding, evaluation,
+  and states using the default template with reduced computation: 29 source
+  trials (12 preferred, 17 opposite), three bins, four nulls, and two workers.
+  Weighting metadata, completed manifests, and downstream provenance checks
+  pass. Figure writes are suppressed in this test. This is an integration
+  check, not a validation of scientific state durations at four null shuffles.
+- A separate comparison loaded decoder/model sources from **`25eaa6d`** and
+  found **bit-identical arrays in 32 configurations** of the two existing
+  balancing modes. It covered both classifiers, all three logistic calibration
+  choices, fixed/searched C, both null time policies, two bins, and two nulls.
+- **138 dashboard tests pass.** They cover the default template, three-choice
+  selector, saved/imported/copied balancing choices, and comparisons with old
+  boolean settings without filling missing historical values from new defaults.
+  The TypeScript/Vite production build and strict MkDocs build pass.
+- Existing production caches and historical evidence snapshots are unchanged.
+  This changes the scientific source fingerprint; use fresh decoding/null
+  estimates and downstream outputs for the new weighted analysis. Full-scale
+  production fitting and across-session validation were not run for this change.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-mpl .venv/bin/python -m unittest discover -s tests/next -q
+npm --prefix dashboard test
+npm --prefix dashboard run build
+.venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
 ## Recording availability and history comparisons — 2026-09-28
 
 The dashboard checks for recordings before launch and compares each historical

@@ -30,7 +30,11 @@ export function HistoryComparison({
   const id = useId();
   const original = manifest.source_template;
   const [choice, setChoice] = useState(
-    original ? "original" : "current:example",
+    original
+      ? "original"
+      : templates.some((item) => item.id === "default")
+        ? "current:default"
+        : "current:example",
   );
   const [changedOnly, setChangedOnly] = useState(true);
   const [query, setQuery] = useState("");

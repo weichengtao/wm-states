@@ -1,20 +1,20 @@
-# Analysis methods: example pipeline
+# Analysis methods: default pipeline
 
-This page describes the analysis selected by **`configs/next/example_pipeline.json`**.
-Each stage starts with its example choices, including inherited script defaults
+This page describes the analysis selected by **`configs/next/default_pipeline.json`**.
+Each stage starts with its default-template choices, including inherited script defaults
 where the JSON omits a setting. Alternative options are identified separately;
-they are not part of this example analysis. Implementation filenames below
+they are not part of this default analysis. Implementation filenames below
 refer to `scripts/next/`.
 
 For the empirical rationale behind training-class weighting, confidence
 calibration, and C selection, see [Statistical choices](statistical-choices.md).
-That decision record distinguishes proposed policies from this preset's
-implemented settings.
+That decision record retains the dated experiments motivating the implemented
+weighting policy and the limits of their evidence.
 
-The example command runs the first five stages; add `--stages all` to include
+The default template command runs the first five stages; add `--stages all` to include
 the six preparation and mixed-effects stages described here. See
 [Pipeline stages](pipeline.md) for commands. Inspect effective settings with
-`--settings configs/next/example_pipeline.json --stages all --dry-run`, and
+`--settings configs/next/default_pipeline.json --stages all --dry-run`, and
 retain the corresponding `manifests/<run_id>.json` records with reported results.
 
 **How to read the references.** Library links explain the estimators and APIs;
@@ -24,13 +24,13 @@ recommendations established by those references. scikit-learn links target
 version 1.8, matching the supported dependency range; use `uv.lock` from the
 recorded code revision for exact package versions.
 
-## Example design at a glance
+## Default design at a glance
 
-| Analysis choice | Resolved example setting |
+| Analysis choice | Resolved default-template setting |
 | --- | --- |
 | Screening | At least 320 total trials; correct-trial presence ≥0.9, absolute baseline Pearson r ≤0.3, and PEV >2.5% for at least 100 ms |
 | Decoding population | Stationary cells; correct preferred- and opposite-cue training trials, preferred-cue test trials only |
-| Decoder | Logistic regression; training-class balancing; five-fold C search; sigmoid calibration; seed 42 |
+| Decoder | Logistic regression; all-trial balanced class weights; five-fold C search; sigmoid calibration; seed 42 |
 | Decoding time grid | 50 ms windows starting −200 through 1400 ms, every 10 ms: 161 bins |
 | Estimates | One observed estimate and 100 training-label null estimates per tested trial/bin |
 | Null time structure | `preserve_null_time_structure=false`: independently permuted training labels at each bin |
@@ -46,7 +46,7 @@ These are the resolved settings, including inherited defaults. In particular,
 models**. The 50 model holdouts are independent of the 100 decoding null
 shuffles. The smoke preset uses fewer bins, null estimates, holdouts, and
 thresholds for integration testing; its outputs do not implement the full
-example analysis.
+default analysis.
 
 ## Populations, time conventions, and normalization
 
@@ -57,10 +57,10 @@ Screening uses all correct cue conditions. Decoding trains on correct preferred
 and opposite cues and tests only the preferred cue. Activity comparisons use
 both cue groups; mixed-effects tables use cached preferred-cue trials.
 
-The example distinguishes the following cell populations. The preferred cue
+The default template distinguishes the following cell populations. The preferred cue
 is defined separately for each session, as described in [Decoding](#decode).
 
-| Population | Definition in this example |
+| Population | Definition in this default analysis |
 | --- | --- |
 | Selected/selective | Cells passing every enabled screening check, including PEV |
 | Stationary | Cells passing the enabled non-PEV checks, whether or not they pass PEV; the decoder uses this population |
@@ -69,16 +69,16 @@ is defined separately for each session, as described in [Decoding](#decode).
 | Stationary nonselective | Stationary cells outside the selected population |
 
 The last three groups are disjoint and partition the stationary population
-in this example. “Stationary” names the screening rule; it does not establish
+in this default analysis. “Stationary” names the screening rule; it does not establish
 stationarity under every possible test. Presence-passing cells are also cached,
-but that alternative decoder population is not selected by the example.
+but that alternative decoder population is not selected by the default template.
 
 These population definitions are shared by decoding, activity comparison,
 weighting, and model preparation. Cached cell IDs and aligned cue/PEV arrays
 are validated before use. Activity plots rank preferred cells by finite PEV,
 preserving screening order for ties; model preparation retains screening order.
 The distinction changes neither the population definitions nor their weights.
-Outside the example, disabled selectivity screening means “selected” does not
+Outside the default template, disabled selectivity screening means “selected” does not
 imply “selective”. Activity labels and preparation metadata describe the checks
 actually enabled. Existing table keys such as `selective_nonpreferred` and
 `stationary_nonselective` remain stable identifiers; interpret them using the
@@ -115,7 +115,7 @@ weighted variants, and custom subdirectory rules.
 
 **Stage:** `select` · **Implementation:** `cell_screening.py`
 
-**Example choices.** Explicitly enable the total-trial minimum, presence,
+**Default choices.** Explicitly enable the total-trial minimum, presence,
 baseline-drift, and selectivity checks. Explicitly disable firing-rate,
 delay-variance, baseline-variance, and preferred-cue drift checks. Use 50 ms
 PEV windows, presence at least 0.9, absolute baseline correlation at most 0.3,
@@ -131,7 +131,7 @@ requires at least two correct-trial cue conditions and positive residual degrees
 of freedom. A session must also retain at least one selected cell to be cached. Each
 retained session has one selection record.
 
-The example applies three cell checks:
+The default template applies three cell checks:
 
 1. **Presence.** The fraction of correct trials with at least one spike in
     [−400, 1400) ms must be at least 0.9.
@@ -176,7 +176,7 @@ last start. Enabled checks reject unavailable statistics. Disabled checks
 perform no rejection or applicability exclusion, replacing the old sentinel
 behavior. All thresholds must be finite and in their documented ranges.
 
-**Other available checks, disabled in this example:** minimum correct-trial
+**Other available checks, disabled in this default analysis:** minimum correct-trial
 mean firing rate in the test period; correct-trial delay/baseline variance ratio;
 mean sliding-window/global baseline variance ratio; and absolute Pearson
 correlation between test-period firing rate and original trial index among all
@@ -185,7 +185,7 @@ windows, and thresholds are listed in [Screening checks](configuration.md#screen
 
 The cache records selected cells, presence-passing cells, and a stationary
 population that bypasses PEV rejection but respects the other enabled checks.
-The example's selected cells are cue-selective. With selectivity disabled in
+The default template's selected cells are cue-selective. With selectivity disabled in
 another analysis, selection need not imply cue selectivity: cue/PEV metadata
 uses all finite test bins without a threshold-run test. If preferred-cue drift
 is enabled, it also filters the stationary pool; nonselective cells use cue
@@ -217,18 +217,19 @@ optional `select/diagnostics/`.
 
 **Stage:** `decode` · **Implementation:** `decoding_confidence.py`
 
-**Example choices.** Decode stationary cells with logistic regression,
+**Default choices.** Decode stationary cells with logistic regression,
 five-fold C search, sigmoid calibration requesting five folds, and seed 42.
 Fit one observed estimate and 100 null estimates per tested trial/bin, with
 `preserve_null_time_structure=false` as explicitly set in the preset.
 Windows are 50 ms wide; inherited defaults set bin starts from −200 through
-1400 ms every 10 ms (161 bins) and enable balanced training classes.
+1400 ms every 10 ms (161 bins). The preset enables balanced class weights on
+all eligible training trials.
 
 The session's preferred cue is the most frequent preference among selected
 cells; ties resolve to the lowest cue index. Its opposite is four positions
 away among the eight cues. Correct trials from these two conditions form the
 binary classification dataset, with preferred cue labeled 1. Use the cached
-stationary population, including its nonselective cells. The example's
+stationary population, including its nonselective cells. The default template's
 `min_cell_per_group=1` and inherited 320-total-trial minimum determine decoding
 eligibility alongside the selection results.
 
@@ -237,11 +238,16 @@ starts. Window duration is the number of recorded samples × sample interval;
 the last start is included. Rates are computed once per session using chunked
 cumulative sums. Every preferred-cue trial is held out once, and a separate
 classifier is fitted at each time bin. No time bin from the held-out trial
-enters fitting, scaling, C selection, or calibration. In this example, training cue
-classes are subsampled without replacement to equal sizes once per held-out
-trial and reused across bins and null estimates.
+enters fitting, scaling, C selection, or calibration. The default retains all
+eligible outer-training trials across bins and null estimates.
+Every classifier fit uses `class_weight="balanced"`: class k receives individual
+weight `n / (2 * n_k)`, recomputed from the labels of that fitting fold. Thus both
+classes have equal total loss weight without randomly discarding observations.
+The scaler remains unweighted, fitted only on that fold's training rows.
+[Training-class balance](configuration.md#training-class-balance) describes
+the historical downsampling and unweighted alternatives.
 
-The example fits standardized **L2-regularized logistic regression**, with a
+The default template fits standardized **L2-regularized logistic regression**, with a
 fitted intercept, the `liblinear` solver, and `max_iter=1000`.
 Smaller C means stronger regularization; see the
 [LogisticRegression API](https://scikit-learn.org/1.8/modules/generated/sklearn.linear_model.LogisticRegression.html).
@@ -263,20 +269,28 @@ reselected within each calibration fold. The held-out test trial enters neither
 step. `svm_kernel=LINEAR` is present in the preset but has no effect because the
 selected decoder is logistic regression.
 The [calibration guide](https://scikit-learn.org/1.8/modules/calibration.html)
-explains sigmoid calibration and `ensemble=False`. Here calibration follows
-balanced training subsampling; probabilities are not adjusted back to the
-session's original cue prevalence.
+explains sigmoid calibration and `ensemble=False`. Calibration uses inverse-class-frequency sample weights computed from the
+outer-training labels, giving each cue equal total calibration weight. These
+weights go only to the pooled calibrator: each base classifier independently
+recomputes its own fold-local class weights, avoiding double weighting.
+Probabilities target an equal cue prior and are not adjusted back to the
+session's original cue prevalence. This applies to sigmoid and isotonic
+calibration. With calibration disabled, the logistic classifier still uses
+class weights. See the [metadata routing API](https://scikit-learn.org/1.8/metadata_routing.html)
+for the explicit separation of calibration and base-estimator weights.
 
 Before launching session fit workers, validate the correct-trial class counts:
-the example's C search needs at least six preferred-cue and five opposite-cue
-trials, leaving five of each after each preferred-trial holdout and balancing.
+the default template's C search needs at least six preferred-cue and five opposite-cue
+trials, leaving at least five of each after every preferred-trial holdout.
 Calibration warns when available training counts reduce its requested folds;
 insufficient counts for the configured procedure are an error.
 
-The observed fit uses the original training labels. In the example's default
+The observed fit uses the original training labels. In the default template's default
 null policy, each null fit independently permutes those labels after the outer
-split and training-trial balancing, for each bin and shuffle. It uses the same
-training activity and repeats C selection and calibration as configured.
+split, for each bin and shuffle. It uses the same complete training membership
+and repeats C selection, fold-local classifier weighting, and weighted
+calibration under the permuted labels. Each permutation preserves class counts;
+weights follow the shuffled labels, not the original identities.
 
 The optional `decode.preserve_null_time_structure=true` policy instead uses one
 training-label permutation per held-out trial and shuffle across all time bins.
@@ -302,15 +316,19 @@ cross-validated permutation-test p-value.
 
 Outputs include preferred-cue probabilities, observed class predictions,
 selected C values, original test-trial IDs, and provenance. Caches also record
-`preserve_null_time_structure`, the resolved `config`, and `null_policy`.
-Changing the policy invalidates resume checkpoints and requires regenerated
+`training_balance`, `probability_calibration_method`, effective calibration
+folds, `preserve_null_time_structure`, the resolved `config`, and `null_policy`.
+Changing either balancing or null policy invalidates resume checkpoints and requires regenerated
 decoding and dependent outputs. Observed arrays
-have shape `(trial, 161)` and null arrays `(trial, 161, 100)` with the example's
+have shape `(trial, 161)` and null arrays `(trial, 161, 100)` with the default template's
 resolved time grid. Since only preferred-cue trials are tested, the resulting scores describe that class;
 they are not estimates of balanced two-class test performance.
 
-**Alternatives, not used here:** other cell populations, SVM decoding, fixed C,
+**Alternatives, not used here:** other cell populations, SVM decoding, balanced-trial subsampling, no balancing, fixed C,
 isotonic or disabled logistic calibration, and different null counts/time grids.
+Weighted SVM uses explicit grouped five-fold sigmoid calibration with balanced
+calibration weights and `SVC(probability=False)`; nonweighted SVM modes retain
+native libsvm probability fitting. See the [balancing policy](configuration.md#training-class-balance).
 
 **Outputs:** `decode/decoding_confidence.pkl`, per-session checkpoints in
 `decode/checkpoints/`, and plots in `decode/figures/`.
@@ -319,7 +337,7 @@ isotonic or disabled logistic calibration, and different null counts/time grids.
 
 **Stage:** `evaluate` · **Implementation:** `eval_confidence.py`
 
-**Example choices.** The JSON has no `evaluate` overrides. Use the evaluator's
+**Default choices.** The JSON has no `evaluate` overrides. Use the evaluator's
 defaults to score the single observed estimate and all 100 cached null estimates;
 there is no additional fit or repetition setting.
 
@@ -350,7 +368,7 @@ counts; aggregations with no valid entries are NaN. Each null shuffle remains
 a separate estimate, while observed data have a single estimate. Results are
 retained separately within each session; the stage does not compute a pooled
 across-session performance estimate. Observed-only evaluation with N=0 is
-supported as an alternative, but is not used by the example.
+supported as an alternative, but is not used by the default template.
 
 The separate cross-run plotting tool aligns common session IDs. It warns when
 preferred cues or trial sets differ, or comparison metadata is missing, and
@@ -366,7 +384,7 @@ optional cross-run plots in `evaluate/figures/across_runs/`.
 
 **Stage:** `states` · **Implementation:** `on_off_states.py`
 
-**Example choices.** Apply one-tailed cluster correction to both on and off
+**Default choices.** Apply one-tailed cluster correction to both on and off
 states, with the inherited alpha of 0.05 for each. Inherited candidate rules
 use `z > 1.645` for on states and `z <= 0.842` for off states. The preset sets
 the minimum off-cluster size to **one bin**, overriding the script default of
@@ -388,7 +406,7 @@ both masks and produce a warning. Nonfinite/out-of-range probabilities,
 incompatible time axes, no bin starts in the delay interval, and overlapping
 on/off candidate thresholds are errors.
 
-The example's independent per-bin null permutations do not preserve the
+The default template's independent per-bin null permutations do not preserve the
 permutation across adjacent time bins. Cluster correction warns about this
 limitation. The alternative shared-across-time policy preserves that assignment
 within each held-out trial, but trials still use independently generated
@@ -413,7 +431,7 @@ definitions use different null summaries:
   if it has no clusters. Keep observed masses strictly above the 95th
   percentile of these 100 null maximum masses.
 - **Off states:** candidates satisfy `z <= 0.842`. Every nonempty candidate
-  cluster meets the example's one-bin minimum. Pool all off-cluster masses
+  cluster meets the default template's one-bin minimum. Pool all off-cluster masses
   from the 100 shuffles, then retain observed masses at or below the 95th
   percentile of this pooled distribution.
 
@@ -442,11 +460,11 @@ The state cache contains masks and two delay outcomes per preferred-cue trial:
 total off-state bins and the longest contiguous off-state run, each multiplied
 by the decoding stride. Delay membership uses bin starts **500 through 1400 ms
 inclusive**. Duration is a discrete bin-count measure, not the union of window
-coverage: the example's 91 delay bins at a 10 ms stride yield 910 ms if every
+coverage: the default template's 91 delay bins at a 10 ms stride yield 910 ms if every
 bin is off. This convention differs from the
 half-open [500, 1400) feature window used in preparation.
 
-**Alternatives, not used for the primary example outputs:** two-tailed
+**Alternatives, not used for the primary default-template outputs:** two-tailed
 off candidates use `abs(z) <= z_threshold_off`; two-tailed on correction uses
 the `(1 − alpha/2)` maximum-mass quantile; two-tailed off correction retains
 pooled masses within the `[alpha/2, 1 − alpha/2]` interval. Skipping correction
@@ -463,7 +481,7 @@ The entry point coordinates numerical preparation in `activity_preparation.py`
 and figure generation in `activity_plots.py`. Typed activity records in
 `activity_types.py` keep cell selectivity and PCA metrics separate.
 
-**Example choices.** Use 50 ms activity windows, seed 42, PEV-weighted selective
+**Default choices.** Use 50 ms activity windows, seed 42, PEV-weighted selective
 population means, PCA views, and longest-off-state comparisons. Set
 `max_points_per_color_group=50` for point sampling in applicable plots.
 
@@ -507,14 +525,14 @@ and returns an empty maximum-off-state projection. Malformed/nonfinite masks
 or nonfinite/non-increasing time bins are errors, rather than being treated as
 an empty state population.
 
-**Outputs:** `activity/figures/pev_weighted/` in this example, split into activity
+**Outputs:** `activity/figures/pev_weighted/` in this default analysis, split into activity
 and principal-component views, then state and cue comparisons.
 
 ## 6. Mixed-effects data preparation {#prepare}
 
 **Stage:** `prepare` · **Implementation:** `prepare_data_for_mixedlm.py`
 
-**Example choices.** Define active cells by normalized activity strictly above
+**Default choices.** Define active cells by normalized activity strictly above
 zero and use EMA alpha 0.2. Prepare 50 within-session holdouts of 20% of eligible
 trials with CV seed 42. `pev_weighted_average` is omitted here, so its inherited
 value is **false**: mixed-effects features use equal cell weights even though
@@ -551,7 +569,7 @@ For every activity mean and active fraction, construct a preceding-trial
 exponential moving average. If `x_i` is the current feature, history satisfies
 `h_1 = x_0` and `h_(i+1) = alpha × x_i + (1 − alpha) × h_i`. Trial zero has no
 history and is omitted from all model tables; history follows the ordered
-preferred-cue trials, not every original session trial. The example sets alpha to 0.2.
+preferred-cue trials, not every original session trial. The default template sets alpha to 0.2.
 The recurrence matches an exponentially weighted mean with `adjust=False`,
 shifted by one trial; see the [pandas EWM definition](https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.ewm.html).
 The pipeline computes it explicitly. Alpha controls the decay per retained
@@ -564,11 +582,11 @@ features from these raw rates rather than evaluating the full-data normalized
 table on held-out rows.
 
 **Outputs:** `prepare/trial_table.pkl`, `prepare/cv_feature_cache.pkl`, and
-`prepare/manifest.json`. No `pev_weighted/` suffix is used in this example.
+`prepare/manifest.json`. No `pev_weighted/` suffix is used in this default analysis.
 
 ## Shared mixed-effects estimation and validation {#mixed-effects-estimation}
 
-**Example choices shared by all five fitting stages.** Enable CV with 50
+**Default choices shared by all five fitting stages.** Enable CV with 50
 holdouts, a 0.2 holdout fraction, and seed 42. Set `significance_alpha=0.05` and
 `cv_prediction_sample_per_model=1000`. Omitted settings retain both duration
 outcomes, a 1000-iteration fitting budget, and unweighted activity features
@@ -645,10 +663,10 @@ saves its diagnostics and then raises an error rather than reporting success.
 
 ### Repeated trial holdouts
 
-In the example, CV repeats 50 random within-session holdouts of 20% of eligible
+In the default template, CV repeats 50 random within-session holdouts of 20% of eligible
 trials. The holdout size is rounded up, retaining at least one train and test
 trial in every session. Models share each repeat's split; with the matched
-example settings, all fitting stages reuse the prepared holdouts. Cell
+default-template settings, all fitting stages reuse the prepared holdouts. Cell
 normalization is fitted only on training model rows and applied to all trials; active
 fractions and histories are then recomputed. Histories contain preceding
 covariates from the trial sequence, including earlier held-out trials, but no
@@ -693,7 +711,7 @@ successfully.
 
 **Stage:** `models` · **Implementation:** `compare_mixed_effect_models.py`
 
-**Example choices.** Fit both duration outcomes using equal-weight activity
+**Default choices.** Fit both duration outcomes using equal-weight activity
 features, EMA alpha 0.2, and the shared 50-holdout CV settings above. The full
 forward and reverse model families are built by the implementation; the preset
 does not select a subset of them.
@@ -729,7 +747,7 @@ depend on which correlated predictors already enter the model.
 
 **Stage:** `nested-count` · **Implementation:** `nested_model_comparison_cell_counts.py`
 
-**Example choices.** Fit both outcomes with all five count models and the
+**Default choices.** Fit both outcomes with all five count models and the
 shared 50-holdout CV settings. The significance threshold is 0.05. No activity
 weighting or history parameter enters these count-only models.
 
@@ -750,7 +768,7 @@ nested contrasts, coefficients, fit statistics, and paired CV changes.
 
 **Stage:** `nested-activity` · **Implementation:** `nested_model_comparison_mean_norm_activity.py`
 
-**Example choices.** Use equal-weight preferred-cell mean activity, both
+**Default choices.** Use equal-weight preferred-cell mean activity, both
 duration outcomes, and the shared 50-holdout CV settings. The significance
 threshold is 0.05; the full M0–M5 sequence is fitted.
 
@@ -772,13 +790,13 @@ order. There are **six models per outcome**.
 
 **Stage:** `criticality` · **Implementation:** `find_active_cell_criticality.py`
 
-**Example choices.** Scan percentiles **10, 20, 30, 40, 50, 60, 70, 80, and 90**
+**Default choices.** Scan percentiles **10, 20, 30, 40, 50, 60, 70, 80, and 90**
 for both duration outcomes. Use equal-weight mean activity, EMA alpha 0.2,
 and the shared 50-holdout CV settings, with significance threshold 0.05.
 
 Map each configured percentile `p` to a standard-normal cutoff
 `z_p = Phi_inverse(p / 100)`. These are theoretical normal quantiles, not
-empirical percentiles of recorded activity. The example's cutoffs range from
+empirical percentiles of recorded activity. The default template's cutoffs range from
 approximately −1.282 to +1.282; its 50th-percentile cutoff is zero, matching
 the main preparation stage's active threshold.
 For each cutoff, regenerate active fractions and their histories from
@@ -808,7 +826,7 @@ The shared raw holdout cache remains in `prepare/`.
 
 **Stage:** `interactions` · **Implementation:** `test_interactions_across_periods.py`
 
-**Example choices.** Fit both outcomes with equal-weight group mean activity
+**Default choices.** Fit both outcomes with equal-weight group mean activity
 and the shared 50-holdout CV settings, using significance threshold 0.05.
 The preset also supplies `history_alpha=0.2` for shared feature reconstruction;
 the interaction-model formulas below contain no EMA predictors.
@@ -843,7 +861,7 @@ with another, conditional on the included terms; it is not a causal effect.
 **Outputs:** `interactions/outcomes/<outcome>/`, including interaction estimates,
 model progression, final IM9 summaries, and CV results.
 
-## Reporting an example-preset analysis
+## Reporting a default-template analysis
 
 Record the code revision, input session IDs, preset and resolved manifest,
 retained cell/trial counts, decoder time grid and null count, state rules and

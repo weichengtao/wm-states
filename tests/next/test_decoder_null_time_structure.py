@@ -73,7 +73,7 @@ class NullTimeStructureTest(unittest.TestCase):
                 return np.ones(len(x), dtype=int)
         rates = self.rates.copy()
         rates[:, :, 0] = np.arange(20)[:, None]
-        with patch.object(decoding, 'create_base_decoder', side_effect=lambda *a: Recorder()):
+        with patch.object(decoding, 'create_base_decoder', side_effect=lambda *a, **kw: Recorder()):
             decoding.decode_one_trial(1, rates, self.labels, self.times,
                 dataclasses.replace(self.config, preserve_null_time_structure=True))
         for estimate in range(4):

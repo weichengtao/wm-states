@@ -50,7 +50,7 @@ PEV-weighted variants add `pev_weighted/` to the relevant output directory:
 `<model-stage>/outcomes/<outcome>/pev_weighted/`. Criticality's weighted trial
 tables live in `criticality/prepared/active_thresholds/percentile_<NN>/pev_weighted/`;
 its threshold summary lives in `criticality/prepared/active_thresholds/pev_weighted/`.
-The example preset weights activity plots but leaves mixed-effects inputs
+The default preset weights activity plots but leaves mixed-effects inputs
 unweighted. See [custom subdirectory settings](configuration.md#cache-directory-layout).
 
 The four primary `.pkl` caches (screening, decoding, evaluation, and states) use
@@ -325,8 +325,8 @@ These optional scripts are separate from the eleven-stage runner:
 | `reject_reason_histograms.py` | Summarize saved screening rejection diagnostics |
 
 Selection diagnostics are opt-in through `select.save_extended_diagnostics` in
-JSON or `--save-extended-diagnostics` on the selection script. Both example and
-smoke presets leave them disabled. Their separate
+JSON or `--save-extended-diagnostics` on the selection script. All three supplied
+presets leave them disabled. Their separate
 `configs/next/diagnostic_figures.json` controls plot targets, cell caps, figure
 size, DPI, and title details; see [diagnostic configuration](configuration.md#screening-diagnostics).
 
@@ -342,7 +342,7 @@ Disabling plots does not delete old figures already in the run directory.
 
 Use each inspection script's `--help` for its required inputs and plotting options.
 The diagnostic CSV's `presence_ratio` uses correct trials in the configured
-screening window ([−400, 1400) ms in the example), matching the screening criterion.
+screening window ([−400, 1400) ms in the default template), matching the screening criterion.
 Per-check columns distinguish `disabled`, `pass`, `fail`, and `not_applicable`.
 Activity traces and the additional baseline Spearman correlation still describe
 all session trials, including incorrect trials. The default plot cap keeps the

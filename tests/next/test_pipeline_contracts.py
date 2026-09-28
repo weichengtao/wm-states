@@ -50,8 +50,17 @@ class CacheContractTest(unittest.TestCase):
                 preserved = dataclasses.replace(config, n_decode_shuffle=2, preserve_null_time_structure=True)
                 decoder.main(preserved)
                 self.assertEqual(fit.call_count, 4)
+                weighted = dataclasses.replace(preserved, training_balance='balanced_class_weights')
+                decoder.main(weighted)
+                self.assertEqual(fit.call_count, 5)
+                decoder.main(weighted)
+                self.assertEqual(fit.call_count, 5)
+                decoder.main(dataclasses.replace(weighted, training_balance='none'))
+                self.assertEqual(fit.call_count, 6)
                 decoder.main(preserved)
-                self.assertEqual(fit.call_count, 4)
+                self.assertEqual(fit.call_count, 7)
+                decoder.main(preserved)
+                self.assertEqual(fit.call_count, 7)
 
     def test_rejects_legacy_cache_and_roundtrips_new_cache(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -197,7 +206,7 @@ class DecoderTest(unittest.TestCase):
         rates = np.empty((20, 3, 2))
         rates[:, :, 0] = np.arange(20)[:, None]
         rates[:, :, 1] = np.arange(3)[None, :]
-        with patch('scripts.next.decoding_confidence.create_base_decoder', side_effect=lambda *a: Recorder()):
+        with patch('scripts.next.decoding_confidence.create_base_decoder', side_effect=lambda *a, **kw: Recorder()):
             decode_one_trial(1, rates, self.labels, self.times, self.config)
         self.assertEqual(len(fits), 3 * (1 + self.config.n_decode_shuffle))
         for index, ((x, y), test_sample) in enumerate(zip(fits, test_samples)):
@@ -272,7 +281,7 @@ class RunnerTest(unittest.TestCase):
         core = ['select', 'decode', 'evaluate', 'states', 'activity']
         mixed = ['prepare', 'models', 'nested-count', 'nested-activity', 'criticality', 'interactions']
         config_dir = Path(__file__).resolve().parents[2] / 'configs' / 'next'
-        for preset, null_count in [('example_pipeline.json', 100), ('smoke_pipeline.json', 3)]:
+        for preset, null_count in [('default_pipeline.json', 100), ('example_pipeline.json', 100), ('smoke_pipeline.json', 3)]:
             for requested, expected in [(None, core), (('mixed',), mixed), (('all',), core + mixed)]:
                 with self.subTest(preset=preset, stages=requested), tempfile.TemporaryDirectory() as directory:
                     cache = Path(directory) / 'cache'

@@ -105,6 +105,8 @@ def load_runs(cache_dirs):
                 differences.append('trial IDs differ')
             if reference.get('preserve_null_time_structure', False) != result.get('preserve_null_time_structure', False):
                 differences.append('null time-structure policies differ')
+            if reference.get('training_balance') != result.get('training_balance'):
+                differences.append('training-balance policies differ or are unrecorded')
             if reference.get('observed_accuracy_source') != result.get('observed_accuracy_source'):
                 differences.append('observed accuracy decision rules differ; rerun evaluate for comparable accuracy')
             if differences:

@@ -133,7 +133,16 @@ function FieldEditor({
               : []),
             ...field.choices.map((choice) => ({
               value: choice,
-              label: choice,
+              label:
+                field.name === "training_balance"
+                  ? ((
+                      {
+                        balanced_class_weights: "Balanced class weights",
+                        balanced_training_trials: "Balanced training trials",
+                        none: "None",
+                      } as Record<string, string>
+                    )[choice] ?? choice)
+                  : choice,
             })),
           ]}
         />

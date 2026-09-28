@@ -11,6 +11,16 @@ The evidence snapshot is dated **2026-09-28**. It covers the completed runs
 described below. Subsequent production runs are outside this snapshot. No
 analysis configuration or production cache was modified to prepare it.
 
+**Implementation update:** `configs/next/default_pipeline.json` now implements
+the all-trial weighting policy and is the dashboard's default template. Choose
+`decode.training_balance` to use balanced class weights, historical balanced
+trial subsampling, or no balancing. Weighting applies within every classifier
+fit and to pooled probability calibration, including null fits. The dated
+evidence below is unchanged; this implementation does not add a full-session
+validation of weighted production results. See
+[training-class balance](configuration.md#training-class-balance) for exact
+settings, SVM handling, and migration.
+
 | Decision | Intended policy | Current evidence |
 | --- | --- | --- |
 | Training-class balance | Use all eligible training trials with balanced class weights; balance calibration for the same cue prior | Improved prediction quality and seed stability in the session-221024 experiment; confirm across sessions |
@@ -102,7 +112,7 @@ in both original seed-42 runs, so this pair explains later seed sensitivity,
 not the original membership difference. Effects depend on the remaining
 training data; no trial is a universal switch or an established bad recording.
 
-### Intended fix and how it must be fitted
+### Implemented fix and how it is fitted
 
 Retain every eligible non-target training trial and assign each trial in class
 `k` weight `n / (2 * n_k)`. Both cue classes then have equal total weight. In

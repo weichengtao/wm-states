@@ -185,7 +185,7 @@ class Config:
     z_threshold_on: float = 1.645  # ON candidates require confidence z > this value, standardized by the trial/bin null distribution.
     z_threshold_off: float = 0.842  # OFF candidate cutoff; a low-confidence definition, not a test of absence of information.
     cp_method_off: Literal['two_tailed', 'one_tailed'] = 'one_tailed'  # One-tailed accepts z <= cutoff; two-tailed accepts |z| <= cutoff.
-    cluster_size_threshold_off: int = 5  # Minimum consecutive OFF bins; duration is bin count times decoding stride. Example preset uses one bin.
+    cluster_size_threshold_off: int = 5  # Minimum consecutive OFF bins; duration is bin count times decoding stride. Default and example presets use one bin.
     cc_method_on: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'  # Keep ON mass above a null maximum-mass cutoff; two-tailed uses alpha/2, skipped keeps candidates.
     cc_method_off: Literal['one_tailed', 'two_tailed', 'skipped'] = 'one_tailed'  # Custom OFF rule: below the pooled null upper cutoff, inside both cutoffs, or keep all size-qualified candidates.
     cc_alpha_on: float = 0.05  # Tail fraction for the ON null maximum-mass percentile; not a global guarantee across analyses.
@@ -867,6 +867,7 @@ def main(config: Config):
                 'preserve_null_time_structure': out_dict.get(
                     'preserve_null_time_structure', out_dict.get('config', {}).get('preserve_null_time_structure', False)),
                 'decoding_null_policy': out_dict.get('null_policy', 'unrecorded; assume independent per-bin shuffles'),
+                'decoding_training_balance': out_dict.get('training_balance'),
                 'z_threshold_on': z_threshold_on,
                 'z_threshold_off': z_threshold_off,
             })

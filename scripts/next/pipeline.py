@@ -63,6 +63,8 @@ class Config:
 
 
 def resolve_config(module, shared, overrides, *, expand_paths=True):
+    if hasattr(module, 'normalize_settings'):
+        overrides = module.normalize_settings(overrides)
     names = {field.name for field in fields(module.Config)}
     unknown = set(overrides) - names
     if unknown:
