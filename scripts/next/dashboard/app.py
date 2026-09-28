@@ -12,7 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from scripts.next.dashboard.documentation import DocumentationFiles
-from scripts.next.dashboard.models import RunRequest, TemplateRequest
+from scripts.next.dashboard.data_status import inspect_data
+from scripts.next.dashboard.models import DataStatusRequest, RunRequest, TemplateRequest
 from scripts.next.dashboard.network import validate_tailnet_addresses
 from scripts.next.dashboard.runner import BusyError, RunManager, TERMINAL
 from scripts.next.dashboard.schema import get_schema
@@ -137,6 +138,10 @@ def create_app(repo_root: Path | None = None, *, tailnet_ips: tuple[str, ...] = 
             return {key: result[key] for key in ('valid', 'command', 'resolved')}
         except (ValueError, OSError) as exc:
             raise HTTPException(422, str(exc)) from exc
+
+    @app.post('/api/data-status')
+    def data_status(request: DataStatusRequest):
+        return inspect_data(root, request)
 
     @app.get('/api/jobs')
     def jobs():

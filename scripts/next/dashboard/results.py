@@ -25,6 +25,7 @@ import numpy as np
 
 from scripts.next import cache_io
 from scripts.next.cache_paths import PRIMARY_STAGES, STAGES
+from scripts.next.dashboard.job_provenance import attach_job_provenance
 
 STAGE_ORDER = (
     "select", "decode", "evaluate", "states", "activity", "prepare", "models",
@@ -336,6 +337,7 @@ class ResultStore:
     def detail(self, run_id: str) -> dict:
         root = self.run_path(run_id)
         manifests, errors = _read_manifests(root)
+        attach_job_provenance(self.repo_root, self.cache_root, root, manifests, errors)
         summary, summary_errors = self.summary(root, manifests)
         errors.extend(summary_errors)
         records = self.records(root, errors)

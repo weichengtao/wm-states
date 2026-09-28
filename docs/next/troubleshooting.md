@@ -14,6 +14,15 @@ reports an occupied port, follow [Use another port](dashboard.md#use-another-por
 For the normal launch command, see
 [Open the dashboard again](dashboard.md#open-the-dashboard-again).
 
+## Dashboard warns that recordings are missing
+
+Recordings are excluded from Git. [Download and prepare them](getting-started.md#prepare-the-recordings),
+then point **Recording directory** to the folder containing the `.mat` files,
+not its parent. Paths refer to the dashboard server, including over Tailscale.
+Use **Check again** after copying files. If files exist but no sessions match,
+check the shared and stage-specific session lists. See
+[recording availability](dashboard.md#recording-availability).
+
 ## Tailnet dashboard access does not work
 
 Start the dashboard with `--tailnet` and open one of the addresses printed in

@@ -1,0 +1,76 @@
+.data-availability {
+  display: flex;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #dce7df;
+  border-radius: 10px;
+  background: #f5f8f5;
+  color: #476950;
+  min-width: 0;
+}
+.data-availability-warning {
+  border-color: #e9d4a5;
+  background: #fffaf0;
+  color: #896424;
+}
+.data-availability-unknown {
+  border-color: #dce3e7;
+  background: #f7f9fa;
+  color: #63727e;
+}
+.data-availability > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.data-availability > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.data-availability strong {
+  font-size: 12px;
+}
+.data-availability p {
+  margin: 5px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: inherit;
+}
+.data-availability-path {
+  display: grid;
+  gap: 4px;
+  margin-top: 9px;
+  font-size: 10px;
+}
+.data-availability-path > span {
+  font-weight: 650;
+}
+.data-availability-path code,
+.data-availability-error {
+  overflow-wrap: anywhere;
+}
+.data-availability-path small,
+.data-availability-error {
+  font-size: 10px;
+}
+.data-availability-error {
+  display: block;
+  margin-top: 7px;
+}
+.data-availability-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin-top: 8px;
+}
+.data-availability-actions .guide-link {
+  font-size: 11px;
+}
+.data-availability-actions button {
+  height: 28px;
+  padding: 4px 7px;
+  font-size: 10px;
+}
+.data-availability-compact {
+  margin-top: 12px;
+}

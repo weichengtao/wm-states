@@ -16,7 +16,8 @@ import threading
 from uuid import uuid4
 
 from scripts.next import pipeline
-from scripts.next.dashboard.models import RunRequest
+from scripts.next.dashboard.data_status import inspect_data
+from scripts.next.dashboard.models import DataStatusRequest, RunRequest
 from scripts.next.dashboard.schema import resolve_settings
 
 TERMINAL = {'complete', 'failed', 'cancelled'}
@@ -125,23 +126,15 @@ class RunManager:
         # Existing symlinks can redirect scientific writers that predate this dashboard.
         if cache_dir.exists() and any(path.is_symlink() for path in cache_dir.rglob('*')):
             raise ValueError('The dashboard cannot write a run directory containing symlinks.')
-        if not data_dir.is_dir():
-            raise ValueError(f'data_dir does not exist or is not a directory: {data_dir}')
         session_file = request.session_list_file
         if session_file is not None:
             session_path = self._local_path(session_file)
-            if not session_path.is_file():
-                raise ValueError(f'session_list_file does not exist: {session_path}')
-        # Validate session selection without loading potentially large MAT files.
-        if any(stage in request.stages for stage in ('select', 'decode')):
-            sessions = {path.stem for path in data_dir.glob('*.mat')}
-            if not sessions:
-                raise ValueError(f'No .mat session files in {data_dir}.')
-            if session_file is not None:
-                requested = {line.split('#', 1)[0].strip() for line in session_path.read_text().splitlines()}
-                if not (sessions & requested):
-                    raise ValueError('Session list does not select any available .mat sessions.')
         resolved = resolve_settings(request, self.repo_root, cache_dir, data_dir)
+        data_status = inspect_data(self.repo_root, DataStatusRequest(**request.model_dump(include={
+            'data_dir', 'stages', 'session_list_file', 'settings', 'trust_unverified_legacy_results',
+        })))
+        if data_status['blocking']:
+            raise ValueError(data_status['message'])
         settings_path = self.repo_root / 'configs' / 'next' / '.dashboard' / f'{job_id}.json'
         argv = [sys.executable, '-u', str(self.repo_root / 'scripts/next/pipeline.py'),
                 '--settings', str(settings_path), '--data-dir', str(data_dir),

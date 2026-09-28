@@ -310,6 +310,7 @@ export default function App() {
         <div className="main-content" id="workspace-content" tabIndex={-1}>
           {page === "results" && (
             <Results
+              schema={schema}
               runs={runs}
               loading={loading}
               error={error}

@@ -1,8 +1,11 @@
 """Strict, public request models for the local pipeline dashboard."""
+from __future__ import annotations
+
 from datetime import datetime
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 from scripts.next.figure_exports import DEFAULT_FIGURE_FONT, FigureFormat, validate_figure_font
 
@@ -25,6 +28,12 @@ class RunRequest(BaseModel):
     settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
     allow_existing: bool = False
     trust_unverified_legacy_results: bool = False
+    source_template: SourceTemplate | None = None
+
+    @field_serializer('source_template')
+    def template_snapshot(self, value):
+        # Omitted recording paths carry meaning in reusable templates.
+        return value.model_dump(exclude_unset=True) if value is not None else None
 
     @field_validator('figure_font')
     @classmethod
@@ -117,3 +126,51 @@ class SavedTemplate(TemplateRequest):
         if datetime.fromisoformat(value).tzinfo is None:
             raise ValueError('must include a timezone')
         return value
+
+
+class SourceTemplate(TemplateRequest):
+    """The immutable template snapshot picked when an invocation was submitted."""
+    id: str = Field(min_length=1, max_length=128)
+    builtin: bool
+    created_at: str | None = None
+    path: str | None = Field(default=None, max_length=4096)
+
+    @field_validator('id', 'path')
+    @classmethod
+    def reference_text(cls, value):
+        if value is not None and (not value.strip() or '\x00' in value):
+            raise ValueError('must not be blank or contain NUL characters')
+        return value
+
+    @field_validator('created_at')
+    @classmethod
+    def timestamp(cls, value):
+        if value is not None and datetime.fromisoformat(value).tzinfo is None:
+            raise ValueError('must include a timezone')
+        return value
+
+    @model_validator(mode='after')
+    def valid_snapshot(self):
+        values = self.config.model_dump(exclude_unset=True)
+        # Validate reusable shared values without looking up today's template,
+        # accessing recording paths, or executing historical stage settings.
+        RunRequest(**values)
+        try:
+            json.dumps(values, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('Template settings must contain finite JSON values.') from exc
+        return self
+
+
+class DataStatusRequest(BaseModel):
+    """Only fields affecting recording discovery; independent of run validation."""
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    data_dir: str
+    stages: list[str]
+    session_list_file: str | None = None
+    settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    trust_unverified_legacy_results: bool = False
+
+
+RunRequest.model_rebuild()

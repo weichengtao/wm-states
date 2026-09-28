@@ -116,6 +116,22 @@ export function templateRun(
   return next;
 }
 
+/** Freeze the chosen baseline without borrowing this run's omitted paths. */
+export function freezeTemplate(
+  template: PipelineTemplate,
+  schema: Schema,
+): PipelineTemplate {
+  const baseline = templateRun(
+    initialRun(schema, { settings: {} }, "cache/template-baseline"),
+    template,
+  );
+  const config = templateConfig(baseline, schema, true);
+  if (!Object.hasOwn(template.config, "data_dir")) delete config.data_dir;
+  if (!Object.hasOwn(template.config, "session_list_file"))
+    delete config.session_list_file;
+  return structuredClone({ ...template, config });
+}
+
 export function builtInTemplates(schema: Schema): PipelineTemplate[] {
   return (["example", "smoke"] as const).map((id) => ({
     id,

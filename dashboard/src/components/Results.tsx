@@ -6,7 +6,6 @@ import {
   BarChart3,
   CalendarDays,
   Check,
-  ChevronDown,
   CircleDot,
   Files,
   GitCompareArrows,
@@ -24,19 +23,21 @@ import type {
   RunRequest,
   Session,
   SessionData,
+  Schema,
 } from "@/lib/types";
 import { api, errorMessage, runPath } from "@/lib/api";
-import { duration, formatDate, formatNumber, humanize } from "@/lib/utils";
+import { formatDate, formatNumber, humanize } from "@/lib/utils";
 import { manifestSeed } from "@/lib/configuration";
-import { historyLegacyTrust, manifestLegacyTrust } from "@/lib/legacy-trust";
+import { historyLegacyTrust } from "@/lib/legacy-trust";
 import { filterRuns, runStatuses, type RunSort } from "@/lib/run-library";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
-import { CopyButton, Empty, Loading, Notice, Stat, Status } from "./shared";
+import { Empty, Loading, Notice, Stat, Status } from "./shared";
 import ConfidenceChart from "./ConfidenceChart";
 import { FigureGallery, SupportingFiles, TableBrowser } from "./Artifacts";
 import { LegacyTrustNotice } from "./LegacyTrust";
 import { LoadingRegion } from "./LoadingRegion";
+import RunHistory from "./RunHistory";
 
 const resultTabs = [
   { id: "overview", label: "Overview", icon: BarChart3 },
@@ -168,6 +169,7 @@ export function SessionStats({ data }: { data: SessionData }) {
   );
 }
 export default function Results({
+  schema,
   runs,
   loading,
   error,
@@ -177,6 +179,7 @@ export default function Results({
   onConfigure,
   onCompare,
 }: {
+  schema?: Schema | null;
   runs: Run[];
   loading: boolean;
   error: string;
@@ -682,72 +685,7 @@ export default function Results({
                   </>
                 )}
                 {tab === "history" && (
-                  <>
-                    <div className="history-intro">
-                      <h3>Every invocation, preserved.</h3>
-                      <p>
-                        Exact commands and resolved settings for complete and
-                        partial pipeline runs. Re-running a stage can replace
-                        its outputs; the manifest history remains.
-                      </p>
-                    </div>
-                    {detail.manifests.length ? (
-                      detail.manifests.map((m, i) => (
-                        <details
-                          className="panel manifest-card"
-                          key={m.id ?? i}
-                          open={i === 0}
-                        >
-                          <summary>
-                            <span className="manifest-icon">
-                              <Terminal size={17} />
-                            </span>
-                            <span>
-                              <strong>{formatDate(m.started_at)}</strong>
-                              <small>
-                                {m.stages?.map((s) => s.stage).join(" → ") ||
-                                  "No recorded stages"}
-                              </small>
-                            </span>
-                            <Status value={m.status ?? "unknown"} />
-                            <ChevronDown size={16} />
-                          </summary>
-                          <div className="manifest-body">
-                            <LegacyTrustNotice
-                              status={manifestLegacyTrust(m)}
-                            />
-                            <div className="section-heading">
-                              <span className="eyebrow">EXACT INVOCATION</span>
-                              {m.invocation?.command && (
-                                <CopyButton text={m.invocation.command} />
-                              )}
-                            </div>
-                            <pre>
-                              {m.invocation?.command ??
-                                "This older manifest did not record an invocation command."}
-                            </pre>
-                            <div className="stage-timings">
-                              {m.stages?.map((s) => (
-                                <div key={s.stage}>
-                                  <span>{humanize(s.stage)}</span>
-                                  <Status value={s.status} />
-                                  <span>{duration(s.seconds)}</span>
-                                </div>
-                              ))}
-                            </div>
-                            <details>
-                              <summary>Resolved settings & manifest</summary>
-                              <pre>{JSON.stringify(m, null, 2)}</pre>
-                            </details>
-                          </div>
-                        </details>
-                      ))
-                    ) : (
-                      <Empty title="No manifests found">
-                        Stage outputs may still be available in the other views.
-                      </Empty>
-                    )}
-                  </>
+                  <RunHistory manifests={detail.manifests} schema={schema} />
                 )}
               </div>
             </>

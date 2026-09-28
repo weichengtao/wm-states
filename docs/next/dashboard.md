@@ -319,6 +319,21 @@ can find them (for example, `cache/next_dashboard_001`, not a nested run path). 
 The optional session list filters the session files available in the selected
 data directory; missing listed sessions are reported by the pipeline.
 
+### Check recording availability {#recording-availability}
+
+Cloning the repository does not download recordings. The **Recording directory**
+field checks for `.mat` files directly in the chosen folder and warns if the
+folder is missing, empty, unreadable, or selects no sessions. Follow
+[Prepare the recordings](getting-started.md#prepare-the-recordings), choose the
+folder on the server computer, then use **Check again** after copying files.
+
+Stages that require recordings cannot start while the check reports missing
+inputs. Template saving and existing result viewing remain available. Cache-only
+work can proceed when recordings are unnecessary; required caches and provenance
+are still checked by the pipeline. File counts confirm availability, not valid
+MATLAB contents or successful cell screening. Validation and launch recheck the
+inputs, including stage-specific session lists.
+
 ### Complete local paths {#path-completion}
 
 The **Recording directory**, **Cache directory**, **Session allowlist**, and
@@ -587,6 +602,23 @@ explore a selected run. When a tab has keyboard focus, use the arrow keys to
 move between tabs, or Home and End to jump to the first or last tab. Session
 selectors apply to Overview and Figures. Tables and Run history browse outputs
 and invocation records for the whole run.
+
+### Compare invocation settings {#history-template-comparison}
+
+In **Run history**, choose a comparison template for each invocation. Changed
+settings show the template value beside the recorded value, grouped by stage.
+All available built-in and saved templates can be selected; changing the
+comparison does not change the run.
+
+New dashboard runs default to their **original template snapshot**, saved at
+launch and retained even if the template changes or is removed. Older or CLI
+runs without that record default to Example with an explicit unknown-original
+notice. Partial invocations compare only their requested stages, and missing
+historical values are shown as unrecorded. Keep the run's `dashboard/` records
+when archiving it to retain its original template. Raw settings and the exact
+command remain available below the comparison.
+
+### Compare sessions and runs
 
 Use the comparison workspace to place two session/run selections side by side:
 

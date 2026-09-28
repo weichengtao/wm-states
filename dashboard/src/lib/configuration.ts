@@ -179,6 +179,9 @@ export function manifestSeed(
     name: `${name} · copy`,
     allow_existing: false,
     trust_unverified_legacy_results: false,
+    source_template: manifest.source_template
+      ? structuredClone(manifest.source_template)
+      : null,
   };
   // Do not forward runner-only flags, old output paths, or a settings filename to RunRequest.
   for (const key of [

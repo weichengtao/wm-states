@@ -254,6 +254,7 @@ class DashboardSchemaTests(unittest.TestCase):
         decoded = self.root / 'cache/first/decode/decoding_confidence.pkl'
         decoded.parent.mkdir(parents=True)
         decoded.write_bytes(b'existing cache placeholder; validation does not unpickle')
+        (self.root / 'data/sample.mat').touch()
         enabled = self.manager.validate(request(trust_unverified_legacy_results=True, allow_existing=True))
         self.assertEqual(enabled['argv'].count('--trust-unverified-legacy-results'), 1)
         self.assertIn('--trust-unverified-legacy-results', shlex.split(enabled['command']))
@@ -566,6 +567,7 @@ while not (cache / 'continue').exists():
             self.assertEqual(Path(live[key]).read_bytes(), payload)
 
     async def test_manual_trust_flag_and_live_audit_are_mirrored_without_stage_change(self):
+        (self.root / 'data/fixture.mat').touch()
         decoded = self.root / 'cache/first/decode/decoding_confidence.pkl'
         decoded.parent.mkdir(parents=True)
         decoded.write_bytes(b'existing fixture cache')

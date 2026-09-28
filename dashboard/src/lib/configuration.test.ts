@@ -39,6 +39,37 @@ const schema: Schema = {
 };
 
 describe("configuration defaults and manual overrides", () => {
+  it("carries an independent recorded template baseline when copying a run", () => {
+    const manifest: Manifest = {
+      id: "previous",
+      status: "complete",
+      stages: [],
+      settings: { decode: { grid_search_for_c: false } },
+      source_template: {
+        id: "saved-baseline",
+        name: "Original template",
+        description: "",
+        builtin: false,
+        config: {
+          settings: { decode: { grid_search_for_c: true } },
+          stages: ["decode"],
+          n_jobs: 1,
+          max_sessions_to_run: null,
+          figure_formats: ["png"],
+        },
+      },
+    };
+    const copied = manifestSeed(manifest, "A previous run");
+    expect(copied.source_template).toEqual(manifest.source_template);
+    copied.source_template!.config.settings.decode.grid_search_for_c = false;
+    expect(
+      manifest.source_template!.config.settings.decode.grid_search_for_c,
+    ).toBe(true);
+    expect(
+      manifestSeed({ ...manifest, source_template: undefined }, "Old")
+        .source_template,
+    ).toBeNull();
+  });
   it("creates cache directories on HTTP without crypto.randomUUID", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-27T12:34:56.007Z"));

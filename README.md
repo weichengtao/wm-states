@@ -66,14 +66,16 @@ excluded from Git.
 Use the local web dashboard to choose an analysis template, edit its settings,
 launch all or selected stages, follow live logs and stage progress, inspect saved figures and tables,
 and compare sessions or separate run directories side by side. You can open
-the dashboard before downloading recordings; data are needed when you start
-an analysis.
+the dashboard before downloading recordings. Configuration warns about missing
+`.mat` files or empty session selections before starting stages that need them.
 
 Changes are highlighted against your selected template, with original/current
 values and individual resets. **Save as template** keeps a named setup for later,
 even while an analysis is running. Templates preserve analysis choices without
 reusing a run's output directory; recording paths are optional. See
 [analysis templates](docs/next/dashboard.md#analysis-templates) for saving and sharing.
+**Run history** also highlights settings against any available template, using
+the original template snapshot by default for new dashboard runs.
 
 Local path fields support **Tab completion**. **Live Progress** shows the running
 stage's elapsed time and offers **Download full log** beyond the 500-line preview.

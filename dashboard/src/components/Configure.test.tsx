@@ -72,6 +72,32 @@ function buttonsNamed(html: string, label: string) {
 const disabledAttribute = /\sdisabled(?:=|\s|>)/;
 
 describe("configuration templates", () => {
+  it("checks recordings immediately and keeps the recorded template when copying a run", () => {
+    const html = renderConfigure({
+      seed: {
+        settings: schema.presets.smoke,
+        source_template: {
+          id: "saved-baseline",
+          name: "My recorded setup",
+          description: "A saved comparison baseline.",
+          builtin: false,
+          config: {
+            settings: schema.presets.smoke,
+            stages: ["select", "decode"],
+            n_jobs: 2,
+            max_sessions_to_run: null,
+            figure_formats: ["png"],
+          },
+        },
+      },
+    });
+    expect(visibleText(html)).toContain("Matches My recorded setup");
+    expect(visibleText(html)).toContain("Checking recordings on the server");
+    expect(html).toContain('aria-describedby="data-availability');
+    expect(buttonsNamed(html, "Save as template")[0]).not.toMatch(
+      disabledAttribute,
+    );
+  });
   it("keeps manual legacy trust off for copied runs and only offers it beside existing-cache reuse", () => {
     expect(renderConfigure()).not.toContain("Trust unverified legacy results");
     const html = renderConfigure({

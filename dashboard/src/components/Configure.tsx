@@ -45,11 +45,14 @@ import { Select } from "./ui/select";
 import SaveTemplateDialog from "./SaveTemplateDialog";
 import { LegacyTrustPanel } from "./LegacyTrust";
 import PathInput from "./PathInput";
+import DataAvailability from "./DataAvailability";
+import { useDataAvailability } from "@/lib/data-availability";
 import {
   builtInTemplates,
   formatTemplateValue,
   templateChanges,
   templateRun,
+  freezeTemplate,
 } from "@/lib/templates";
 import { CopyButton, Notice } from "./shared";
 import GuideLink from "./GuideLink";
@@ -235,9 +238,11 @@ export default function Configure({
   const builtins = useMemo(() => builtInTemplates(schema), [schema]);
   const initialTemplate = useMemo(
     () =>
-      builtins.find(
-        (item) => item.id === presetName(initial.settings, schema),
-      ) ?? builtins[0],
+      initial.source_template
+        ? structuredClone(initial.source_template)
+        : (builtins.find(
+            (item) => item.id === presetName(initial.settings, schema),
+          ) ?? builtins[0]),
     [builtins, initial, schema],
   );
   const [templates, setTemplates] = useState(builtins);
@@ -249,6 +254,8 @@ export default function Configure({
   const [templateFeedback, setTemplateFeedback] = useState("");
   const [reviewChanges, setReviewChanges] = useState(false);
   const [form, setForm] = useState(initial);
+  const dataAvailability = useDataAvailability(form);
+  const recordingsBlocked = dataAvailability.result?.blocking === true;
   const [active, setActive] = useState(schema.stages[0].id);
   const [query, setQuery] = useState("");
   const [changedOnly, setChangedOnly] = useState(false);
@@ -331,8 +338,9 @@ export default function Configure({
     setSelectedTemplate(nextTemplate);
   };
   const templateChange = (value: string) => {
-    const next = templates.find((item) => item.id === value);
-    if (!next) return;
+    const picked = templates.find((item) => item.id === value);
+    if (!picked) return;
+    const next = freezeTemplate(picked, schema);
     replaceDraft(
       templateRun(form, next),
       `${next.name} applied. Run name and cache directory are unchanged.`,
@@ -350,10 +358,7 @@ export default function Configure({
       }>("/templates");
       if (templateRevision.current === requestedRevision) {
         setTemplates(result.templates);
-        setSelectedTemplate(
-          (current) =>
-            result.templates.find((item) => item.id === current.id) ?? current,
-        );
+        // Refresh the choices, not the comparison snapshot for this draft.
         setTemplateWarnings(result.warnings);
       }
     } catch (reason) {
@@ -380,7 +385,7 @@ export default function Configure({
       !draftRef.current.jsonDirty &&
       JSON.stringify(draftRef.current.form) === JSON.stringify(snapshot);
     if (unchanged) {
-      setSelectedTemplate(saved);
+      setSelectedTemplate(freezeTemplate(saved, schema));
       setUndo(null);
     }
     setTemplateFeedback(
@@ -423,9 +428,15 @@ export default function Configure({
         throw new Error(
           "Another pipeline is running. You can still save this setup as a template.",
         );
+      if (launch && recordingsBlocked)
+        throw new Error(dataAvailability.result!.message);
+      const submission = structuredClone({
+        ...form,
+        source_template: selectedTemplate,
+      });
       if (launch) {
         onStarted(
-          await launchRun(form, () => {
+          await launchRun(submission, () => {
             revision.current += 1;
             // Clear only consent: edits made while the request was pending stay.
             setForm((current) => ({
@@ -441,7 +452,7 @@ export default function Configure({
           "/validate",
           {
             method: "POST",
-            body: JSON.stringify(form),
+            body: JSON.stringify(submission),
           },
         );
         if (revision.current === requestedRevision) setValidation(result);
@@ -496,11 +507,19 @@ export default function Configure({
                 ? "legacy-trust-launch"
                 : undefined
             }
-            disabled={!!busy || jsonDirty || !form.stages.length || running}
+            disabled={
+              !!busy ||
+              jsonDirty ||
+              !form.stages.length ||
+              running ||
+              recordingsBlocked
+            }
             title={
               running
                 ? "Another pipeline is running. You can still edit and save templates."
-                : undefined
+                : recordingsBlocked
+                  ? "Prepare the recording folder or check it again before starting."
+                  : undefined
             }
           >
             {busy === "launch" ? (
@@ -730,11 +749,18 @@ export default function Configure({
             </label>
             <PathInput
               id="data-dir"
+              aria-describedby="data-availability"
               mode="directory"
               value={form.data_dir}
               onValueChange={(path) => update({ data_dir: path })}
             />
             {sharedHint("data_dir")}
+            <div id="data-availability">
+              <DataAvailability
+                state={dataAvailability}
+                onRecheck={dataAvailability.recheck}
+              />
+            </div>
           </div>
           <div className={fieldClass("session_list_file")}>
             <label htmlFor="session-list">
@@ -1117,6 +1143,11 @@ export default function Configure({
               recorded in its manifest.
             </p>
           )}
+          <DataAvailability
+            state={dataAvailability}
+            onRecheck={dataAvailability.recheck}
+            compact
+          />
         </div>
         <div className="heading-actions">
           <Button
@@ -1138,7 +1169,13 @@ export default function Configure({
                 ? "legacy-trust-launch"
                 : undefined
             }
-            disabled={!!busy || jsonDirty || !form.stages.length || running}
+            disabled={
+              !!busy ||
+              jsonDirty ||
+              !form.stages.length ||
+              running ||
+              recordingsBlocked
+            }
           >
             {busy === "launch"
               ? "Starting…"

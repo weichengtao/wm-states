@@ -1,5 +1,51 @@
 # Next pipeline validation
 
+## Recording availability and history comparisons — 2026-09-28
+
+The dashboard checks for recordings before launch and compares each historical
+invocation against its original template snapshot or another chosen template.
+
+- **571 Python tests** pass in **17.788 seconds**, including **26 new tests**
+  for recording discovery and saved request provenance. Checks cover absent,
+  empty, unreadable, and invalid paths; effective session allowlists; cache-only
+  stages; and the additional source-file requirement for manual legacy trust.
+  Validation and launch repeat the check before creating a job.
+- **134 frontend tests** across **21 files** pass. Coverage includes stale-request
+  protection, retry states, immutable template snapshots, stage-aware setting
+  differences, unavailable historical values, and legacy invocations without
+  a recorded source template. TypeScript/Vite build and formatting pass.
+- Saved requests are matched to an invocation by manifest ID, with a unique
+  exact-command fallback for older records. Tests reject ambiguous repeated
+  commands and malformed metadata, and preserve provenance when run-local
+  records are moved without the central dashboard directory.
+- Browser checks at **1440 × 1050** and **390 × 844** verify missing/empty-data
+  warnings, recovery after adding files, allowlist mismatches, request failures,
+  retry, launch blocking, and template saving without recordings. Run history
+  supports switching templates, searching changes, and retaining the original
+  snapshot after a template is removed. No horizontal overflow or browser
+  JavaScript errors occurred.
+- **15 documentation tests** pass, including actual strict MkDocs builds under
+  `/docs/` and `/wm-states/`. The standalone strict build and `git diff --check`
+  also pass. The statistical-comparison illustration now uses the shared figure
+  export helper, correcting a failure found by the full repository suite;
+  all **14 figure-export tests** pass.
+
+Recording discovery checks top-level `.mat` file names and allowlists; it does
+not open MAT files or certify their contents, screening outcomes, or cache
+compatibility. Browser validation used an isolated temporary repository and a
+separate headless test runtime. No user caches were changed, no analysis was
+launched, and the installed Chrome application was not controlled. Test browsers
+and the temporary server were stopped after validation.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m unittest discover -s tests -v
+npm --prefix dashboard test
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
 ## Statistical decision record and documentation integration — 2026-09-28
 
 [Statistical choices](../next/statistical-choices.md) records the evidence for

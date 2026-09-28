@@ -34,6 +34,7 @@ export type RunRequest = {
   settings: Settings;
   allow_existing: boolean;
   trust_unverified_legacy_results: boolean;
+  source_template?: PipelineTemplate | null;
 };
 export type TemplateConfig = {
   settings: Settings;
@@ -53,6 +54,15 @@ export type PipelineTemplate = {
   created_at?: string;
   path?: string;
   config: TemplateConfig;
+};
+export type DataStatus = {
+  status:
+    "ready" | "missing" | "empty" | "no_matches" | "unreadable" | "invalid";
+  data_dir: string;
+  file_count: number;
+  blocking: boolean;
+  message: string;
+  stages?: { stage: string; eligible_count: number }[];
 };
 export type TemplateChange = {
   stage: string;
@@ -141,6 +151,9 @@ export type Artifact = {
 };
 export type Manifest = {
   id: string;
+  source_template?: PipelineTemplate | null;
+  original_request?: Partial<RunRequest> | null;
+  runner_config?: Record<string, Json> | null;
   started_at?: string;
   finished_at?: string;
   status: string;

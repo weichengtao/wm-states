@@ -8,6 +8,12 @@ Only the evidence JSON and documentation figure are written.
 This is a reproduction utility for the dated next_run_001/002/003 comparison,
 not a pipeline stage or a general-purpose run selector.
 """
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    __package__ = "scripts.next"
+
 import os
 for variable in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS'):
     os.environ[variable] = '1'
@@ -256,6 +262,7 @@ def main():
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    from scripts.next.figure_exports import save_figure
     plt.rcParams.update({'font.size':10,'axes.spines.top':False,'axes.spines.right':False})
     fig,axes=plt.subplots(2,2,figsize=(12,8),layout='constrained')
     colors=['#267b9a','#d67b43','#735aa8'];labels=['001: calibrated + C search','002: uncalibrated + C search','003: calibrated + C = 1']
@@ -277,7 +284,7 @@ def main():
     fig.suptitle('Completed-run evidence · 25 aligned sessions · delay-bin starts 500–1400 ms',fontsize=13)
     fig.supxlabel('Observed scores contain preferred-cue test trials only; they do not establish two-class calibration.\nAll three runs downsample training classes and use 100 independent-per-bin label shuffles.',fontsize=9)
     FIGURE_PATH.parent.mkdir(exist_ok=True)
-    fig.savefig(FIGURE_PATH,dpi=160);plt.close(fig)
+    save_figure(fig,FIGURE_PATH,dpi=160);plt.close(fig)
     print('Wrote documentation evidence and figure; source caches unchanged.',flush=True)
 
 if __name__=='__main__':main()

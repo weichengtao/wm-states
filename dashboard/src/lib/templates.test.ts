@@ -6,6 +6,7 @@ import {
   templateChanges,
   templateConfig,
   templateRun,
+  freezeTemplate,
 } from "./templates";
 import type { PipelineTemplate, RunRequest, Schema } from "./types";
 
@@ -73,6 +74,48 @@ function saved(form: RunRequest, includePaths = false): PipelineTemplate {
 }
 
 describe("pipeline templates", () => {
+  it("freezes sparse launch baselines without importing omitted recording paths", () => {
+    const template = saved(draft());
+    template.config.settings = { decode: { n_decode_shuffle: 7 } };
+    const snapshot = freezeTemplate(template, schema);
+    expect(snapshot.config.settings.decode.max_points).toBeNull();
+    expect(snapshot.config.settings.select.min_presence_ratio).toBe(0.9);
+    expect(snapshot.config.settings.models.history_alpha).toBe(0.2);
+    expect(snapshot.config).not.toHaveProperty("data_dir");
+    expect(snapshot.config).not.toHaveProperty("session_list_file");
+    expect(snapshot.config.settings.decode).not.toHaveProperty(
+      "session_list_file",
+    );
+    template.name = "Edited later";
+    template.config.settings.decode.n_decode_shuffle = 900;
+    expect(snapshot.name).toBe("My analysis");
+    expect(snapshot.config.settings.decode.n_decode_shuffle).toBe(7);
+    expect(snapshot.config).not.toHaveProperty("source_template");
+  });
+
+  it("retains only the recording paths explicitly present in a chosen template", () => {
+    const template = saved(draft(), true);
+    delete template.config.data_dir;
+    template.config.session_list_file = null;
+    template.config.settings.decode.session_list_file =
+      "configs/decoder-sessions.json";
+    const snapshot = freezeTemplate(template, schema);
+    expect(snapshot.config).not.toHaveProperty("data_dir");
+    expect(snapshot.config.session_list_file).toBeNull();
+    expect(snapshot.config.settings.decode.session_list_file).toBe(
+      "configs/decoder-sessions.json",
+    );
+    const withoutShared = structuredClone(template);
+    delete withoutShared.config.session_list_file;
+    expect(freezeTemplate(withoutShared, schema).config).not.toHaveProperty(
+      "session_list_file",
+    );
+    expect(
+      freezeTemplate(withoutShared, schema).config.settings.decode
+        .session_list_file,
+    ).toBe("configs/decoder-sessions.json");
+  });
+
   it("never saves manual trust and clears it when a template is applied", () => {
     const form = {
       ...draft({ allow_existing: true }),

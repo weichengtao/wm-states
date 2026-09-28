@@ -97,6 +97,18 @@
       "path": "next/dashboard/#local-and-tailnet-access"
     },
     {
+      "title": "Recordings are missing after cloning",
+      "keywords": "data directory mat missing absent download clone session list recordings",
+      "answer": "Recordings are not included in Git. Download the data, choose the server folder containing the .mat files, and use Check again. Configuration checks file availability and session lists before launch; it does not validate MATLAB contents. You can still save templates and browse existing results.",
+      "path": "next/dashboard/#recording-availability"
+    },
+    {
+      "title": "Compare run history with a template",
+      "keywords": "history invocation original snapshot template changed settings parameters",
+      "answer": "Run history shows changed settings against a chosen template. New dashboard runs default to the original snapshot saved at launch; you can select any available template instead. Older runs without that record clearly mark the original as unknown. Comparison never edits the run.",
+      "path": "next/dashboard/#history-template-comparison"
+    },
+    {
       "title": "Choosing stages",
       "keywords": "order dependency prerequisites select decode states",
       "answer": "The dashboard initially selects all eleven stages. Core stages cover screening through activity; the command-line runner uses those five by default. A partial run needs its earlier stages' caches.",
@@ -221,6 +233,10 @@
     "mixed_models": "next/methods/#mixed-effects-estimation"
   },
   "troubleshooting": [
+    {
+      "pattern": "no.*mat|recording.*missing|data_dir.*exist|session.*select.*no|no.*session.*match",
+      "anchor": "dashboard-warns-that-recordings-are-missing"
+    },
     {
       "pattern": "tailscale|tailnet|invalid host|same.origin|origin.*reject",
       "anchor": "tailnet-dashboard-access-does-not-work"
