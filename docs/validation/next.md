@@ -1,5 +1,35 @@
 # Next pipeline validation
 
+## Statistical decision record and documentation integration — 2026-09-28
+
+[Statistical choices](../next/statistical-choices.md) records the evidence for
+all-trial class weighting, confidence calibration, and C selection. It compares
+25 aligned sessions from `next_run_001`–`next_run_003` and distinguishes those
+completed-run comparisons from the focal weighting experiment.
+
+- The reproduction utility lives in `scripts/next/compare_statistical_choices.py`;
+  its versioned evidence remains in `docs/validation/`, and its figure in
+  `docs/assets/`. The guide is linked from navigation, the overview, the methods
+  page, and the selection/decoding guide.
+- Regenerating the evidence JSON and figure after moving the utility produced
+  **byte-identical outputs**. Original cache hashes and the decoder's scientific
+  source signature are unchanged; no model fitting or pipeline run was needed.
+- Optional local experiment reports refresh the recorded evidence when present.
+  When absent, existing evidence and its source hashes are preserved. Checks
+  covered local refresh, recorded-evidence fallback, and explicit unavailability
+  when neither source exists.
+- **15 documentation tests pass**, including rendered navigation, assets,
+  anchors, search, and dashboard documentation routes. Real MkDocs builds cover
+  both `/docs/` and `/wm-states/` URL prefixes. The strict static build and
+  `git diff --check` pass.
+
+```bash
+.venv/bin/python scripts/next/compare_statistical_choices.py
+.venv/bin/python -m unittest tests.next.test_documentation_links tests.next.test_dashboard_docs -v
+.venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
 ## Local and tailnet dashboard access — 2026-09-27
 
 The opt-in `--tailnet` launcher discovers the connected machine's Tailscale

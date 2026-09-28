@@ -7,6 +7,11 @@ for [screening](methods.md#select), [decoding](methods.md#decode),
 Those sections link to papers and library documentation beside the relevant
 choices, and distinguish standard estimators from the custom state rules.
 
+For the evidence behind proposed training-class weighting, retained confidence
+calibration, and C search, see [Statistical choices](statistical-choices.md).
+That page distinguishes completed-run comparisons from the focal weighting
+experiment and the intended analysis policy.
+
 - Screening always uses a full session. Each selection result contains
   `num_trials` and one set of selected, stationary, and presence-passing cells.
   There are no session partitions or leave-one-out cell-selection variants.

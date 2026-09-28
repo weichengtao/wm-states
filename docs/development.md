@@ -22,6 +22,13 @@ Record analysis validation in [the next pipeline log](validation/next.md), with
 the date, exact commands, test counts, integration scope, and limitations.
 Generated datasets and cache outputs stay outside version control.
 
+For a dated statistical decision record, keep its explanation in `docs/next/`,
+its compact evidence snapshot in `docs/validation/`, and its presentation
+figures in `docs/assets/`. Evidence snapshots are intentional versioned
+documentation inputs, not copies of raw caches. Their reproduction tools belong
+in `scripts/next/`; for example, `compare_statistical_choices.py` rebuilds the
+evidence and figure for [Statistical choices](next/statistical-choices.md).
+
 ## Downstream analysis modules
 
 Use `scripts/next/screening_metadata.py` for validated screening fields,

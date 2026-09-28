@@ -6,6 +6,11 @@ where the JSON omits a setting. Alternative options are identified separately;
 they are not part of this example analysis. Implementation filenames below
 refer to `scripts/next/`.
 
+For the empirical rationale behind training-class weighting, confidence
+calibration, and C selection, see [Statistical choices](statistical-choices.md).
+That decision record distinguishes proposed policies from this preset's
+implemented settings.
+
 The example command runs the first five stages; add `--stages all` to include
 the six preparation and mixed-effects stages described here. See
 [Pipeline stages](pipeline.md) for commands. Inspect effective settings with

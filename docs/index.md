@@ -24,6 +24,7 @@ guide** opens these pages from the same server at `/docs/`.
 | Choose sessions, null counts, and workers | [Configuration](next/configuration.md) |
 | Run or resume analysis stages | [Pipeline stages](next/pipeline.md) |
 | Review the example preset’s methods, populations, and validation design | [Analysis methods](next/methods.md) |
+| Review evidence for class weighting, confidence calibration, and C selection | [Statistical choices](next/statistical-choices.md) |
 | Understand screening and decoder estimates | [Selection and decoding](next/selection-decoding.md) |
 | Compare trial-level statistical models | [Mixed-effects analyses](next/mixed-effects.md) |
 | Find caches, figures, scores, and invocation history | [Outputs and inspection](next/outputs.md) |
