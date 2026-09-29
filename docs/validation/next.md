@@ -1,5 +1,60 @@
 # Next pipeline validation
 
+## Five-run statistical comparison and default documentation — 2026-09-29
+
+[Statistical choices](../next/statistical-choices.md) now includes completed
+`next_run_004` (fixed C=1, no calibration) and `next_run_005` (all-trial balanced
+weights, C search, sigmoid calibration). The comparison reads existing results;
+it does not fit models or launch pipeline stages.
+
+- All five runs align 25 sessions, 1,590 preferred-cue test trials, cell IDs,
+  cues, and 161-bin time grids. Six paired comparisons check the expected
+  scientific-setting differences and identical state rules. Historical
+  balancing booleans are translated explicitly, without applying new defaults
+  to old records. Decode/state fingerprints and trial/time alignment are checked
+  within each run.
+- Runs `001`–`004` complete the downsampled calibration × C-selection comparison.
+  Calibration and C search each improve preferred-cue Brier and log loss in all
+  25 sessions at both settings, with non-additive effects. `004` has the poorest
+  probability scores despite a shorter mean maximum OFF duration.
+- Weighted `005` improves pooled preferred-cue Brier by 0.74% and log loss by
+  0.67% relative to `001`; improvements occur in 16/25 and 15/25 sessions,
+  respectively. Trial 136 in session 221024 changes from 240 to 130 ms maximum
+  OFF duration. This is a complete production comparison with session null
+  backgrounds, but one fitting seed does not establish seed stability across
+  sessions. The earlier five-seed focal experiment remains separate evidence.
+- The evidence JSON includes selection/decoder/state cache hashes, fitting and
+  state-manifest hashes and IDs, normalized and raw settings, per-session scores,
+  focal bins, and factorial contrasts. Runtime comes from the completed fitting
+  invocation, excluding plot-only decoding. The six-panel figure adds weighted
+  session scores, both calibration/C contrasts, and five fitting runtimes.
+- Original `001`–`003` metrics, paired comparisons, source hashes, and prior focal
+  experiment summaries are unchanged. Production-file hashes are checked before
+  and after reading; the decoder scientific source signature is unchanged.
+- README, overview, methods, selection/decoding, configuration, dashboard help,
+  and contributor guidance identify the weighted default consistently. The
+  standalone default-stage decoder command now explicitly enables class weights;
+  a regression check parses that command and compares its scientific settings
+  with `default_pipeline.json`. Historical example and bare-script defaults
+  remain documented as downsampling.
+- **472 next-pipeline tests pass**, including seven new comparison checks for
+  old settings, exact population alignment, uncontrolled setting changes,
+  fitting-versus-plot timing, missing/ambiguous manifests, contrast arithmetic,
+  and command/template parity. This includes the 15 documentation tests with
+  real MkDocs builds at `/docs/` and `/wm-states/`.
+- **138 dashboard tests pass.** The TypeScript/Vite production build, formatting
+  check, strict MkDocs build, and `git diff --check` pass.
+
+```bash
+.venv/bin/python scripts/next/compare_statistical_choices.py
+MPLCONFIGDIR=/tmp/wm-states-mpl .venv/bin/python -m unittest discover -s tests/next -q
+npm --prefix dashboard test
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+.venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
 ## Weighted decoder training and default template — 2026-09-28
 
 `decode.training_balance` selects `BALANCED_CLASS_WEIGHTS`,

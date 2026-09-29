@@ -23,7 +23,7 @@ guide** opens these pages from the same server at `/docs/`.
 | Configure runs, follow progress, and compare sessions visually | [Dashboard](next/dashboard.md) |
 | Choose sessions, null counts, and workers | [Configuration](next/configuration.md) |
 | Run or resume analysis stages | [Pipeline stages](next/pipeline.md) |
-| Review the example preset’s methods, populations, and validation design | [Analysis methods](next/methods.md) |
+| Review the default preset’s methods, populations, and validation design | [Analysis methods](next/methods.md) |
 | Review evidence for class weighting, confidence calibration, and C selection | [Statistical choices](next/statistical-choices.md) |
 | Understand screening and decoder estimates | [Selection and decoding](next/selection-decoding.md) |
 | Compare trial-level statistical models | [Mixed-effects analyses](next/mixed-effects.md) |
@@ -37,7 +37,7 @@ guide** opens these pages from the same server at `/docs/`.
 | --- | --- |
 | `scripts/next/` | Analysis scripts and shared implementation, including the dashboard backend |
 | `dashboard/` | React and TypeScript dashboard frontend |
-| `configs/next/` | Example and smoke JSON presets |
+| `configs/next/` | Weighted default, historical downsampled example, and smoke JSON presets |
 | `tests/next/` | Tests for the new implementation |
 | `docs/next/` | Pipeline guides |
 | `docs/validation/next.md` | Dated validation results |

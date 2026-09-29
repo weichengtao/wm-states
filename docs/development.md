@@ -187,7 +187,7 @@ code. API reference links always stay with the local backend at `/api/docs`.
    links and run the documentation link tests. They build the guide under both
    local-style and GitHub Pages-style prefixes and check the actual anchors.
 7. Keep method claims consistent with the stage implementation and resolved
-   example preset, including inherited defaults. Link primary papers or official
+   default preset, including inherited defaults. Link primary papers or official
    library documentation beside the choice they explain. Identify project-specific
    thresholds and rules explicitly; citing a general method does not validate
    a custom procedure. Prefer versioned API links when behavior is version-sensitive.

@@ -5,7 +5,7 @@ Run from the repository root with its existing Python environment:
 
 No fitting, worker pool, environment synchronization, or dashboard access.
 Only the evidence JSON and documentation figure are written.
-This is a reproduction utility for the dated next_run_001/002/003 comparison,
+This is a reproduction utility for the dated next_run_001 through 005 comparison,
 not a pipeline stage or a general-purpose run selector.
 """
 if __package__ in (None, ""):
@@ -28,8 +28,61 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE_PATH = ROOT / 'docs/validation/statistical-choices-evidence.json'
 FIGURE_PATH = ROOT / 'docs/assets/statistical-choices-comparison.png'
-RUNS = ['next_run_001', 'next_run_002', 'next_run_003']
+RUNS = [f'next_run_{number:03d}' for number in range(1, 6)]
 HIST_EDGES = np.linspace(0, 1, 51)
+NON_SCIENTIFIC_SETTINGS = {
+    'cache_dir', 'plot_only', 'resume', 'save_figures', 'plot_actual_trial_id',
+    'n_jobs', 'par_verbose', 'max_sessions_to_run', 'session_list_file',
+}
+CONTRASTS = [
+    ('next_run_001', 'next_run_002', {'logistic_calibration_method'}, 'calibration with C search'),
+    ('next_run_001', 'next_run_003', {'grid_search_for_c'}, 'C search with calibration'),
+    ('next_run_001', 'next_run_004', {'grid_search_for_c', 'logistic_calibration_method'}, 'both choices disabled'),
+    ('next_run_001', 'next_run_005', {'training_balance'}, 'all-trial class weighting'),
+    ('next_run_003', 'next_run_004', {'logistic_calibration_method'}, 'calibration at fixed C=1'),
+    ('next_run_002', 'next_run_004', {'grid_search_for_c'}, 'C search without calibration'),
+]
+
+
+def scientific_settings(config):
+    """Compare recorded choices, translating the old boolean without new defaults."""
+    settings = {key: value for key, value in config.items() if key not in NON_SCIENTIFIC_SETTINGS}
+    if 'balance_decoder_training_trials' in settings:
+        previous = settings.pop('balance_decoder_training_trials')
+        assert type(previous) is bool, 'Invalid historical balancing boolean'
+        mode = 'balanced_training_trials' if previous else 'none'
+        assert settings.get('training_balance', mode) == mode, 'Conflicting balancing settings'
+        settings['training_balance'] = mode
+    assert 'training_balance' in settings, 'Training balance was not recorded'
+    return settings
+
+
+def config_differences(first, second):
+    return {key: [first.get(key), second.get(key)] for key in sorted(set(first) | set(second))
+            if first.get(key) != second.get(key)}
+
+
+def completed_stage(manifest, stage):
+    return next((item for item in manifest['stages']
+                 if item['stage'] == stage and item['status'] == 'complete'), None)
+
+
+def run_manifests(folder, cached_config):
+    """Identify fitting time and the latest completed state invocation separately."""
+    manifests = [(path, json.loads(path.read_text())) for path in sorted((folder / 'manifests').glob('*.json'))]
+    fitting = [(path, item) for path, item in manifests
+               if completed_stage(item, 'decode') is not None
+               and not item['settings']['decode']['plot_only']]
+    assert len(fitting) == 1, f'{folder.name}: choose the actual fitting invocation explicitly'
+    fit_path, fit = fitting[0]
+    assert scientific_settings(fit['settings']['decode']) == scientific_settings(cached_config)
+    state_runs = [(path, item) for path, item in manifests if completed_stage(item, 'states') is not None]
+    assert state_runs, f'{folder.name}: no completed state invocation'
+    state_path, state = state_runs[-1]
+    state_config = {key: value for key, value in state['settings']['states'].items()
+                    if key not in {'cache_dir', 'on_duration_xmax', 'off_duration_xmax',
+                                   'compare_with_cc_skipped_on', 'compare_with_cc_skipped_off'}}
+    return fit_path, fit, state_path, state, state_config
 
 def digest(path):
     result = hashlib.sha256()
@@ -76,16 +129,26 @@ def run_summary(run):
     folder = ROOT / 'cache' / run
     decode_path = folder / 'decode/decoding_confidence.pkl'
     state_path = folder / 'states/on_off_states.pkl'
-    before = {str(p.relative_to(ROOT)): digest(p) for p in [decode_path, state_path]}
-    states = {d['session']: d for d in read(state_path)}
+    source_paths = [decode_path, state_path, folder / 'select/cell_screening.pkl']
+    before = {str(p.relative_to(ROOT)): digest(p) for p in source_paths}
+    state_rows = read(state_path)
+    states = {d['session']: d for d in state_rows}
+    assert len(states) == len(state_rows), f'{run}: duplicate state sessions'
     decoded = read(decode_path)
     summaries = {}; compact = {}; config = decoded[0]['config']
+    assert len({d['session'] for d in decoded}) == len(decoded), f'{run}: duplicate decoded sessions'
+    assert {d['session'] for d in decoded} == set(states), f'{run}: decode/state sessions differ'
+    fit_path, manifest, states_manifest_path, states_manifest, state_config = run_manifests(folder, config)
+    manifest_hashes = {str(path.relative_to(ROOT)): digest(path) for path in sorted({fit_path, states_manifest_path})}
     for d in decoded:
         session = d['session']; s = states[session]
+        assert scientific_settings(d['config']) == scientific_settings(config), (run, session, 'config')
         assert s['decoding_fingerprint'] == d['fingerprint']
         assert np.array_equal(s['trial_idx'], d['trial_idx'])
         assert np.array_equal(s['time_bins'], d['time_bins'])
         assert np.all(d['decoding_test_labels'] == 1)
+        assert s['z_threshold_on'] == state_config['z_threshold_on']
+        assert s['z_threshold_off'] == state_config['z_threshold_off']
         times = d['time_bins']; delay = (times >= 500) & (times <= 1400)
         assert delay.sum() == 91 and len(times) == 161
         p = d['decoding_confidence']; null = d['decoding_confidence_null']
@@ -102,7 +165,7 @@ def run_summary(run):
                  'null_delay': metrics(null[:, delay]),
                  'null_mean_delay': float(mu[:, delay].mean()),
                  'mean_null_sd_delay': float(sd[:, delay].mean()),
-                 'fraction_on_probability_cutoff_above_one_delay': float((mu[:,delay]+1.645*sd[:,delay]>1).mean()),
+                 'fraction_on_probability_cutoff_above_one_delay': float((mu[:,delay]+state_config['z_threshold_on']*sd[:,delay]>1).mean()),
                  'null_sd_delay_quantiles': np.quantile(sd[:, delay], [.1, .5, .9]).tolist(),
                  'C_observed_delay': counts_c(c_obs[:, delay]),
                  'C_null_delay': counts_c(c_null[:, delay]),
@@ -122,11 +185,6 @@ def run_summary(run):
         summaries[session] = entry
     del decoded
     gc.collect()
-    paths = sorted((folder / 'manifests').glob('*.json'))
-    manifests = [json.loads(p.read_text()) for p in paths]
-    fitting = [m for m in manifests if not m['settings']['decode']['plot_only']]
-    assert len(fitting) == 1, f'{run}: choose the actual fitting invocation explicitly'
-    manifest = fitting[0]
     aggregate = {'sessions': len(summaries), 'trials': sum(s['trials'] for s in summaries.values())}
     for period in ['observed_all_bins', 'observed_delay', 'null_delay']:
         total = sum(s[period]['n'] for s in summaries.values())
@@ -143,10 +201,15 @@ def run_summary(run):
         counts = {c: sum(s[key][c]['count'] for s in summaries.values()) for c in ['1.0','0.1','0.01']}
         aggregate[key] = {c: {'count': n, 'fraction': n/sum(counts.values())} for c, n in counts.items()}
     aggregate['null_hist_delay'] = np.sum([s['null_hist_delay'] for s in summaries.values()], axis=0).tolist()
-    timing = next(s for s in manifest['stages'] if s['stage'] == 'decode')
-    fingerprints = {str(p.relative_to(ROOT)): digest(p) for p in [decode_path, state_path]}
+    timing = completed_stage(manifest, 'decode')
+    fingerprints = {str(p.relative_to(ROOT)): digest(p) for p in source_paths}
     assert fingerprints == before, f'{run}: files changed while reading'
+    assert {path: digest(ROOT / path) for path in manifest_hashes} == manifest_hashes
     return {'config': config, 'fitting_manifest_id': manifest['run_id'],
+            'scientific_config': scientific_settings(config),
+            'state_config': state_config, 'state_manifest_id': states_manifest['run_id'],
+            'manifest_fingerprints': manifest_hashes,
+            'decode_workers': config['n_jobs'],
             'decode_wall_seconds': timing['seconds'], 'fingerprints': fingerprints,
             'aggregate': aggregate, 'per_session': summaries}, compact
 
@@ -170,6 +233,7 @@ def compare(base, other, a_summary, b_summary):
         selected_c1 = a['C'] == 0
         if selected_c1.any():c1_prob_deltas.extend(np.abs(a['p'][selected_c1]-b['p'][selected_c1]).tolist())
         per_session[session] = {'other_minus_baseline_brier_delay': b_summary['per_session'][session]['observed_delay']['brier']-a_summary['per_session'][session]['observed_delay']['brier'],
+                                'other_minus_baseline_log_loss_delay': b_summary['per_session'][session]['observed_delay']['log_loss']-a_summary['per_session'][session]['observed_delay']['log_loss'],
                                 'mean_abs_probability_difference_delay': float(np.abs(pd).mean()),
                                 'off_mask_disagreement_delay': float(off_diff.mean()),
                                 'mean_max_off_difference_ms': float(delta.mean()),
@@ -184,8 +248,43 @@ def compare(base, other, a_summary, b_summary):
             'max_off_other_shorter_count': int(np.sum(np.array(max_deltas)<0)),
             'max_off_mean_abs_change_ms': float(np.abs(max_deltas).mean()),
             'sessions_other_has_lower_preferred_only_brier': sum(s['other_minus_baseline_brier_delay']<0 for s in per_session.values()),
+            'sessions_other_has_lower_preferred_only_log_loss': sum(s['other_minus_baseline_log_loss_delay']<0 for s in per_session.values()),
+            'other_minus_baseline_brier_delay': b_summary['aggregate']['observed_delay']['brier']-a_summary['aggregate']['observed_delay']['brier'],
+            'other_minus_baseline_log_loss_delay': b_summary['aggregate']['observed_delay']['log_loss']-a_summary['aggregate']['observed_delay']['log_loss'],
             'max_abs_probability_difference_where_baseline_C_is_1': float(max(c1_prob_deltas,default=0)),
             'per_session': per_session}
+
+
+def compare_contrast(baseline, other, expected, label, runs, datasets):
+    a, b = runs[baseline], runs[other]
+    difference = config_differences(a['scientific_config'], b['scientific_config'])
+    assert set(difference) == expected, (baseline, other, difference)
+    assert a['state_config'] == b['state_config'], (baseline, other, 'state methods differ')
+    result = compare(datasets[baseline], datasets[other], a, b)
+    result.update({
+        'contrast': label,
+        'scientific_config_differences': difference,
+        'cached_config_differences': config_differences(
+            {k: v for k, v in a['config'].items() if k not in NON_SCIENTIFIC_SETTINGS},
+            {k: v for k, v in b['config'].items() if k not in NON_SCIENTIFIC_SETTINGS}),
+        'state_config_identical': True,
+    })
+    return result
+
+
+def calibration_c_effects(runs):
+    """Descriptive 2x2 contrasts; no independent-bin inferential test."""
+    result = {}
+    for metric in ('brier', 'log_loss'):
+        a, b, c, d = [runs[run]['aggregate']['observed_delay'][metric] for run in RUNS[:4]]
+        result[metric] = {
+            'calibration_minus_none_with_C_search': a - b,
+            'calibration_minus_none_with_fixed_C': c - d,
+            'C_search_minus_fixed_with_calibration': a - c,
+            'C_search_minus_fixed_without_calibration': b - d,
+            'difference_of_calibration_effects_search_minus_fixed': (a - b) - (c - d),
+        }
+    return result
 
 
 def prior_experiments(previous, recorded):
@@ -228,32 +327,27 @@ def prior_experiments(previous, recorded):
 
 
 def main():
-    evidence = {'analysis_date':'2026-09-28','population':'preferred-cue test trials only; all labels = 1',
+    evidence = {'analysis_date':'2026-09-29','population':'preferred-cue test trials only; all labels = 1',
                 'delay_bin_starts_ms':[500,1400], 'delay_bin_count':91,
                 'aggregation':'each trial-bin equally weighted; descriptive paired comparisons, not independent-bin tests',
                 'histogram_edges':HIST_EDGES.tolist(),'runs':{},'comparisons':{}}
-    base = None; compact_runs = {}
+    datasets = {}
     for run in RUNS:
         summary, compact = run_summary(run);evidence['runs'][run]=summary
-        if base is None:base=compact
-        else:
-            evidence['comparisons'][run+'_vs_next_run_001'] = compare(base,compact,evidence['runs']['next_run_001'],summary)
-            ignore={'cache_dir','plot_only'}
-            expected={'logistic_calibration_method'} if run=='next_run_002' else {'grid_search_for_c'}
-            bc=evidence['runs']['next_run_001']['config'];oc=summary['config']
-            diff={k:[bc.get(k),oc.get(k)] for k in set(bc)|set(oc) if bc.get(k)!=oc.get(k) and k not in ignore}
-            assert set(diff)==expected,diff
-            evidence['comparisons'][run+'_vs_next_run_001']['cached_config_differences']=diff
+        datasets[run] = compact
         focal=compact['221024'];row=int(np.flatnonzero(focal['trial_idx']==136)[0])
         summary['session221024_trial136']={'max_off_ms':float(focal['max_off'][row]),'total_off_ms':float(focal['total_off'][row]),
                                          'critical_bins':{}}
         for target_time in [830,910]:
             i=int(np.flatnonzero(focal['times']==target_time)[0]);p=float(focal['p'][row,i]);mu=float(focal['mu'][row,i]);sd=float(focal['sd'][row,i])
-            summary['session221024_trial136']['critical_bins'][str(target_time)]={'probability':p,'null_mean':mu,'null_sd':sd,'z':(p-mu)/sd,'off_probability_cutoff':mu+.842*sd,'C':[1,.1,.01][int(focal['C'][row,i])]}
-        compact_runs[run]={'max_off':np.concatenate([d['max_off'] for d in compact.values()]),'focal':{k:v.copy() if isinstance(v,np.ndarray) else v for k,v in focal.items() if k not in ['C_null']}}
-        if compact is not base:del compact
+            summary['session221024_trial136']['critical_bins'][str(target_time)]={'probability':p,'null_mean':mu,'null_sd':sd,'z':(p-mu)/sd,'off_probability_cutoff':mu+summary['state_config']['z_threshold_off']*sd,'C':[1,.1,.01][int(focal['C'][row,i])]}
         gc.collect()
-        print(run, json.dumps(summary['aggregate']), flush=True)
+        print(run, json.dumps({'brier':summary['aggregate']['observed_delay']['brier'],
+                              'mean_max_off_ms':summary['aggregate']['max_off']['mean']}), flush=True)
+    for baseline, other, expected, label in CONTRASTS:
+        evidence['comparisons'][other+'_vs_'+baseline] = compare_contrast(
+            baseline, other, expected, label, evidence['runs'], datasets)
+    evidence['calibration_C_factorial_effects'] = calibration_c_effects(evidence['runs'])
     previous=ROOT/'cache/comparisons/run_037_vs_next_001_221024'
     recorded = json.loads(EVIDENCE_PATH.read_text()).get('prior_experiments', {}) if EVIDENCE_PATH.exists() else {}
     evidence['prior_experiments'] = prior_experiments(previous, recorded)
@@ -264,25 +358,51 @@ def main():
     import matplotlib.pyplot as plt
     from scripts.next.figure_exports import save_figure
     plt.rcParams.update({'font.size':10,'axes.spines.top':False,'axes.spines.right':False})
-    fig,axes=plt.subplots(2,2,figsize=(12,8),layout='constrained')
-    colors=['#267b9a','#d67b43','#735aa8'];labels=['001: calibrated + C search','002: uncalibrated + C search','003: calibrated + C = 1']
+    fig,axes=plt.subplots(3,2,figsize=(13,13),layout='constrained')
+    colors=['#267b9a','#d67b43','#735aa8','#b49529','#248656']
+    labels=['001: downsampled, calibrated, C search', '002: downsampled, uncalibrated, C search',
+            '003: downsampled, calibrated, C = 1', '004: downsampled, uncalibrated, C = 1',
+            '005: weighted, calibrated, C search']
     for run,color,label in zip(RUNS,colors,labels):
         agg=evidence['runs'][run]['aggregate'];hist=np.asarray(agg['null_hist_delay'],dtype=float)
         axes[0,0].stairs(hist/hist.sum()/.02,HIST_EDGES,color=color,label=label,lw=1.8)
-        v=np.sort(compact_runs[run]['max_off']);axes[0,1].step(v,np.arange(1,len(v)+1)/len(v),where='post',color=color,label=label,lw=1.8)
+        v=np.sort(np.concatenate([d['max_off'] for d in datasets[run].values()]));axes[0,1].step(v,np.arange(1,len(v)+1)/len(v),where='post',color=color,label=label,lw=1.8)
     axes[0,0].set(xlabel='Shuffled-null preferred-cue probability',ylabel='Density',title='A  Calibration changes the null probability scale')
-    axes[0,0].legend(fontsize=8)
+    axes[0,0].legend(fontsize=7.5)
     axes[0,1].set(xlabel='Maximum OFF duration per trial (ms)',ylabel='Fraction of trials at or below duration',title='B  State durations depend on statistical choices')
     sessions=list(evidence['runs'][RUNS[0]]['per_session'])
-    for j,other in enumerate(RUNS[1:]):
-        a=[evidence['runs'][RUNS[0]]['per_session'][s]['observed_delay']['brier'] for s in sessions]
-        b=[evidence['runs'][other]['per_session'][s]['observed_delay']['brier'] for s in sessions]
-        ax=axes[1,j];ax.scatter(a,b,c=colors[j+1],s=28,alpha=.8)
-        lim=[min(a+b)*.9,max(a+b)*1.06];ax.plot(lim,lim,'--',c='gray',lw=1)
-        ax.set(xlim=lim,ylim=lim,xlabel='001 calibrated + C search: Brier',ylabel=f'{other}: Brier',title=f'{"C" if j==0 else "D"}  Preferred-cue-only scores: 001 vs {other[-3:]}')
-        ax.text(.04,.95,'Each point = one session\nBelow line favors the alternative',transform=ax.transAxes,ha='left',va='top',fontsize=9)
+    def scores(run):
+        return [evidence['runs'][run]['per_session'][s]['observed_delay']['brier'] for s in sessions]
+    def scatter(ax, pairs, xlabel, ylabel, title, note):
+        values = []
+        for a, b, color, marker, label in pairs:
+            x, y = scores(a), scores(b)
+            values.extend(x+y)
+            ax.scatter(x,y,c=color,marker=marker,s=28,alpha=.8,label=label)
+        lim=[min(values)*.9,max(values)*1.06]
+        ax.plot(lim,lim,'--',c='gray',lw=1)
+        ax.set(xlim=lim,ylim=lim,xlabel=xlabel,ylabel=ylabel,title=title)
+        ax.text(.04,.95,note,transform=ax.transAxes,ha='left',va='top',fontsize=8)
+        ax.legend(loc='lower right',fontsize=8)
+    scatter(axes[1,0], [(RUNS[0],RUNS[1],colors[1],'o','C search: 001 vs 002'),
+                       (RUNS[2],RUNS[3],colors[3],'s','C = 1: 003 vs 004')],
+            'Calibrated Brier','Uncalibrated Brier','C  Calibration at both C settings',
+            'Above line favors calibration')
+    scatter(axes[1,1], [(RUNS[0],RUNS[2],colors[2],'o','Calibrated: 001 vs 003'),
+                       (RUNS[1],RUNS[3],colors[3],'s','Uncalibrated: 002 vs 004')],
+            'C-search Brier','Fixed C = 1 Brier','D  C search with / without calibration',
+            'Above line favors C search')
+    scatter(axes[2,0], [(RUNS[0],RUNS[4],colors[4],'o','001 vs 005')],
+            'Downsampled Brier','All-trial weighted Brier','E  Training balance across 25 sessions',
+            'Below line favors class weighting')
+    hours=[evidence['runs'][run]['decode_wall_seconds']/3600 for run in RUNS]
+    axes[2,1].barh([run[-3:] for run in RUNS],hours,color=colors)
+    axes[2,1].invert_yaxis()
+    for i,hours_i in enumerate(hours): axes[2,1].text(hours_i+.2,i,f'{hours_i:.2f} h',va='center',fontsize=9)
+    axes[2,1].set(xlabel='Decoder-stage wall time (hours; 10 workers)',xlim=(0,max(hours)*1.2),
+                  title='F  Actual fitting invocations')
     fig.suptitle('Completed-run evidence · 25 aligned sessions · delay-bin starts 500–1400 ms',fontsize=13)
-    fig.supxlabel('Observed scores contain preferred-cue test trials only; they do not establish two-class calibration.\nAll three runs downsample training classes and use 100 independent-per-bin label shuffles.',fontsize=9)
+    fig.supxlabel('Panels C–E: one point per session. Observed scores use preferred-cue test trials only.\nAll five runs use 100 independent-per-bin label shuffles. Runtime is not a controlled hardware/load benchmark.',fontsize=9)
     FIGURE_PATH.parent.mkdir(exist_ok=True)
     save_figure(fig,FIGURE_PATH,dpi=160);plt.close(fig)
     print('Wrote documentation evidence and figure; source caches unchanged.',flush=True)

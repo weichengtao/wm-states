@@ -8,8 +8,10 @@ refer to `scripts/next/`.
 
 For the empirical rationale behind training-class weighting, confidence
 calibration, and C selection, see [Statistical choices](statistical-choices.md).
-That decision record retains the dated experiments motivating the implemented
-weighting policy and the limits of their evidence.
+That decision record compares five completed runs, including the weighted
+default, and retains the earlier focal seed experiment. It separates modest
+production probability-score gains from evidence about seed stability and
+explains why shorter OFF intervals alone do not validate an estimator.
 
 The default template command runs the first five stages; add `--stages all` to include
 the six preparation and mixed-effects stages described here. See

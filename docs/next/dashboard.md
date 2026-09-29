@@ -253,7 +253,10 @@ preset's scientific choices and [Pipeline stages](pipeline.md) for dependencies.
 Under **Decode**, **Training balance** selects **Balanced class weights**,
 **Balanced training trials**, or **None**. Default pipeline and Smoke test use
 class weights throughout fitting, C search, and calibration, including nulls.
-Example pipeline keeps the historical downsampling procedure. Existing saved
+Example pipeline keeps the historical downsampling procedure. The
+[statistical choices comparison](statistical-choices.md) evaluates the weighted
+default alongside calibration and C-selection alternatives in five completed
+runs. Existing saved
 templates retain their prior choice; old balancing booleans are translated when
 used or imported. See [training-class balance](configuration.md#training-class-balance).
 

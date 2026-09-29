@@ -91,6 +91,12 @@
   },
   "helpTopics": [
     {
+      "title": "Evidence for statistical choices",
+      "keywords": "statistical choices confidence calibration regularization C grid search class weighting seed stability off duration next_run_004 next_run_005",
+      "answer": "The five-run comparison covers training balance, calibration, and C selection. Weighted training modestly improves pooled preferred-cue probability scores, with mixed session effects. Calibration and C selection also change null probabilities and state durations. Shorter OFF states alone do not indicate a better estimator; one production seed cannot establish seed stability.",
+      "path": "next/statistical-choices/"
+    },
+    {
       "title": "Balance decoder training classes",
       "keywords": "training_balance class weights imbalance balanced training trials downsampling calibration none",
       "answer": "Default pipeline retains all eligible training trials and balances classifier weights within each fit and fold. Calibration gives equal total weight to each cue, including in shuffled null fits. Choose Balanced training trials for the historical downsampling procedure, or None for all trials with unweighted fitting and calibration.",

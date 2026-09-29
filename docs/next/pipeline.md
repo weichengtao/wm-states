@@ -50,9 +50,12 @@ produce the same stage outputs but do not create runner-history records.
 
 ## Default stages, one script at a time
 
-These standalone commands reproduce the first five stages of the example
-preset and use the same session list as the [getting-started command](getting-started.md). Run them in
-order with the same data and cache directories.
+These standalone commands reproduce the first five stages of
+`configs/next/default_pipeline.json` and use the same session list as the
+[getting-started command](getting-started.md). They explicitly enable balanced
+class weights, C search, and sigmoid calibration; standalone scripts do not
+load the JSON template automatically. Run them in order with the same data and
+cache directories.
 
 ```bash
 # 1. Select decoder cells and cache the selection results.
@@ -87,6 +90,7 @@ uv run python scripts/next/decoding_confidence.py \
   --no-preserve-null-time-structure \
   --n-jobs 10 \
   --cells-used-for-decoder STATIONARY \
+  --training-balance BALANCED_CLASS_WEIGHTS \
   --svm-kernel LINEAR \
   --decoder-model LOGISTIC_REGRESSION \
   --logistic-calibration-method SIGMOID \

@@ -49,6 +49,16 @@ observed and shuffled-null fits. `decode.training_balance` selects
 downsampling; the smoke template uses weighting. See
 [training-class balance](docs/next/configuration.md#training-class-balance) for
 statistical details and migration. Use a fresh run directory when changing modes.
+Standalone scripts do not load this template automatically; the
+[stage-by-stage commands](docs/next/pipeline.md#default-stages-one-script-at-a-time)
+explicitly select the weighted policy. Bare script defaults retain downsampling
+for compatibility.
+
+The [statistical choices comparison](docs/next/statistical-choices.md) covers
+five completed runs, including the weighted default. Weighting modestly improves
+pooled preferred-cue probability scores, with mixed effects across sessions;
+calibration and C selection also materially affect the fitted nulls and state
+durations. Shorter OFF states alone do not indicate a better estimator.
 
 Set the null count in `decode.n_decode_shuffle` in the JSON preset. The default
 uses 100; the smoke preset uses 3. Use `--dry-run` to inspect resolved settings

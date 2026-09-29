@@ -9,13 +9,13 @@ choices, and distinguish standard estimators from the custom state rules.
 
 For the evidence behind training-class weighting, retained confidence
 calibration, and C search, see [Statistical choices](statistical-choices.md).
-That page distinguishes completed-run comparisons from the focal weighting
-experiment and the implemented analysis policy.
+That page compares five completed runs, including the weighted default, and
+distinguishes those production results from the earlier focal seed experiment.
 
 - Screening always uses a full session. Each selection result contains
   `num_trials` and one set of selected, stationary, and presence-passing cells.
   There are no session partitions or leave-one-out cell-selection variants.
-- Selection uses correct trials for PEV and presence filtering. The example
+- Selection uses correct trials for PEV and presence filtering. The default preset
   explicitly enables presence, baseline drift, and PEV checks, and disables
   firing-rate, variance-ratio, and preferred-cue drift checks. Enabled checks
   reject unavailable statistics; disabled checks do not reject cells or run
@@ -24,7 +24,7 @@ experiment and the implemented analysis policy.
   cue undefined. This is an error for otherwise selected cells; already-rejected
   cells with unavailable cue metadata produce a warning.
 - Extended diagnostic CSVs use the same correct-trial population and configured
-  presence window (the example uses [−400, 1400) ms). Their activity traces and additional
+  presence window (the default preset uses [−400, 1400) ms). Their activity traces and additional
   baseline Spearman correlations still cover all trials. Diagnostic figure
   targets and caps affect plots only, with no change to screening or CSV rows; see
   [Diagnostic tools](outputs.md#diagnostic-tools).

@@ -573,7 +573,9 @@ the current labels. Both null time-structure policies support every balance mode
 No held-out trial activity participates in these steps. Class weighting removes
 random trial omission, but finite-sample influence, CV randomness, and null Monte
 Carlo variation remain. See [Statistical choices](statistical-choices.md) for the
-supporting experiment and its limits.
+five-run production comparison, the earlier focal seed experiment, and their
+limits. The weighted production run has only one fitting seed; it does not
+establish seed stability across sessions.
 
 Old JSON and saved templates using `balance_decoder_training_trials=true/false`
 map to `BALANCED_TRAINING_TRIALS`/`NONE`; conflicting old and new settings are
@@ -628,11 +630,15 @@ The runner accepts this option through stage JSON, not a
 it as a boolean control in the decoding settings, with the same default and
 saved JSON value.
 
-For a standalone decoder, enable it with:
+For a standalone decoder, enable it alongside the default template's weighted
+training, C search, and sigmoid calibration choices:
 
 ```bash
 uv run python scripts/next/decoding_confidence.py \
   --data-dir data/nature --cache-dir cache/next_shared_null \
+  --training-balance BALANCED_CLASS_WEIGHTS \
+  --grid-search-for-c \
+  --logistic-calibration-method SIGMOID --logistic-calibration-cv 5 \
   --n-decode-shuffle 100 --seed 42 --preserve-null-time-structure
 ```
 
