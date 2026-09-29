@@ -1,17 +1,19 @@
 """Local MkDocs serving and an accessible first-build page."""
+from html import escape
 from pathlib import Path
 
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import Headers
+from starlette.exceptions import HTTPException
 
 
 DOCS_BUILD_COMMAND = 'uv run --locked --group dashboard --group docs python -m mkdocs build --strict'
-MISSING_DOCS_HTML = """<!doctype html>
+DOCUMENTATION_PAGE_HTML = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Build the documentation · WM States</title>
+<title>__PAGE_TITLE__ · WM States</title>
 <style>
 :root { color-scheme: light dark; --bg:#f3f7f6; --card:#fff; --ink:#152f35;
   --muted:#50666c; --border:#dce8e5; --accent:#086664; --code:#edf4f2; }
@@ -39,7 +41,15 @@ a:focus-visible,button:focus-visible,code:focus-visible { outline:3px solid var(
   --muted:#b2c7c8; --border:#30474b; --accent:#82dbca; --code:#102127; } .primary { color:#102127; } }
 </style>
 </head>
-<body><main aria-labelledby="docs-title">
+<body><main aria-labelledby="docs-title">__PAGE_BODY__</main>__PAGE_SCRIPT__</body></html>"""
+
+
+def _documentation_page(title, body, script=''):
+    return (DOCUMENTATION_PAGE_HTML.replace('__PAGE_TITLE__', escape(title))
+            .replace('__PAGE_BODY__', body).replace('__PAGE_SCRIPT__', script))
+
+
+MISSING_DOCS_HTML = _documentation_page('Build the documentation', """
 <div class="eyebrow">WM STATES / PIPELINE GUIDE</div>
 <h1 id="docs-title">Documentation is not built yet</h1>
 <p>The dashboard is ready. Build the local guide to view the analysis methods and instructions here.</p>
@@ -47,8 +57,8 @@ a:focus-visible,button:focus-visible,code:focus-visible { outline:3px solid var(
 <div class="command"><pre><code id="build-command" tabindex="0" aria-label="Documentation build command">__BUILD_COMMAND__</code></pre>
 <div class="copy-row"><button id="copy-command" type="button" hidden>Copy command</button><span id="copy-status" role="status" aria-live="polite"></span></div></div>
 <p class="note">This builds only the documentation. When it finishes, reload this page. Your running analyses can continue.</p>
-<div class="actions"><a class="primary" href="/">Return to dashboard</a><a href="">Reload page</a></div>
-</main>
+<div class="actions"><a class="primary" href="__DASHBOARD_URL__">Return to dashboard</a><a href="">Reload page</a></div>
+""".replace('__BUILD_COMMAND__', DOCS_BUILD_COMMAND), """
 <script>
 const copy = document.getElementById('copy-command');
 if (navigator.clipboard) {
@@ -64,7 +74,14 @@ if (navigator.clipboard) {
   });
 }
 </script>
-</body></html>""".replace('__BUILD_COMMAND__', DOCS_BUILD_COMMAND)
+""")
+
+NOT_FOUND_HTML = _documentation_page('Page not found', """
+<div class="eyebrow">WM STATES / PIPELINE GUIDE</div>
+<h1 id="docs-title">Documentation page not found</h1>
+<p>This link may be outdated, or the page may have moved. Open the guide to find the current instructions and analysis methods.</p>
+<div class="actions"><a class="primary" href="__DOCS_URL__">Open guide</a><a href="__DASHBOARD_URL__">Return to dashboard</a></div>
+""")
 
 
 def _accepts_html(scope):
@@ -83,7 +100,10 @@ def _accepts_html(scope):
 class DocumentationFiles(StaticFiles):
     """Serve MkDocs pages, including sites built after the server starts."""
 
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, *, dashboard_url: str = '/wm-states/dashboard/',
+                 docs_url: str = '/wm-states/docs/'):
+        self.docs_url = docs_url
+        self.dashboard_url = dashboard_url
         self.site_directory = directory
         super().__init__(directory=directory, html=True, check_dir=False)
 
@@ -96,9 +116,28 @@ class DocumentationFiles(StaticFiles):
         if not (self.site_directory / 'index.html').is_file():
             headers = {'Cache-Control': 'no-store', 'Vary': 'Accept'}
             if _accepts_html(scope):
-                return HTMLResponse(MISSING_DOCS_HTML, status_code=503, headers=headers)
+                return HTMLResponse(
+                    MISSING_DOCS_HTML.replace('__DASHBOARD_URL__', escape(self.dashboard_url, quote=True)),
+                    status_code=503, headers=headers)
             return JSONResponse({
                 'detail': f'Documentation is not built. From the repository root, run {DOCS_BUILD_COMMAND}, '
                           'or launch the dashboard with --build to build both sites.',
             }, status_code=503, headers=headers)
-        return await super().get_response(path, scope)
+        try:
+            response = await super().get_response(path, scope)
+            if response.status_code != 404:
+                return response
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+        # MkDocs builds a single root-relative 404 page. Its assets and navigation
+        # cannot describe every runtime mount (or a different GitHub Pages base).
+        # Keep the integrated missing-page view self-contained and leave the
+        # generated static 404 file untouched for standalone hosting.
+        headers = {'Cache-Control': 'no-store', 'Vary': 'Accept'}
+        if _accepts_html(scope):
+            html = (NOT_FOUND_HTML.replace('__DOCS_URL__', escape(self.docs_url, quote=True))
+                    .replace('__DASHBOARD_URL__', escape(self.dashboard_url, quote=True)))
+            return HTMLResponse(html, status_code=404, headers=headers)
+        return JSONResponse({'detail': 'Documentation page or asset not found.'},
+                            status_code=404, headers=headers)

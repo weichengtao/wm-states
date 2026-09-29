@@ -53,19 +53,21 @@ class DashboardTailnetTest(unittest.TestCase):
         for origin in ORIGINS:
             with self.subTest(origin=origin):
                 client = self.client(origin)
-                for path in ('/', '/runs', '/assets/app.js', '/docs/',
-                             '/docs/next/methods/', '/api/health', '/api/schema'):
+                for path in ('/', '/runs', '/assets/app.js', '/wm-states/docs/',
+                             '/wm-states/docs/next/methods/', '/api/health', '/api/schema',
+                             '/wm-states/dashboard/', '/wm-states/dashboard/assets/app.js',
+                             '/wm-states/dashboard/api/health', '/wm-states/dashboard/api/schema'):
                     self.assertEqual(client.get(path).status_code, 200, (origin, path))
                 self.assertEqual(client.get('/api/jobs').json()['jobs'][0]['id'], 'completed')
-                redirect = client.get('/docs/next/methods', follow_redirects=False)
-                self.assertEqual(redirect.headers['location'], origin + '/docs/next/methods/')
+                redirect = client.get('/wm-states/docs/next/methods', follow_redirects=False)
+                self.assertEqual(redirect.headers['location'], origin + '/wm-states/docs/next/methods/')
                 validated = client.post('/api/validate', json=request().model_dump(),
                                         headers={'Origin': origin})
                 self.assertEqual(validated.status_code, 200, validated.text)
                 completed = client.get('/api/paths/complete', params={'path': 'data/'},
                                        headers={'Origin': origin, 'Sec-Fetch-Site': 'same-origin'})
                 self.assertEqual(completed.status_code, 200, completed.text)
-                with client.websocket_connect(origin.replace('http', 'ws', 1) + '/api/jobs/completed/events',
+                with client.websocket_connect(origin.replace('http', 'ws', 1) + '/wm-states/dashboard/api/jobs/completed/events',
                                               headers={'Origin': origin}) as websocket:
                     self.assertEqual(websocket.receive_json()['logs'], ['same manager'])
 
@@ -101,9 +103,9 @@ class DashboardTailnetTest(unittest.TestCase):
                 client = self.client('http://workstation.example.ts.net:8443', app,
                                      client=(proxy, 12345))
                 headers = {'X-Forwarded-Proto': 'https', 'X-Forwarded-For': '100.64.0.2'}
-                response = client.get('/docs/next/methods', headers=headers, follow_redirects=False)
-                self.assertEqual(response.headers['location'], ORIGINS[-1] + '/docs/next/methods/')
-                with client.websocket_connect('ws://workstation.example.ts.net:8443/api/jobs/completed/events', headers={
+                response = client.get('/wm-states/docs/next/methods', headers=headers, follow_redirects=False)
+                self.assertEqual(response.headers['location'], ORIGINS[-1] + '/wm-states/docs/next/methods/')
+                with client.websocket_connect('ws://workstation.example.ts.net:8443/wm-states/dashboard/api/jobs/completed/events', headers={
                     **headers, 'Origin': ORIGINS[-1],
                 }) as websocket:
                     self.assertEqual(websocket.receive_json()['status'], 'complete')
@@ -113,8 +115,8 @@ class DashboardTailnetTest(unittest.TestCase):
         client = self.client(ORIGINS[3], app, client=('100.64.0.2', 12345))
         headers = {'X-Forwarded-Proto': 'https', 'X-Forwarded-For': '127.0.0.1',
                    'X-Forwarded-Host': 'evil.example', 'Tailscale-User-Login': 'spoof@example.com'}
-        response = client.get('/docs/next/methods', headers=headers, follow_redirects=False)
-        self.assertEqual(response.headers['location'], ORIGINS[3] + '/docs/next/methods/')
+        response = client.get('/wm-states/docs/next/methods', headers=headers, follow_redirects=False)
+        self.assertEqual(response.headers['location'], ORIGINS[3] + '/wm-states/docs/next/methods/')
         response = client.post('/api/validate', json=request().model_dump(),
                                headers={**headers, 'Origin': 'https://evil.example'})
         self.assertEqual(response.status_code, 403)

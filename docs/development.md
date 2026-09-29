@@ -53,13 +53,17 @@ trials, and model CV estimates normalization from training rows only.
 
 For everyday use, follow [first-time setup](next/dashboard.md#first-time-setup)
 and [Open the dashboard again](next/dashboard.md#open-the-dashboard-again).
-The backend serves the built interface at `/` and the built guide at `/docs/`
-on port **8000**. The API reference is at `/api/docs`, ReDoc at `/api/redoc`, and
-the OpenAPI schema at `/api/openapi.json`. A separate Vite server
-is only needed while editing the frontend. The
+The backend serves the built interface at `/wm-states/dashboard/` and the built
+guide at `/wm-states/docs/` on port **8000**. The API reference is at
+`/wm-states/dashboard/api/docs`, ReDoc at `/wm-states/dashboard/api/redoc`, and
+the OpenAPI schema at `/wm-states/dashboard/api/openapi.json`.
+`--url-prefix` changes the shared prefix at runtime; one build works at any
+configured prefix. A separate Vite server is only needed while editing the
+frontend. The
 [frontend development workflow](next/dashboard.md#frontend-development) uses
-Vite on port **5173**, with API, WebSocket, and built guide requests proxied to
-port 8000.
+Vite at `http://127.0.0.1:5173/`, with API, WebSocket, and built guide requests
+proxied to port 8000. Use the backend's default `/wm-states` prefix for this
+development workflow.
 Frontend packages are locked in `dashboard/package-lock.json`.
 
 Frontend commands require **Node.js 22.12+ with npm**; see
@@ -83,8 +87,13 @@ for the distinction between local build/job files and configurations to commit.
 ## Serve the documentation
 
 For normal use, the dashboard's `--build` option builds both interfaces and
-serves the guide at `/docs/` on the same server. This build requires Node.js;
-standalone MkDocs needs Python only, with the optional `docs` dependency group.
+serves the guide at `/wm-states/docs/` on the same server. This build requires
+Node.js; standalone MkDocs needs Python only, with the optional `docs` dependency group.
+
+For this integrated guide, configure the path with the dashboard's
+[`--url-prefix`](next/dashboard.md#choose-a-url-prefix). Leave `MKDOCS_SITE_URL`
+unset for normal local/tailnet use: no `mkdocs.yml` edit or rebuild is needed
+when changing only the dashboard prefix.
 
 For **documentation editing with automatic reload**, run from the repository root:
 
@@ -94,6 +103,7 @@ uv run --group dashboard --group docs --locked mkdocs serve --dev-addr 127.0.0.1
 
 Open [http://127.0.0.1:8001/](http://127.0.0.1:8001/). Port 8001 keeps the docs
 preview separate from the dashboard on port 8000, allowing both to run at once.
+This standalone preview does not inherit the dashboard's `--url-prefix`.
 The preview reloads when Markdown or `mkdocs.yml` changes. Keep its terminal
 running and stop it with Ctrl+C.
 The command retains both optional groups in the shared Python environment.
@@ -102,6 +112,16 @@ During frontend editing, use
 open this live preview from the Help panel. The default Vite proxy serves the
 backend's built guide instead. Rebuild the integrated guide after editing;
 `mkdocs serve` does not update the production `site/` directory.
+
+To preview the same documentation path on the standalone MkDocs server, use:
+
+```bash
+MKDOCS_SITE_URL=http://127.0.0.1:8001/wm-states/docs/ \
+  uv run --group dashboard --group docs --locked mkdocs serve --dev-addr 127.0.0.1:8001
+```
+
+Open [http://127.0.0.1:8001/wm-states/docs/](http://127.0.0.1:8001/wm-states/docs/).
+Use this full URL for `VITE_DOCS_BASE_URL` if connecting the frontend preview.
 
 The analysis dependencies do not require the documentation group. A dedicated
 docs-only environment can instead use `uv run --only-group docs --locked` before
@@ -118,20 +138,20 @@ fails on build warnings, including missing documentation links and anchors.
 All pages are explicit entries in `mkdocs.yml`, and the built-in search plugin
 indexes their content. The theme uses system fonts and bundled assets.
 
-The dashboard mounts this directory at `/docs/`. It detects a build added after
-startup; no backend restart is needed. Missing builds return a helpful 503,
+The dashboard mounts this directory at `/wm-states/docs/` by default. It detects
+a build added after startup; no backend restart is needed. Missing builds return a helpful 503,
 while missing guide pages return 404, never the React app. The docs routes are
 registered before the frontend fallback.
 
 You can also serve `site/` with any static HTTP server. Relative documentation
-links and assets work at a site root or project subpath. On a page under `/docs/`,
-`docs/overrides/main.html` checks `/api/health` on that same origin and reveals
-**Back to dashboard** only if the response identifies a healthy `wm-states-next`
+links and assets work at a site root or project subpath. On a page under the
+configured docs path, `docs/overrides/main.html` checks the sibling dashboard
+health endpoint on that same origin and reveals **Back to dashboard** only if the response identifies a healthy `wm-states-next`
 service. The shortcut works through localhost, direct tailnet HTTP, and Serve
 HTTPS without a second hostname list. It stays hidden on standalone/public
 sites; failed checks are silent, and redirects to another service are refused.
-Pages outside `/docs/` do not make this check. The override source is excluded
-from build output. Browsing the guide itself needs no backend or recordings.
+The guide does not require a fixed public hostname or `/wm-states` prefix.
+The override source is excluded from build output. Browsing the guide itself needs no backend or recordings.
 
 ## Publish the guide on GitHub Pages
 
@@ -153,11 +173,12 @@ The public site only needs generated documentation; the FastAPI service,
 recordings, caches, and React dashboard remain local.
 
 All documentation-to-documentation links should stay relative `.md` links.
-Do not prefix them with `/docs/` or `/wm-states/`. MkDocs rewrites them for the
-built pages; see [its link guidance](https://www.mkdocs.org/user-guide/writing-your-docs/#linking-to-pages).
+Do not prefix them with `/wm-states/docs/` or `/wm-states/`. MkDocs rewrites them
+for the built pages; see [its link guidance](https://www.mkdocs.org/user-guide/writing-your-docs/#linking-to-pages).
 The default empty `MKDOCS_SITE_URL` keeps local builds independent of a fixed
-host or port. Setting the public URL changes canonical metadata, not the
-dashboard server's mount point.
+host or port. For `mkdocs build`, the public URL sets canonical metadata and the
+sitemap; for `mkdocs serve`, its path also selects the preview prefix. It never
+changes the dashboard server's mount point.
 
 The dashboard uses its own local guide by default. To deliberately link it to a
 published guide, build its frontend with that guide's base URL:
@@ -168,10 +189,12 @@ VITE_DOCS_BASE_URL=https://weichengtao.github.io/wm-states/ \
 ```
 
 The URL must include the repository prefix. This setting is compiled into the
-frontend; changing it requires another build. Omit it to restore `/docs/`.
+frontend; changing it requires another build. Omit it to use the server's
+configured local guide path (`/wm-states/docs/` by default).
 Stage anchors and topic paths are appended to the chosen base. Use a published
 version that matches the local pipeline, since public docs can describe newer
-code. API reference links always stay with the local backend at `/api/docs`.
+code. API reference links always stay with the local backend at its configured
+API path (`/wm-states/dashboard/api/docs` by default).
 
 ## Edit a guide
 

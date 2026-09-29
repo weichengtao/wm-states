@@ -15,8 +15,10 @@ afterEach(() => vi.unstubAllEnvs());
 describe("documentation URLs", () => {
   it("uses the local docs mount and preserves stage fragments", () => {
     vi.stubEnv("VITE_DOCS_BASE_URL", "");
-    expect(docsHref()).toBe("/docs/");
-    expect(docsHref("next/methods/#decode")).toBe("/docs/next/methods/#decode");
+    expect(docsHref()).toBe("/wm-states/docs/");
+    expect(docsHref("next/methods/#decode")).toBe(
+      "/wm-states/docs/next/methods/#decode",
+    );
   });
   it("retains GitHub Pages subpaths with either trailing slash form", () => {
     for (const base of [
@@ -50,7 +52,9 @@ describe("documentation URLs", () => {
       "https://",
       "docs",
     ])
-      expect(docsHref("next/methods/", base)).toBe("/docs/next/methods/");
+      expect(docsHref("next/methods/", base)).toBe(
+        "/wm-states/docs/next/methods/",
+      );
   });
 });
 

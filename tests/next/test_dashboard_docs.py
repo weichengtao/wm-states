@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import ANY, call, patch
 
 from fastapi.testclient import TestClient
 
@@ -37,10 +37,10 @@ class DocumentationRoutesTest(unittest.TestCase):
         return site
 
     def test_missing_build_is_503_without_falling_through_to_spa(self):
-        response = self.client.get('/docs', follow_redirects=False)
+        response = self.client.get('/wm-states/docs', follow_redirects=False)
         self.assertEqual(response.status_code, 307)
-        self.assertEqual(response.headers['location'], '/docs/')
-        for path in ('/docs/', '/docs/next/methods/', '/docs/assets/theme.css'):
+        self.assertEqual(response.headers['location'], '/wm-states/docs/')
+        for path in ('/wm-states/docs/', '/wm-states/docs/next/methods/', '/wm-states/docs/assets/theme.css'):
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 503)
@@ -49,7 +49,7 @@ class DocumentationRoutesTest(unittest.TestCase):
         self.assertIn('React dashboard', self.client.get('/runs').text)
 
     def test_missing_build_has_accessible_html_for_browsers_and_json_for_api_clients(self):
-        response = self.client.get('/docs/next/methods/', headers={
+        response = self.client.get('/wm-states/docs/next/methods/', headers={
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         })
         self.assertEqual(response.status_code, 503)
@@ -59,44 +59,44 @@ class DocumentationRoutesTest(unittest.TestCase):
         self.assertIn('<html lang="en">', response.text)
         self.assertIn('Documentation is not built yet</h1>', response.text)
         self.assertIn('uv run --locked --group dashboard --group docs python -m mkdocs build --strict', response.text)
-        self.assertIn('href="/">Return to dashboard</a>', response.text)
+        self.assertIn('href="/wm-states/dashboard/">Return to dashboard</a>', response.text)
         self.assertIn('aria-live="polite"', response.text)
         for accept in ('application/json', 'text/html;q=0,application/json'):
             with self.subTest(accept=accept):
-                response = self.client.get('/docs/', headers={'Accept': accept})
+                response = self.client.get('/wm-states/docs/', headers={'Accept': accept})
                 self.assertEqual(response.status_code, 503)
                 self.assertIn('uv run --locked', response.json()['detail'])
 
     def test_docs_built_after_startup_become_available_with_real_assets(self):
-        self.assertEqual(self.client.get('/docs/').status_code, 503)
+        self.assertEqual(self.client.get('/wm-states/docs/').status_code, 503)
         self.build_docs()
-        self.assertIn('Pipeline documentation', self.client.get('/docs/').text)
-        response = self.client.get('/docs/next/methods/', follow_redirects=False)
+        self.assertIn('Pipeline documentation', self.client.get('/wm-states/docs/').text)
+        response = self.client.get('/wm-states/docs/next/methods/', follow_redirects=False)
         self.assertEqual(response.status_code, 200)
         self.assertIn('Analysis methods', response.text)
-        response = self.client.get('/docs/next/methods', follow_redirects=False)
+        response = self.client.get('/wm-states/docs/next/methods', follow_redirects=False)
         self.assertEqual(response.status_code, 307)
-        self.assertTrue(response.headers['location'].endswith('/docs/next/methods/'))
-        response = self.client.get('/docs/assets/theme.css')
+        self.assertTrue(response.headers['location'].endswith('/wm-states/docs/next/methods/'))
+        response = self.client.get('/wm-states/docs/assets/theme.css')
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.headers['content-type'].startswith('text/css'))
-        self.assertEqual(self.client.head('/docs/next/methods/').status_code, 200)
+        self.assertEqual(self.client.head('/wm-states/docs/next/methods/').status_code, 200)
 
     def test_missing_pages_are_true_documentation_404s(self):
         self.build_docs()
-        response = self.client.get('/docs/not-a-page/')
+        response = self.client.get('/wm-states/docs/not-a-page/', headers={'Accept': 'text/html'})
         self.assertEqual(response.status_code, 404)
         self.assertIn('Documentation page not found', response.text)
         self.assertNotIn('React dashboard', response.text)
         (self.root / 'site/404.html').unlink()
-        self.assertEqual(self.client.get('/docs/not-a-page/').status_code, 404)
+        self.assertEqual(self.client.get('/wm-states/docs/not-a-page/').status_code, 404)
 
     def test_docs_do_not_serve_outside_files_through_symlinks(self):
         site = self.build_docs()
         secret = self.root / 'private.txt'
         secret.write_text('private local content')
         (site / 'outside.txt').symlink_to(secret)
-        response = self.client.get('/docs/outside.txt')
+        response = self.client.get('/wm-states/docs/outside.txt')
         self.assertEqual(response.status_code, 404)
         self.assertNotIn('private local content', response.text)
 
@@ -164,7 +164,8 @@ class DashboardBuildTest(unittest.TestCase):
              patch('scripts.next.dashboard.build.build_assets', side_effect=lambda: events.append('build')), \
              patch('uvicorn.run', side_effect=lambda *a, **kw: events.append(('serve', kw))):
             main()
-        self.assertEqual(events, ['build', ('serve', {'factory': True, 'host': 'localhost', 'port': 8020})])
+        self.assertEqual(events, ['build', ('serve', {'host': 'localhost', 'port': 8020, 'proxy_headers': True,
+                                                   'forwarded_allow_ips': '127.0.0.1,::1'})])
 
     def test_build_failure_does_not_start_server_and_default_launch_does_not_build(self):
         with patch('sys.argv', ['dashboard', '--build']), \
@@ -176,8 +177,8 @@ class DashboardBuildTest(unittest.TestCase):
              patch('scripts.next.dashboard.build.build_assets') as build, patch('uvicorn.run') as serve:
             main()
         build.assert_not_called()
-        serve.assert_called_once_with('scripts.next.dashboard.app:create_app', factory=True,
-                                      host='127.0.0.1', port=8000)
+        serve.assert_called_once_with(ANY, host='127.0.0.1', port=8000, proxy_headers=True,
+                                      forwarded_allow_ips='127.0.0.1,::1')
 
 
 if __name__ == '__main__':

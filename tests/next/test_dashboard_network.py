@@ -224,13 +224,13 @@ class DashboardTailnetLauncherTests(unittest.TestCase):
     def test_uses_one_app_and_server_for_all_listeners_and_reports_urls(self):
         output = self.invoke()
         self.bind.assert_called_once_with('127.0.0.1', 8020, TAILNET_IPS)
-        self.create_app.assert_called_once_with(tailnet_ips=TAILNET_IPS)
+        self.create_app.assert_called_once_with(tailnet_ips=TAILNET_IPS, url_prefix='/wm-states')
         self.config.assert_called_once_with(self.create_app.return_value, host='127.0.0.1', port=8020,
                                             proxy_headers=True, forwarded_allow_ips='127.0.0.1,::1')
         self.server.assert_called_once_with(self.config.return_value)
         self.server.return_value.run.assert_called_once_with(sockets=self.listeners)
         self.run.assert_not_called()
-        self.assertIn('http://127.0.0.1:8020/docs/', output)
+        self.assertIn('http://127.0.0.1:8020/wm-states/docs/', output)
         self.assertIn(f'http://[{TAILNET_IPS[1]}]:8020/', output)
         for listener in self.listeners:
             listener.close.assert_called_once_with()
@@ -265,9 +265,9 @@ class DashboardTailnetLauncherTests(unittest.TestCase):
             main()
         self.discover.assert_not_called()
         self.bind.assert_not_called()
-        self.create_app.assert_not_called()
-        self.run.assert_called_once_with('scripts.next.dashboard.app:create_app', factory=True,
-                                         host='127.0.0.1', port=8000)
+        self.create_app.assert_called_once_with(url_prefix='/wm-states')
+        self.run.assert_called_once_with(self.create_app.return_value, host='127.0.0.1', port=8000,
+                                         proxy_headers=True, forwarded_allow_ips='127.0.0.1,::1')
 
     def test_keyboard_interrupt_is_a_quiet_shutdown_and_closes_all_sockets(self):
         self.server.return_value.run.side_effect = KeyboardInterrupt

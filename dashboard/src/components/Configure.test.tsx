@@ -113,7 +113,9 @@ describe("configuration templates", () => {
     expect(visibleText(html)).toContain("Default pipeline");
     expect(visibleText(html)).toContain("Training Balance");
     expect(visibleText(html)).toContain("Balanced class weights");
-    expect(html).toContain("/docs/next/configuration/#training-class-balance");
+    expect(html).toContain(
+      "/wm-states/docs/next/configuration/#training-class-balance",
+    );
   });
   it("checks recordings immediately and keeps the recorded template when copying a run", () => {
     const html = renderConfigure({

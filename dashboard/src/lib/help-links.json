@@ -104,8 +104,8 @@
     },
     {
       "title": "Open the dashboard from another Tailscale device",
-      "keywords": "tailnet tailscale local remote http https serve ip hostname port WebDAV clipboard",
-      "answer": "Start the server with --tailnet to keep local HTTP and add direct HTTP on its discovered Tailscale IPs. Direct IP access needs Tailscale connectivity, but not Serve. Optionally use Serve on an unused HTTPS port such as 8443 beside WebDAV on 443. The guide remains at /docs/. There is no app login or read-only role: limit tailnet access to trusted users/devices. Paths still refer to the server computer.",
+      "keywords": "tailnet tailscale local remote http https serve ip hostname port WebDAV clipboard prefix set-path",
+      "answer": "Start with --tailnet for local and direct Tailscale IP access. The default paths are /wm-states/dashboard/ and /wm-states/docs/. One Serve mapping at /wm-states covers both; include /wm-states in its local target URL too. It can sit beside WebDAV at /. Change both paths with --url-prefix without rebuilding. Limit access to trusted users/devices; file paths refer to the server computer.",
       "path": "next/dashboard/#local-and-tailnet-access"
     },
     {

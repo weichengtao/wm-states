@@ -17,6 +17,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
+import { apiHref, websocketHref } from "@/lib/urls";
 import type { Job } from "@/lib/types";
 import { stageElapsedSeconds } from "@/lib/progress";
 import { legacyTrustStatus } from "@/lib/legacy-trust";
@@ -107,9 +108,8 @@ export default function LiveMonitor({
     };
     const connect = () => {
       if (disposed || done) return;
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       socket = new WebSocket(
-        `${protocol}//${window.location.host}/api/jobs/${encodeURIComponent(activeId)}/events`,
+        websocketHref(`/jobs/${encodeURIComponent(activeId)}/events`),
       );
       socket.onopen = () => {
         if (!disposed && !done) {
@@ -524,7 +524,7 @@ export default function LiveMonitor({
                   />
                   <Button variant="outline" size="sm" asChild>
                     <a
-                      href={`/api/jobs/${encodeURIComponent(job.id)}/log`}
+                      href={apiHref(`/jobs/${encodeURIComponent(job.id)}/log`)}
                       download
                       title="Download the complete log saved so far, including lines outside this preview"
                     >

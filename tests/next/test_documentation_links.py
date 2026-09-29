@@ -1,4 +1,4 @@
-"""Validate dashboard help against real MkDocs output at both supported bases.
+"""Validate dashboard help against real MkDocs output at supported URL prefixes.
 
 The documentation dependencies are optional for analysis-only installations.
 With the ``docs`` dependency group installed, this builds the actual theme and
@@ -33,6 +33,7 @@ class _RenderedPage(HTMLParser):
         self.config_chunks = []
         self.in_config = False
         self.dashboard_div_depth = 0
+        self.dashboard_docs_root = None
         self.feed(path.read_text(encoding="utf-8"))
         self.close()
 
@@ -42,13 +43,15 @@ class _RenderedPage(HTMLParser):
             self.ids.add(attributes["id"])
         if tag == "div" and (self.dashboard_div_depth or attributes.get("id") == "dashboard-return"):
             self.dashboard_div_depth += 1
+        if attributes.get("id") == "dashboard-return":
+            self.dashboard_docs_root = attributes.get("data-docs-root")
         if tag == "script" and attributes.get("id") == "__config":
             self.in_config = True
         if tag == "link" and "canonical" in attributes.get("rel", "").split():
             self.canonicals.append(attributes.get("href", ""))
         target_attribute = {"a": "href", "link": "href", "script": "src", "img": "src"}.get(tag)
         if target_attribute and attributes.get(target_attribute):
-            # This explicit application shortcut intentionally leaves /docs/.
+            # This explicit application shortcut intentionally leaves the guide.
             # Its container is hidden for standalone documentation hosting.
             if not (tag == "a" and self.dashboard_div_depth):
                 self.links.append(attributes[target_attribute])
@@ -75,9 +78,10 @@ class DocumentationLinkContractTest(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix="wm-next-doc-links-")
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.sites = []
-        for prefix in ("docs", "wm-states"):
+        for prefix in ("wm-states/docs", "lab/analysis/docs", "docs", "wm-states"):
             site_url = f"https://docs.example.test/{prefix}/"
-            directory = Path(cls.temporary.name) / prefix
+            # Keep builds separate: MkDocs cleans its output directory first.
+            directory = Path(cls.temporary.name) / prefix.replace("/", "_")
             environment = {**os.environ, "MKDOCS_SITE_URL": site_url}
             result = subprocess.run(
                 [sys.executable, "-m", "mkdocs", "build", "--strict", "--config-file",
@@ -187,6 +191,21 @@ class DocumentationLinkContractTest(unittest.TestCase):
             for entry in search["docs"]:
                 with self.subTest(site_url=site_url, search_location=entry["location"]):
                     self.assert_local_target(directory, site_url, pages, site_url, entry["location"])
+
+    def test_dashboard_shortcut_uses_the_rendered_docs_root_at_every_page_depth(self):
+        for directory, site_url, pages in self.sites:
+            for page, parsed in pages.items():
+                if page.name == "404.html":
+                    continue
+                source_url = self.page_url(directory, site_url, page)
+                with self.subTest(page=source_url):
+                    self.assertIsNotNone(parsed.dashboard_docs_root)
+                    docs_root = urljoin(source_url, parsed.dashboard_docs_root)
+                    self.assertEqual(docs_root, site_url)
+                    if urlsplit(docs_root).path.endswith("/docs/"):
+                        dashboard_root = urljoin(docs_root, "../dashboard/")
+                        self.assertEqual(dashboard_root, site_url[:-len("docs/")] + "dashboard/")
+                        self.assertEqual(urljoin(dashboard_root, "api/health"), dashboard_root + "api/health")
 
 
 if __name__ == "__main__":

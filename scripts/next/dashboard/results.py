@@ -19,7 +19,7 @@ from typing import Any
 from urllib.parse import quote
 import warnings
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 import numpy as np
 
@@ -443,8 +443,12 @@ def create_results_router(repo_root: Path, cache_root: Path | None = None) -> AP
         return {"runs": store.list_runs()}
 
     @router.get("/runs/{run_id}")
-    def run_detail(run_id: str):
-        return store.detail(run_id)
+    def run_detail(run_id: str, request: Request):
+        result = store.detail(run_id)
+        prefix = request.scope.get('root_path', '').rstrip('/')
+        for item in result['artifacts']:
+            item['url'] = prefix + item['url']
+        return result
 
     @router.get("/runs/{run_id}/sessions/{session}")
     def session_detail(run_id: str, session: str):

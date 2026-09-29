@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { api, errorMessage } from "./lib/api";
+import { apiHref } from "./lib/urls";
 import type { Job, Run, RunRequest, Schema } from "./lib/types";
 import { Button } from "./components/ui/button";
 import { Loading, Notice } from "./components/shared";
@@ -161,7 +162,20 @@ export default function App() {
   }
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#workspace-content">
+      <a
+        className="skip-link"
+        href="#workspace-content"
+        onClick={(event) => {
+          // A runtime <base> can point elsewhere when this page uses a legacy
+          // or deep URL. Keep the draft in this document while moving focus.
+          const workspace = document.getElementById("workspace-content");
+          if (workspace) {
+            event.preventDefault();
+            workspace.focus({ preventScroll: true });
+            workspace.scrollIntoView({ block: "start" });
+          }
+        }}
+      >
         Skip to workspace
       </a>
       <button
@@ -244,7 +258,7 @@ export default function App() {
             Pipeline guide
           </GuideLink>
           <a
-            href="/api/docs"
+            href={apiHref("/docs")}
             target="_blank"
             rel="noopener noreferrer"
             className="help-link api-sidebar-link"

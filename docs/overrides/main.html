@@ -2,15 +2,19 @@
 
 {% block header %}
   {{ super() }}
-  <div id="dashboard-return" hidden style="background: var(--md-code-bg-color); padding: .45rem .8rem; font-size: .7rem; text-align: center;">
-    <a href="/" style="color: var(--md-primary-fg-color); font-weight: 600;">&larr; Back to dashboard</a>
+  <div id="dashboard-return" data-docs-root="{{ base_url.rstrip('/') }}/" hidden style="background: var(--md-code-bg-color); padding: .45rem .8rem; font-size: .7rem; text-align: center;">
+    <a href="{{ base_url.rstrip('/') }}/../dashboard/" style="color: var(--md-primary-fg-color); font-weight: 600;">&larr; Back to dashboard</a>
     <span style="margin-left: .6rem; color: var(--md-default-fg-color--light);">Your analysis keeps running while you read.</span>
   </div>
   <script>
     // Reveal the shortcut only when this origin serves the actual dashboard.
     // Static hosting (including GitHub Pages) needs no dashboard connection.
-    if (window.location.pathname.startsWith("/docs/")) {
-      fetch("/api/health", {
+    const shortcut = document.getElementById("dashboard-return");
+    const docsRoot = new URL(shortcut.dataset.docsRoot, window.location.href);
+    if (docsRoot.pathname.endsWith("/docs/")) {
+      const dashboardRoot = new URL("../dashboard/", docsRoot);
+      shortcut.querySelector("a").href = dashboardRoot.href;
+      fetch(new URL("api/health", dashboardRoot), {
         cache: "no-store",
         credentials: "same-origin",
         mode: "same-origin",
@@ -21,7 +25,7 @@
         })
         .then(function (health) {
           if (health && health.status === "ok" && health.service === "wm-states-next") {
-            document.getElementById("dashboard-return").hidden = false;
+            shortcut.hidden = false;
           }
         })
         .catch(function () { /* A standalone guide keeps the shortcut hidden. */ });

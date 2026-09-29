@@ -32,7 +32,7 @@ describe("recording availability guidance", () => {
     expect(html).toContain("/repo/data/nature");
     expect(html).toContain("0 recording files found");
     expect(html).toContain(
-      "/docs/next/getting-started/#prepare-the-recordings",
+      "/wm-states/docs/next/getting-started/#prepare-the-recordings",
     );
     expect(html).toContain("Check again");
     expect(html).toContain("still save this configuration as a template");

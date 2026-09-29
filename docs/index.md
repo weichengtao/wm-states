@@ -15,7 +15,7 @@ To use the pipeline in your browser, follow the dashboard's
 [Open the dashboard again](next/dashboard.md#open-the-dashboard-again).
 The same viewer can [find existing command-line runs](next/dashboard.md#find-existing-runs).
 Its **Help** panel offers guidance without leaving your work, and **Pipeline
-guide** opens these pages from the same server at `/docs/`.
+guide** opens these pages from the same server at `/wm-states/docs/`.
 
 | Task | Guide |
 | --- | --- |

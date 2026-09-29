@@ -1,11 +1,12 @@
 import links from "./help-links.json";
+import { docsBase } from "./urls";
 
 export type WorkspacePage = "results" | "configure" | "compare" | "monitor";
 
 /** Keep the deployment's base path, including a GitHub Pages repository prefix. */
 export function docsHref(
   path = "",
-  base = import.meta.env.VITE_DOCS_BASE_URL || "/docs/",
+  base = import.meta.env.VITE_DOCS_BASE_URL || docsBase(),
 ): string {
   let normalized = base.trim();
   if (/^https?:\/\//i.test(normalized)) {
@@ -15,10 +16,10 @@ export function docsHref(
       url.search = "";
       normalized = url.href;
     } catch {
-      normalized = "/docs/";
+      normalized = docsBase();
     }
   } else if (!normalized.startsWith("/") || normalized.startsWith("//")) {
-    normalized = "/docs/";
+    normalized = docsBase();
   } else {
     normalized = normalized.split(/[?#]/, 1)[0];
   }

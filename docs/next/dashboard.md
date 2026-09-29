@@ -38,7 +38,7 @@ existing runs. To launch an analysis, first
 [prepare the recordings](getting-started.md#prepare-the-recordings).
 
 When the terminal says the server is running, open
-**[http://127.0.0.1:8000/](http://127.0.0.1:8000/)** in your browser.
+**[http://127.0.0.1:8000/wm-states/dashboard/](http://127.0.0.1:8000/wm-states/dashboard/)** in your browser.
 The server does not open a browser automatically. An empty run library on a
 fresh checkout is normal; generated data and results are not included in Git.
 
@@ -50,8 +50,8 @@ On later visits, open a terminal in the repository root and run just:
 uv run --group dashboard --group docs --locked python -m scripts.next.dashboard
 ```
 
-Then open [http://127.0.0.1:8000/](http://127.0.0.1:8000/). If the server is
-already running in another terminal, simply open that address.
+Then open [http://127.0.0.1:8000/wm-states/dashboard/](http://127.0.0.1:8000/wm-states/dashboard/).
+If the server is already running in another terminal, simply open that address.
 
 - **Keep the server terminal open** while using the dashboard.
 - Closing or refreshing the browser tab leaves analysis running.
@@ -72,14 +72,15 @@ If port 8000 is already in use, start on a free port:
 uv run --group dashboard --group docs --locked python -m scripts.next.dashboard --port 8001
 ```
 
-Open [http://127.0.0.1:8001/](http://127.0.0.1:8001/) for that server. The guide
-moves with it to `/docs/`; no extra documentation server is needed.
+Open [http://127.0.0.1:8001/wm-states/dashboard/](http://127.0.0.1:8001/wm-states/dashboard/)
+for that server. The guide moves with it to `/wm-states/docs/`; no extra
+documentation server is needed.
 
 | Service | Usual address | When to use it |
 | --- | --- | --- |
-| Dashboard | `http://127.0.0.1:8000/` | Configure runs, follow progress, and inspect results |
-| Pipeline guide | `http://127.0.0.1:8000/docs/` | Read or search the full guide from the dashboard |
-| Developer API reference | `http://127.0.0.1:8000/api/docs` | Inspect REST endpoints |
+| Dashboard | `http://127.0.0.1:8000/wm-states/dashboard/` | Configure runs, follow progress, and inspect results |
+| Pipeline guide | `http://127.0.0.1:8000/wm-states/docs/` | Read or search the full guide from the dashboard |
+| Developer API reference | `http://127.0.0.1:8000/wm-states/dashboard/api/docs` | Inspect REST endpoints |
 | MkDocs development preview | `http://127.0.0.1:8001/` | Edit the guide with automatic reload |
 | Vite development server | `http://127.0.0.1:5173/` | Edit the frontend with automatic browser updates |
 
@@ -93,6 +94,25 @@ it can view results, access available server paths, save templates, and start or
 cancel analyses. It reads Python pickle caches on the server: only place caches
 you trust in this repository's `cache/` directory. Keep access limited to trusted
 users, either locally or through the tailnet setup below.
+
+### Choose a URL prefix
+
+The default shared prefix is `/wm-states`. To use another path, set it when
+starting the server:
+
+```bash
+uv run --group dashboard --group docs --locked python -m scripts.next.dashboard --url-prefix /lab/analysis
+```
+
+This serves `/lab/analysis/dashboard/` and `/lab/analysis/docs/` on the same
+port. `--url-prefix /` gives `/dashboard/` and `/docs/`. Nested prefixes work;
+use an absolute URL path, not a hostname or full URL. Changing the prefix
+requires a server restart, **not a rebuild**. Dashboard links, API requests,
+live progress, downloads, and guide navigation follow the configured prefix.
+The terminal prints the complete addresses.
+No MkDocs setting is needed for this prefix. Leave `MKDOCS_SITE_URL` unset for
+normal local/tailnet use; it is configured separately when
+[publishing a static guide](../development.md#publish-the-guide-on-github-pages).
 
 ## Local and tailnet access
 
@@ -118,12 +138,12 @@ Tailscale.
 
 | Access | Dashboard address | Guide address | Requirements |
 | --- | --- | --- | --- |
-| Local HTTP | `http://127.0.0.1:8000/` | `http://127.0.0.1:8000/docs/` | Dashboard running |
-| Tailnet IP HTTP | `http://100.x.y.z:8000/` | `http://100.x.y.z:8000/docs/` | `--tailnet`, Tailscale connected, access to port 8000 |
-| Tailnet hostname HTTPS | `https://<device>.<tailnet>.ts.net:8443/` | `https://<device>.<tailnet>.ts.net:8443/docs/` | `--tailnet` and the optional Serve setup below |
+| Local HTTP | `http://127.0.0.1:8000/wm-states/dashboard/` | `http://127.0.0.1:8000/wm-states/docs/` | Dashboard running |
+| Tailnet IP HTTP | `http://100.x.y.z:8000/wm-states/dashboard/` | `http://100.x.y.z:8000/wm-states/docs/` | `--tailnet`, Tailscale connected, access to port 8000 |
+| Tailnet hostname HTTPS | `https://<device>.<tailnet>.ts.net/wm-states/dashboard/` | `https://<device>.<tailnet>.ts.net/wm-states/docs/` | `--tailnet` and the optional Serve setup below |
 
 Replace `100.x.y.z` with a printed address. IPv6 links use brackets, for example
-`http://[<tailscale-ipv6>]:8000/`; copy the complete link from the terminal.
+`http://[<tailscale-ipv6>]:8000/wm-states/dashboard/`; copy the complete link from the terminal.
 If you use `--port 8001`, use that port for both direct HTTP addresses and the
 local destination in your Serve command.
 
@@ -139,48 +159,81 @@ fails, startup stops with an error. Reconnect Tailscale and restart; after an
 address changes, restart the dashboard to discover it again. Wait for active
 analyses to finish before restarting, because stopping the server cancels them.
 
-### Add optional HTTPS beside an existing service
+### Add HTTPS with one shared mapping
 
-Keep the `--tailnet` dashboard running. In a second terminal, inspect the current
-Serve mappings before choosing a port:
+**You do not need separate Serve mappings for the dashboard and docs.** Keep
+the `--tailnet` server running. In another terminal, inspect existing mappings,
+then add the shared prefix if it is unused:
 
 ```bash
 tailscale serve status
-```
-
-If WebDAV already uses HTTPS port 443 and 8443 is unused, add the dashboard on
-8443:
-
-```bash
-tailscale serve --bg --https=8443 http://127.0.0.1:8000
+tailscale serve --bg --set-path=/wm-states http://127.0.0.1:8000/wm-states
 tailscale serve status
 ```
 
-Open the HTTPS URL printed by Tailscale, and append `/docs/` for the guide.
-Using the unused port leaves the WebDAV mapping intact. Serve manages the HTTPS
-certificate; it may ask you to enable HTTPS in your tailnet if this has not
-already been done. The dashboard's `--tailnet` flag does not change Serve,
-certificate settings, or Tailscale access policies. See the
-[Serve guide](https://tailscale.com/docs/features/tailscale-serve) and
+Open these paths on the HTTPS hostname printed by Serve:
+
+- `/wm-states/dashboard/` for the dashboard.
+- `/wm-states/docs/` for the guide.
+
+An existing WebDAV mapping at `/` can stay on HTTPS port 443. The more specific
+`/wm-states` mapping handles both applications. Keep the same prefix in
+`--set-path` and the target URL: Serve removes the mount path, then adds the
+target's path. Omitting the target's `/wm-states` would send requests to the
+wrong backend route. See the [Serve proxy implementation](https://github.com/tailscale/tailscale/blob/main/ipn/ipnlocal/serve.go).
+
+For a server started with `--url-prefix /lab/analysis`, use:
+
+```bash
+tailscale serve --bg --set-path=/lab/analysis http://127.0.0.1:8000/lab/analysis
+```
+
+Serve manages HTTPS certificates and may prompt for tailnet HTTPS setup. The
+launcher's `--tailnet` flag does not configure Serve or change access policies.
+See the [Serve guide](https://tailscale.com/docs/features/tailscale-serve) and
 [CLI reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
 
-To remove only the dashboard's HTTPS mapping later:
+To remove **only** the shared mapping:
 
 ```bash
-tailscale serve --bg --https=8443 off
+tailscale serve --bg --set-path=/wm-states off
 ```
 
-Keep your existing service mappings: `tailscale serve reset` would remove them
-too. Removing the 8443 mapping leaves local HTTP and direct tailnet IP HTTP
-available while the dashboard is running. Serve should forward the root `/`
-of its dedicated port; hosting the dashboard under `/dashboard/` is not
-supported.
+Do not use `tailscale serve reset` or remove a root mapping to undo this setup;
+that can remove your existing service. Local and direct tailnet HTTP access
+remain available while the dashboard server runs.
+
+#### Optional: separate mappings
+
+Use these **instead of** the shared mapping only when you prefer to manage the
+two paths independently. Both still use the same Python server:
+
+```bash
+tailscale serve --bg --set-path=/wm-states/dashboard http://127.0.0.1:8000/wm-states/dashboard
+tailscale serve --bg --set-path=/wm-states/docs http://127.0.0.1:8000/wm-states/docs
+```
+
+Each target must include its corresponding mount path. Removing one mapping
+uses its exact `--set-path` with `off`; the other stays available.
+
+#### Optional: another HTTPS port
+
+If you prefer a separate port and 8443 is unused:
+
+```bash
+tailscale serve --bg --https=8443 --set-path=/wm-states http://127.0.0.1:8000/wm-states
+```
+
+Use `https://<device>.<tailnet>.ts.net:8443/wm-states/dashboard/` and
+`https://<device>.<tailnet>.ts.net:8443/wm-states/docs/`. To remove it, use
+`tailscale serve --bg --https=8443 --set-path=/wm-states off`.
 
 ### Access controls
 
 Your Tailscale policy must allow the intended users/devices to reach the
 dashboard's direct HTTP port (8000 by default) and the optional Serve HTTPS port
-(8443 in this example). Incoming connections must also be enabled on the server.
+(443 by default, or 8443 in the optional example). Incoming connections must
+also be enabled on the server.
 Serve follows the tailnet's access rules; see
 [Tailscale access control](https://tailscale.com/docs/features/access-control).
 
@@ -209,7 +262,7 @@ Escape to return to the same workspace.
   official library documentation. The full methods guide also cites papers and
   explains which rules are specific to this pipeline.
 - Error messages include troubleshooting links where guidance is available.
-- **API reference** is the separate developer reference, now at `/api/docs`.
+- **API reference** is the separate developer reference, now at `/wm-states/dashboard/api/docs`.
 
 Documentation and reference links open in a new tab, leaving your unsaved settings and
 live progress intact. The local guide has a **Back to dashboard** shortcut;
@@ -456,8 +509,9 @@ A saved template envelope is **not** a command-line `--settings` file. Use it
 through the dashboard, or extract `config.settings` into a normal stage-settings
 JSON and pass the captured stages, workers, session limit, figure formats, and
 optional recording paths as runner arguments. Choose the output directory
-separately. The developer API exposes `GET /api/templates` for the collection
-and warnings, and `POST /api/templates` to save a new template.
+separately. The developer API exposes `GET /wm-states/dashboard/api/templates`
+for the collection and warnings, and `POST /wm-states/dashboard/api/templates`
+to save a new template. These paths follow your configured URL prefix.
 
 ### Reuse a run directory
 
@@ -737,7 +791,7 @@ nvm use 24
 
 If Node.js 24 has not been installed through nvm, run `nvm install 24` first.
 Once the Python server is running, its
-[health endpoint](http://127.0.0.1:8000/api/health) should show `"status": "ok"`.
+[health endpoint](http://127.0.0.1:8000/wm-states/dashboard/api/health) should show `"status": "ok"`.
 Use your chosen port if you changed it. A healthy backend with a missing
 interface usually means the frontend build step is still needed.
 
@@ -762,8 +816,9 @@ npm --prefix dashboard run dev
 You can skip `npm ci` when dependencies are already installed and unchanged.
 Open **[http://127.0.0.1:5173/](http://127.0.0.1:5173/)** for this workflow.
 Keep both terminals running. Vite reloads frontend edits and forwards REST,
-WebSocket, and `/docs/` requests to the backend on port 8000. It does not replace
-the Python backend. If you change that backend port, update the proxy targets in
+WebSocket, and `/wm-states/docs/` requests to the backend on port 8000. The
+Vite development page stays at `/`; use the backend's default `/wm-states`
+prefix for this development workflow. Vite does not replace the Python backend. If you change that backend port, update the proxy targets in
 `dashboard/vite.config.ts` to match.
 
 The frontend uses React, TypeScript, Vite, Tailwind CSS, and shadcn-style Radix
@@ -771,11 +826,10 @@ components. The shared dropdown wraps
 [Radix Select](https://www.radix-ui.com/primitives/docs/components/select), which
 provides keyboard navigation, typeahead, and focus handling; keep these behaviors
 when changing its appearance. The backend lives in `scripts/next/dashboard/`
-and uses FastAPI and Pydantic. The pipeline guide is at `/docs/`; the developer
-API reference is at `/api/docs`, with OpenAPI JSON at `/api/openapi.json` and
-ReDoc at `/api/redoc`.
-Tests and a
-production build can be run with:
+and uses FastAPI and Pydantic. The pipeline guide is at `/wm-states/docs/`.
+The developer API reference is at `/wm-states/dashboard/api/docs`, OpenAPI JSON
+at `/wm-states/dashboard/api/openapi.json`, and ReDoc at
+`/wm-states/dashboard/api/redoc`. Run tests and a production build with:
 
 ```bash
 uv run --group dashboard --group docs --locked python -m unittest discover -s tests/next -v
@@ -794,6 +848,6 @@ VITE_DOCS_BASE_URL=http://127.0.0.1:8001/ npm --prefix dashboard run dev
 ```
 
 `VITE_DOCS_BASE_URL` is a frontend build/development setting, not a runtime Python
-option. Omit it for the integrated `/docs/` guide. It also accepts an HTTPS
-project URL for a separately hosted guide; include the repository subpath and
+option. Omit it to use the configured local guide (`/wm-states/docs/` by
+default). It also accepts an HTTPS project URL for a separately hosted guide; include the repository subpath and
 use documentation matching the local pipeline version.

@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Job } from "@/lib/types";
 import LiveMonitor from "./LiveMonitor";
+
+afterEach(() => vi.unstubAllGlobals());
 
 const job: Job = {
   id: "example-job",
@@ -61,6 +63,15 @@ describe("live monitor controls", () => {
     expect(html).toContain("All requested stages finished");
     expect(html).not.toContain("Stop run");
     expect(html).not.toContain("Connecting");
+  });
+
+  it("downloads the full log through the configured dashboard prefix", () => {
+    vi.stubGlobal("document", {
+      querySelector: () => ({ content: "/lab/wm-states/dashboard/" }),
+    });
+    expect(renderJob()).toContain(
+      'href="/lab/wm-states/dashboard/api/jobs/example-job/log"',
+    );
   });
 
   it("explains an empty preview while keeping the full saved log downloadable", () => {

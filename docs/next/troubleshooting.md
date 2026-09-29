@@ -3,8 +3,8 @@
 ## The dashboard does not open
 
 Keep the dashboard's server terminal running and open the address it prints.
-The default is `http://127.0.0.1:8000/`, with the pipeline guide at `/docs/` on
-that same server. A separate documentation development preview uses port 8001,
+The default is `http://127.0.0.1:8000/wm-states/dashboard/`, with the pipeline
+guide at `/wm-states/docs/` on that same server. A separate documentation development preview uses port 8001,
 and Vite uses port 5173 only for frontend development.
 Opening one service's address does not start another service.
 
@@ -34,15 +34,16 @@ for the full setup.
 | --- | --- |
 | Tailscale CLI missing, disconnected, or discovery timed out | Install/connect Tailscale, then restart the dashboard. The launcher searches `PATH` and the standard macOS app location. It does not install Tailscale or sign you in. |
 | An address cannot be bound | Check that Tailscale is connected and the chosen port is free on every displayed address. Restart after a Tailscale address changes. The launcher does not silently switch to a LAN-wide listener. |
-| Local HTTP works, but `http://100.x.y.z:8000/` does not | Both devices need Tailscale connectivity. Check the exact printed IP/port, incoming connections on the server, host firewall, and tailnet policy for port 8000 (or your `--port`). Direct IP access does not need Serve. |
+| Local HTTP works, but `http://100.x.y.z:8000/wm-states/dashboard/` does not | Both devices need Tailscale connectivity. Check the exact printed IP/port, incoming connections on the server, host firewall, and tailnet policy for port 8000 (or your `--port`). Direct IP access does not need Serve. |
 | Direct IP works, but the HTTPS hostname does not | Check `tailscale serve status`, its local destination, and access policy for the HTTPS port. Use the full `.ts.net` hostname and port printed by Serve, with `https://`. |
 | `Invalid host` or a rejected browser origin | Confirm the server was started with `--tailnet`. Use localhost, a discovered Tailscale IP, or the full `.ts.net` Serve URL; a short machine name or unrelated custom hostname is not supported. Refresh the page at that same address. |
-| The HTTPS page opens, but an API request or live progress fails | Forward the whole site from `/` on its own Serve port, not under `/dashboard/`. Restart the updated backend and rebuild the frontend; API and WebSocket URLs follow the page's origin automatically. |
+| The HTTPS page opens, but an API request or live progress fails | Check that `--set-path` and the target URL both contain the configured prefix. For the default, map `/wm-states` to `http://127.0.0.1:8000/wm-states`. Restart the updated backend and rebuild older frontend assets; API and WebSocket URLs then follow the page's origin and configured prefix. |
 | A copy button offers manual copying on HTTP | The browser blocked direct clipboard access. Use the supplied text and copy shortcut, or use the optional HTTPS URL. Run creation works on direct HTTP without secure-context browser APIs. |
 
-If WebDAV already uses Serve on port 443, choose an unused separate port such as
-8443 for this dashboard. Remove only that mapping with
-`tailscale serve --bg --https=8443 off`; do not reset the existing Serve setup.
+If WebDAV already uses Serve at `/`, add the unused `/wm-states` path on the
+same HTTPS port. One mapping covers both dashboard and docs. Remove only that
+mapping with `tailscale serve --bg --set-path=/wm-states off`; do not reset
+the existing Serve setup. See [the exact commands](dashboard.md#add-https-with-one-shared-mapping).
 Before restarting the dashboard, let active analyses finish: stopping its
 server cancels them.
 
@@ -58,8 +59,9 @@ a built guide returns 404. Neither falls back to the dashboard.
 If a Methods link points to old content, rebuild both with the launcher's
 `--build` option after stopping the server when no analysis is running. If
 `VITE_DOCS_BASE_URL` was set during the frontend build, its links use that
-external guide; remove the setting and rebuild to restore local `/docs/` links.
-The developer API reference moved from `/docs` to `/api/docs`.
+external guide; remove the setting and rebuild to restore the configured local
+guide (`/wm-states/docs/` by default).
+The developer API reference is at `/wm-states/dashboard/api/docs`.
 
 ## An existing run does not appear in the dashboard
 

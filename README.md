@@ -120,7 +120,7 @@ The last command builds the dashboard and MkDocs guide, then starts one server.
 uv run --group dashboard --group docs --locked python -m scripts.next.dashboard
 ```
 
-Then open **[http://127.0.0.1:8000/](http://127.0.0.1:8000/)** in your browser.
+Then open **[http://127.0.0.1:8000/wm-states/dashboard/](http://127.0.0.1:8000/wm-states/dashboard/)** in your browser.
 Leave the terminal running. Closing the browser tab leaves the server and any
 analysis running; **Ctrl+C in the terminal stops the server and cancels its
 running analysis**.
@@ -131,12 +131,14 @@ choices. Documentation opens in a new tab without replacing your configuration.
 Help topics also link to relevant statistical references. The dashboard starts
 with all eleven stages selected; choose **Core stages** to match the
 five-stage terminal example above.
-The guide is served at [http://127.0.0.1:8000/docs/](http://127.0.0.1:8000/docs/);
-the developer API reference is at `/api/docs`.
+The guide is served at [http://127.0.0.1:8000/wm-states/docs/](http://127.0.0.1:8000/wm-states/docs/);
+the developer API reference is at `/wm-states/dashboard/api/docs`.
 
 Add `--build` again after frontend or documentation changes. If port 8000 is
 busy, add `--port 8001` to the start command
-and open [http://127.0.0.1:8001/](http://127.0.0.1:8001/) instead.
+and open [http://127.0.0.1:8001/wm-states/dashboard/](http://127.0.0.1:8001/wm-states/dashboard/) instead.
+Use `--url-prefix /lab/analysis` to change the shared prefix without rebuilding;
+the dashboard and guide become `/lab/analysis/dashboard/` and `/lab/analysis/docs/`.
 
 The dashboard uses the same pipeline and cache layout as the CLI, so existing
 runs in `cache/<run-name>/` can appear in the **Run library**. Use trusted caches
@@ -152,23 +154,28 @@ uv run --group dashboard --group docs --locked python -m scripts.next.dashboard 
 
 Tailscale must be connected on the server. The launcher discovers its Tailscale
 addresses automatically and prints HTTP links for both localhost and those
-addresses. Open `http://127.0.0.1:8000/` locally or `http://100.x.y.z:8000/`
-from a permitted tailnet device; the guide is at `/docs/` on either address.
+addresses. Open `http://127.0.0.1:8000/wm-states/dashboard/` locally or
+`http://100.x.y.z:8000/wm-states/dashboard/` from a permitted tailnet device.
+The guide is at `/wm-states/docs/` on either address.
 Direct IP access does **not** require Tailscale Serve. Without `--tailnet`, the
 dashboard remains local only and does not require Tailscale.
 
-For optional HTTPS at `https://<device>.<tailnet>.ts.net:8443/`, first check
-`tailscale serve status` and choose an unused port, then run:
+For HTTPS, one Serve mapping covers **both dashboard and docs**. Check the
+existing mappings first, then add the shared prefix:
 
 ```bash
-tailscale serve --bg --https=8443 http://127.0.0.1:8000
+tailscale serve status
+tailscale serve --bg --set-path=/wm-states http://127.0.0.1:8000/wm-states
 ```
 
-A separate port leaves an existing WebDAV mapping on 443 in place. No hostname
-list needs maintenance. The app has no login or read-only role: use Tailscale's
-access policy to restrict ports 8000 and 8443 to trusted users/devices. See
+Open `https://<device>.<tailnet>.ts.net/wm-states/dashboard/` or
+`https://<device>.<tailnet>.ts.net/wm-states/docs/`. Keep `/wm-states` on both
+sides of the command: Serve strips its mount path before proxying. This leaves
+an existing WebDAV root mapping in place, provided `/wm-states` is unused.
+No separate docs mapping or hostname list is needed. See
 [local and tailnet access](docs/next/dashboard.md#local-and-tailnet-access) for
-setup, troubleshooting, and removing only this Serve mapping.
+other prefixes, separate mappings, and an optional HTTPS port. The app has no
+login or read-only role; restrict access to trusted users/devices.
 
 ## Reuse and compare results
 
@@ -243,7 +250,9 @@ The [documentation home](docs/index.md) links to the full guides:
 - [Migration](docs/next/migration.md) and [troubleshooting](docs/next/troubleshooting.md)
 - [Validation record](docs/validation/next.md)
 
-The dashboard serves these pages at `/docs/` after its `--build` setup.
+The dashboard serves these pages at `/wm-states/docs/` after its `--build` setup.
+Its `--url-prefix` also controls the guide path; no MkDocs configuration change
+is needed. Leave `MKDOCS_SITE_URL` unset for normal local/tailnet use.
 Standalone MkDocs needs Python only. To edit the guides with automatic reload,
 use a separate MkDocs preview:
 

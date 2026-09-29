@@ -1,5 +1,58 @@
 # Next pipeline validation
 
+## Configurable dashboard and documentation URL prefixes — 2026-09-30
+
+The default layout is `/wm-states/dashboard/` and `/wm-states/docs/`.
+`--url-prefix` changes their shared parent path at runtime, including nested
+paths, without rebuilding the frontend or guide. Both sites use one server and
+one pipeline job manager.
+
+- **602 Python tests** pass in **23.496 seconds**. New coverage checks runtime
+  prefix validation, root/default/nested layouts, redirects, metadata, mounted
+  API documentation, artifact/log URLs, shared jobs, origin checks, and
+  documentation error pages. Existing scientific tests remain unchanged.
+- **161 frontend tests** across **22 files** pass. Tests cover runtime URL
+  metadata, API requests, WebSocket schemes and origins, full-log links, nested
+  client paths, malformed metadata, and external documentation overrides.
+  TypeScript/Vite build, formatting, and `git diff --check` pass.
+- Actual strict MkDocs builds verify links, assets, search, and dashboard return
+  targets under `/wm-states/docs/`, `/lab/analysis/docs/`, `/docs/`, and the
+  standalone GitHub Pages-style `/wm-states/` prefix. Integrated missing-page
+  responses keep HTTP 404 and use self-contained recovery links, so their assets
+  cannot escape the mount. Static MkDocs output remains suitable for publishing.
+- Browser checks verify localhost and this machine's tailnet IPv4 HTTP access,
+  plus a temporary HTTPS proxy reproducing Serve's prefix stripping and target
+  path joining. Both shared and separate dashboard/docs mappings work. The
+  default and `/lab/analysis` layouts load assets, API data, figures, table/log
+  downloads, live WebSocket updates, nested client URLs, docs search, redirects,
+  return links, and missing-page recovery without requests escaping the prefix
+  or browser JavaScript errors. Mobile review at **390 × 844** has no horizontal
+  overflow.
+- A standalone static guide keeps its dashboard shortcut hidden and makes no
+  dashboard API requests. The Vite development preview also passes the docs
+  health probe and return-link checks using its canonical API proxy.
+- Final review confirms current instructions and references use the intended
+  paths and distinguish dashboard prefixes from standalone MkDocs settings.
+  All **28 focused documentation/routing tests** pass after the instruction
+  updates. Keyboard browser checks also verify that **Skip to workspace** keeps
+  the URL and unsaved draft intact on canonical, deep, and legacy dashboard
+  routes; the injected HTML base no longer causes navigation from that link.
+
+Browser checks used temporary fixtures and a separate headless runtime, not the
+installed Chrome application. No analysis ran and no user cache, Tailscale
+mapping, or WebDAV configuration changed. HTTPS forwarding was simulated; an
+actual Serve mapping and a second tailnet device were not used. Temporary
+servers and browsers were stopped after validation.
+
+```bash
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m unittest discover -s tests -v
+npm --prefix dashboard test
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+MPLCONFIGDIR=/tmp/wm-states-matplotlib .venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
 ## Five-run statistical comparison and default documentation — 2026-09-29
 
 [Statistical choices](../next/statistical-choices.md) now includes completed

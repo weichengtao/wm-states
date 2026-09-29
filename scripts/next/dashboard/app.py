@@ -2,12 +2,13 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
 import os
+from html import escape
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -18,6 +19,7 @@ from scripts.next.dashboard.network import validate_tailnet_addresses
 from scripts.next.dashboard.runner import BusyError, RunManager, TERMINAL
 from scripts.next.dashboard.schema import get_schema
 from scripts.next.dashboard.templates import TemplateConflict, TemplateStore
+from scripts.next.dashboard.urls import DashboardURLs, DEFAULT_URL_PREFIX
 
 
 def _trusted_origin(origin, host):
@@ -68,7 +70,9 @@ class _FullLogResponse(StreamingResponse):
             self.stream.close()
 
 
-def create_app(repo_root: Path | None = None, *, tailnet_ips: tuple[str, ...] = ()):
+def create_app(repo_root: Path | None = None, *, tailnet_ips: tuple[str, ...] = (),
+               url_prefix: str = DEFAULT_URL_PREFIX):
+    urls = DashboardURLs.from_prefix(url_prefix)
     allowed_hosts = ['localhost', '127.0.0.1', '[::1]']
     if tailnet_ips:
         addresses = validate_tailnet_addresses(tailnet_ips)
@@ -85,14 +89,17 @@ def create_app(repo_root: Path | None = None, *, tailnet_ips: tuple[str, ...] = 
         yield
         await manager.close()
 
-    app = FastAPI(title='WM States · Next dashboard', version='1.0', lifespan=lifespan,
+    app = FastAPI(title='WM States · Next dashboard', version='1.0',
                   docs_url='/api/docs', redoc_url='/api/redoc',
                   openapi_url='/api/openapi.json',
-                  swagger_ui_oauth2_redirect_url='/api/docs/oauth2-redirect')
-    app.state.repo_root, app.state.runner = root, manager
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+                  swagger_ui_oauth2_redirect_url='/api/docs/oauth2-redirect',
+                  servers=[{'url': urls.dashboard}], root_path_in_servers=False)
+    server = FastAPI(title=app.title, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    server.state.repo_root, server.state.runner = root, manager
+    server.state.urls = urls
+    server.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
-    @app.middleware('http')
+    @server.middleware('http')
     async def local_mutations(request: Request, call_next):
         if request.method not in ('GET', 'HEAD', 'OPTIONS') and not _trusted_origin(
                 request.headers.get('origin'), request.headers.get('host')):
@@ -100,7 +107,8 @@ def create_app(repo_root: Path | None = None, *, tailnet_ips: tuple[str, ...] = 
         response = await call_next(request)
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'same-origin'
-        if request.url.path.startswith('/api/'):
+        if (request.url.path.startswith('/api/')
+                or request.url.path.startswith(urls.dashboard + '/api/')):
             response.headers['Cache-Control'] = 'no-store'
         return response
 
@@ -212,12 +220,24 @@ def create_app(repo_root: Path | None = None, *, tailnet_ips: tuple[str, ...] = 
     from scripts.next.dashboard.paths import create_paths_router
     app.include_router(create_paths_router(root, trusted_origin=_trusted_origin))
 
-    @app.get('/docs', include_in_schema=False)
+    @server.get(urls.docs, include_in_schema=False)
     def documentation_root():
-        return RedirectResponse('/docs/', status_code=307)
+        return RedirectResponse(urls.docs + '/', status_code=307)
 
     # Register before the frontend catch-all: documentation misses must remain 404s.
-    app.mount('/docs', DocumentationFiles(root / 'site'), name='documentation')
+    server.mount(urls.docs, DocumentationFiles(root / 'site', dashboard_url=urls.dashboard + '/',
+                                                docs_url=urls.docs + '/'),
+                 name='documentation')
+
+    @server.get(urls.dashboard, include_in_schema=False)
+    def dashboard_root():
+        return RedirectResponse(urls.dashboard + '/', status_code=307)
+
+    if urls.prefix:
+        @server.get(urls.prefix, include_in_schema=False)
+        @server.get(urls.prefix + '/', include_in_schema=False)
+        def prefix_root():
+            return RedirectResponse(urls.dashboard + '/', status_code=307)
 
     frontend = root / 'dashboard' / 'dist'
     if (frontend / 'assets').is_dir():
@@ -228,11 +248,38 @@ def create_app(repo_root: Path | None = None, *, tailnet_ips: tuple[str, ...] = 
         if path.startswith('api/'):
             raise HTTPException(404, 'API endpoint not found.')
         asset = (frontend / path).resolve()
-        if asset.is_relative_to(frontend.resolve()) and asset.is_file():
+        if (asset.is_relative_to(frontend.resolve()) and asset.is_file()
+                and asset != (frontend / 'index.html').resolve()):
             return FileResponse(asset)
         if (frontend / 'index.html').is_file():
-            return FileResponse(frontend / 'index.html')
+            html = (frontend / 'index.html').read_text(encoding='utf-8')
+            metadata = (
+                f'<base href="{escape(urls.dashboard + "/", quote=True)}">'
+                f'<meta name="wm-states-dashboard-base" content="{escape(urls.dashboard + "/", quote=True)}">'
+                f'<meta name="wm-states-docs-base" content="{escape(urls.docs + "/", quote=True)}">'
+            )
+            # Vite emits relative URLs. Put the base before every asset reference,
+            # including when a user opens a nested client-side URL directly.
+            html = html.replace('<head>', '<head>' + metadata, 1) if '<head>' in html else metadata + html
+            return HTMLResponse(html, headers={'Cache-Control': 'no-store'})
         return JSONResponse({'detail': 'Frontend is not built. Run npm ci && npm run build in dashboard/, '
                                        'or use the Vite development server on localhost:5173.'}, status_code=503)
 
-    return app
+    # The same subapp is exposed at both paths, so legacy API clients and a
+    # mounted browser share the manager, jobs, templates and result store.
+    server.mount(urls.dashboard, app, name='dashboard')
+    if urls.docs != '/docs':
+        @server.api_route('/docs', methods=['GET', 'HEAD'], include_in_schema=False)
+        @server.api_route('/docs/{path:path}', methods=['GET', 'HEAD'], include_in_schema=False)
+        def legacy_documentation(request: Request, path: str = ''):
+            location = urls.docs + '/' + quote(path, safe='/')
+            if request.url.query:
+                location += '?' + request.url.query
+            return RedirectResponse(location, status_code=307)
+
+    @server.get('/', include_in_schema=False)
+    def home():
+        return RedirectResponse(urls.dashboard + '/', status_code=307)
+
+    server.mount('/', app, name='legacy-dashboard')
+    return server
