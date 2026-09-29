@@ -14,6 +14,9 @@ C=0.01 outperforms the current accuracy-based search in that validation. The
 production comparisons below remain a dated record; they do not establish that
 search is better than every fixed C or that stronger M1 performance validates
 a decoder choice.
+The [smaller-C study](regularization-confidence.md) further checks the proposed
+0.01 candidate: uniform probability shrinkage cannot explain its advantage,
+and C=0.001 does not improve consistently across validation panels.
 
 The evidence snapshot is dated **2026-09-29**. It covers the completed runs
 `next_run_001` through `next_run_005`, plus the focal experiments described below.

@@ -91,6 +91,12 @@
   },
   "helpTopics": [
     {
+      "title": "Does smaller C win by shrinking confidence toward 50%?",
+      "keywords": "C regularization 0.01 0.001 Brier log loss confidence shrinkage sigmoid calibration numerical",
+      "answer": "The smaller-C study separates raw probabilities, sigmoid calibration, and direct shrinkage on matched held-out trials. Fixed C=0.01 improves more than one uniform shrink factor can explain; C=0.001 has no consistent advantage across panels. Extremely small C can trigger numerical calibration collapse, so near-50% confidence alone does not validate a setting.",
+      "path": "next/regularization-confidence/"
+    },
+    {
       "title": "Does a stronger M1 result validate the decoder?",
       "keywords": "M1 cell counts selective cells max total off states robustness calibration Brier held out session uncertainty confidence",
       "answer": "Evaluate decoder probabilities independently of downstream M1 performance. The robustness study scores both cue classes on held-out trials, checks null and state-rule sensitivity, and predicts held-out session means. Counts vary between sessions, and joint M1 prediction does not establish every individual count effect or a causal change in biological OFF states.",

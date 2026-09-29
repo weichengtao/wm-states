@@ -1,0 +1,1303 @@
+{
+  "design": {
+    "date": "2026-09-30",
+    "session": "221021",
+    "selection_rule": "Largest cached stationary decoder population; ties broken by session ID.",
+    "bin_start_ms": 950,
+    "window_ms": 50,
+    "n_cells": 272,
+    "preferred_cue": 2,
+    "outer_seed": 20260930,
+    "outer_fold": 0,
+    "outer_folds": 5,
+    "inner_seed": 3688078967,
+    "calibration_folds": 5,
+    "training_trial_ids": [
+      10,
+      13,
+      17,
+      18,
+      28,
+      29,
+      31,
+      34,
+      39,
+      41,
+      53,
+      56,
+      75,
+      76,
+      83,
+      90,
+      95,
+      96,
+      101,
+      104,
+      108,
+      115,
+      126,
+      127,
+      143,
+      160,
+      162,
+      182,
+      183,
+      186,
+      187,
+      190,
+      192,
+      195,
+      199,
+      208,
+      213,
+      220,
+      225,
+      227,
+      230,
+      233,
+      251,
+      254,
+      257,
+      258,
+      272,
+      277,
+      282,
+      287,
+      290,
+      291,
+      300,
+      307,
+      316,
+      324,
+      325,
+      334,
+      340,
+      346,
+      357,
+      360,
+      361,
+      364,
+      365,
+      380,
+      386,
+      391,
+      392,
+      395,
+      398,
+      403,
+      424,
+      433,
+      436,
+      447,
+      451,
+      453,
+      454,
+      455,
+      464,
+      479,
+      496,
+      498,
+      499,
+      500,
+      501,
+      511,
+      529,
+      530,
+      534,
+      536,
+      538,
+      542,
+      549,
+      552,
+      553,
+      558,
+      562,
+      567,
+      578,
+      606,
+      611,
+      615,
+      620,
+      628,
+      640,
+      641,
+      642,
+      645,
+      657,
+      660,
+      662,
+      664,
+      667,
+      685,
+      692,
+      693,
+      705,
+      706,
+      718,
+      722,
+      724,
+      729,
+      731,
+      733,
+      735,
+      749,
+      760,
+      762,
+      763,
+      768,
+      774,
+      783,
+      789,
+      806
+    ],
+    "heldout_trial_ids": [
+      36,
+      60,
+      65,
+      114,
+      121,
+      170,
+      189,
+      283,
+      292,
+      319,
+      353,
+      359,
+      367,
+      376,
+      421,
+      429,
+      445,
+      470,
+      477,
+      489,
+      543,
+      561,
+      593,
+      597,
+      604,
+      609,
+      631,
+      647,
+      648,
+      656,
+      672,
+      707,
+      766,
+      781
+    ],
+    "training_class_counts": [
+      68,
+      68
+    ],
+    "heldout_class_counts": [
+      17,
+      17
+    ],
+    "c_values": [
+      1.0,
+      0.1,
+      0.01,
+      0.001,
+      0.0001,
+      1e-05,
+      1e-06,
+      1e-08,
+      1e-10,
+      1e-12
+    ],
+    "numerical_only_extended_c_values": [
+      1e-10,
+      1e-12
+    ],
+    "normalization": "Weighted mean/SD of outer-training OOF margins only; apply the same transform to final-base held-out margins.",
+    "calibration": "Same unpenalized sigmoid family, equal-class sample weights, sklearn Platt soft targets; only margin coordinates change.",
+    "workers": 1,
+    "sources_sha256": {
+      "cache/next_run_005/decode/decoding_confidence.pkl": "a02bdb2cbd710bdfaead2fcd3cf62d6587293120fd1b3edcdeada496cebd8114",
+      "data/nature/221021.mat": "8758b0ad9ce24074095ff4cacdffe6df88099f664206ac7145ee9e805d2506ff",
+      "/Users/weicheng/projects/wm-states/scripts/next/validate_calibration_scale.py": "5d4a7ad8520fceec1051ac3d07bddf5c428f8fc35e71b66dd3a0f2357b49b742",
+      "scripts/next/decoder_models.py": "06715b6e1cd3ab4ddbffbc425bfcef5710d3e42154fb53d783eae1b1dae2d564",
+      "scripts/next/common.py": "5dbfc3f2c4717fae8e32a5b55d02c28eccb95fcff46a0c8232db0c3bc5df907d"
+    },
+    "sklearn_calibration_source": "/Users/weicheng/projects/wm-states/.venv/lib/python3.12/site-packages/sklearn/calibration.py",
+    "sklearn_calibration_source_sha256": "1490282774d4ab266e062925a62d965fdf11e4279427984ac6fc792814b18ea9",
+    "software": {
+      "python": "3.12.12",
+      "numpy": "2.5.2",
+      "scipy": "1.18.1",
+      "sklearn": "1.8.0"
+    },
+    "limitations": [
+      "One session, one bin, one outer fold: numerical diagnosis, not a performance-ranking study.",
+      "Cached full-session screening/cue selection remains outside the outer holdout.",
+      "Normalization is a diagnostic of the same calibration objective, not a production change or selected estimator.",
+      "At exactly zero or constant margins the normalization is undefined and no nonconstant calibration can recover discrimination."
+    ]
+  },
+  "elapsed_seconds": 2.1649179170490243,
+  "results": [
+    {
+      "c": 1.0,
+      "base_coefficient_l2_norm": 2.9359706661721625,
+      "base_intercept": [
+        0.024646088879236482
+      ],
+      "base_iterations": [
+        6
+      ],
+      "training_oof_margin_sd": 2.9838878630994894,
+      "training_oof_margin_max_abs": 10.43789929806999,
+      "heldout_margin_sd": 2.633418645977079,
+      "production_sigmoid_a": -0.3596787038426808,
+      "production_sigmoid_b": 0.012474408595496596,
+      "production_effective_coefficient_norm": 1.0560061237289355,
+      "training_normalization_center": 0.047172164163686636,
+      "training_normalization_scale": 2.9838878630994894,
+      "normalized_sigmoid_a": -1.0732409272891568,
+      "normalized_sigmoid_b": -0.004492414286322539,
+      "normalized_effective_coefficient_norm": 1.056006131873634,
+      "production_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 7,
+        "function_evaluations": 9,
+        "objective": 80.95279803341964,
+        "gradient": [
+          6.873737135038027e-10,
+          -5.43033840116891e-10
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "independent_replay_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 7,
+        "function_evaluations": 9,
+        "objective": 80.95279803341964,
+        "gradient": [
+          6.873737135038027e-10,
+          -5.43033840116891e-10
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "normalized_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 6,
+        "function_evaluations": 7,
+        "objective": 80.95279803341964,
+        "gradient": [
+          -1.3867017401025805e-07,
+          2.9199218598563448e-09
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "production_training_platt_objective": {
+        "loss": 80.95279803341964,
+        "gradient_a": 6.873737135038027e-10,
+        "gradient_b": -5.430327298938664e-10
+      },
+      "normalized_training_platt_objective": {
+        "loss": 80.95279803341964,
+        "gradient_a": -1.3867017356616884e-07,
+        "gradient_b": 2.9199225259901596e-09
+      },
+      "normalized_minus_production_training_objective": 0.0,
+      "heldout_raw": {
+        "brier": 0.2816419214355855,
+        "log_loss": 0.9004911644973693,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.37388668827876104,
+        "probability_min": 0.005798593241596223,
+        "probability_max": 0.997199981106396
+      },
+      "heldout_production_calibrated": {
+        "brier": 0.230458218085656,
+        "log_loss": 0.6531746292572911,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.20617852262494119,
+        "probability_min": 0.13437953952428877,
+        "probability_max": 0.8909765325878348
+      },
+      "heldout_normalized_calibrated": {
+        "brier": 0.23045821823210907,
+        "log_loss": 0.6531746296465645,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.20617852385034308,
+        "probability_min": 0.13437953785114104,
+        "probability_max": 0.8909765341600895
+      },
+      "heldout_production_vs_normalized_max_abs_probability_difference": 1.7284625952740384e-09,
+      "warnings": []
+    },
+    {
+      "c": 0.1,
+      "base_coefficient_l2_norm": 1.6137082289028915,
+      "base_intercept": [
+        0.009585847708046567
+      ],
+      "base_iterations": [
+        5
+      ],
+      "training_oof_margin_sd": 1.6443236713987024,
+      "training_oof_margin_max_abs": 5.59685110418071,
+      "heldout_margin_sd": 1.437153683183946,
+      "production_sigmoid_a": -0.6416372558743496,
+      "production_sigmoid_b": 0.020515027176272592,
+      "production_effective_coefficient_norm": 1.0354153197751081,
+      "training_normalization_center": 0.03647945055522014,
+      "training_normalization_scale": 1.6443236713987024,
+      "normalized_sigmoid_a": -1.0550593390825713,
+      "normalized_sigmoid_b": -0.0028915480828734103,
+      "normalized_effective_coefficient_norm": 1.035415330371151,
+      "production_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 8,
+        "function_evaluations": 9,
+        "objective": 81.23986093457742,
+        "gradient": [
+          1.7724561907073166e-07,
+          1.641855407186199e-08
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "independent_replay_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 8,
+        "function_evaluations": 9,
+        "objective": 81.23986093457742,
+        "gradient": [
+          1.7724561907073166e-07,
+          1.641855407186199e-08
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "normalized_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 6,
+        "function_evaluations": 7,
+        "objective": 81.23986093457742,
+        "gradient": [
+          -7.726923501039096e-08,
+          8.652103478112849e-10
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "production_training_platt_objective": {
+        "loss": 81.23986093457741,
+        "gradient_a": 1.7724561729437482e-07,
+        "gradient_b": 1.6418555182085015e-08
+      },
+      "normalized_training_platt_objective": {
+        "loss": 81.23986093457741,
+        "gradient_a": -7.726923545448017e-08,
+        "gradient_b": 8.652134564357539e-10
+      },
+      "normalized_minus_production_training_objective": 0.0,
+      "heldout_raw": {
+        "brier": 0.24842416668182118,
+        "log_loss": 0.7095201070989907,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.27517129362314313,
+        "probability_min": 0.052597307174249576,
+        "probability_max": 0.9646627162895058
+      },
+      "heldout_production_calibrated": {
+        "brier": 0.2336085423340383,
+        "log_loss": 0.6600656470682896,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.20151095832427932,
+        "probability_min": 0.13290356733827222,
+        "probability_max": 0.8910272020129671
+      },
+      "heldout_normalized_calibrated": {
+        "brier": 0.23360854253507274,
+        "log_loss": 0.6600656476159528,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.20151095992583112,
+        "probability_min": 0.1329035652047245,
+        "probability_max": 0.8910272041669014
+      },
+      "heldout_production_vs_normalized_max_abs_probability_difference": 2.3891661982133883e-09,
+      "warnings": []
+    },
+    {
+      "c": 0.01,
+      "base_coefficient_l2_norm": 0.5756210691668715,
+      "base_intercept": [
+        0.0006424302058355513
+      ],
+      "base_iterations": [
+        4
+      ],
+      "training_oof_margin_sd": 0.5783447939002387,
+      "training_oof_margin_max_abs": 1.8425099991315486,
+      "heldout_margin_sd": 0.5128534222699259,
+      "production_sigmoid_a": -1.6718776375143491,
+      "production_sigmoid_b": 0.0331709217901023,
+      "production_effective_coefficient_norm": 0.9623679932221929,
+      "training_normalization_center": 0.01928280931682509,
+      "training_normalization_scale": 0.5783447939002387,
+      "normalized_sigmoid_a": -0.9669217238795705,
+      "normalized_sigmoid_b": 0.000932423918806499,
+      "normalized_effective_coefficient_norm": 0.9623679894250763,
+      "production_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 8,
+        "function_evaluations": 10,
+        "objective": 82.72168457604664,
+        "gradient": [
+          -2.5617754584317254e-09,
+          3.770845857786753e-09
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "independent_replay_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 8,
+        "function_evaluations": 10,
+        "objective": 82.72168457604664,
+        "gradient": [
+          -2.5617754584317254e-09,
+          3.770845857786753e-09
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "normalized_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 6,
+        "function_evaluations": 7,
+        "objective": 82.72168457604664,
+        "gradient": [
+          6.712200439906724e-08,
+          -2.09131956196984e-09
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "production_training_platt_objective": {
+        "loss": 82.72168457604664,
+        "gradient_a": -2.5617743482087008e-09,
+        "gradient_b": 3.770846301875963e-09
+      },
+      "normalized_training_platt_objective": {
+        "loss": 82.72168457604664,
+        "gradient_a": 6.712200439906724e-08,
+        "gradient_b": -2.0913182297022104e-09
+      },
+      "normalized_minus_production_training_objective": 0.0,
+      "heldout_raw": {
+        "brier": 0.23742691691626736,
+        "log_loss": 0.6679767570769363,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.12163818856862352,
+        "probability_min": 0.26632764238371814,
+        "probability_max": 0.7739680740367182
+      },
+      "heldout_production_calibrated": {
+        "brier": 0.24243821972406304,
+        "log_loss": 0.6830902377481487,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.18836899025790155,
+        "probability_min": 0.1509276928518051,
+        "probability_max": 0.8833627226082075
+      },
+      "heldout_normalized_calibrated": {
+        "brier": 0.2424382196447461,
+        "log_loss": 0.6830902374921031,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.18836898967379198,
+        "probability_min": 0.15092769374855844,
+        "probability_max": 0.8833627218039156
+      },
+      "heldout_production_vs_normalized_max_abs_probability_difference": 8.967533382531201e-10,
+      "warnings": []
+    },
+    {
+      "c": 0.001,
+      "base_coefficient_l2_norm": 0.10165968229244707,
+      "base_intercept": [
+        6.281973072007945e-07
+      ],
+      "base_iterations": [
+        4
+      ],
+      "training_oof_margin_sd": 0.09900468171070531,
+      "training_oof_margin_max_abs": 0.3041529507116486,
+      "heldout_margin_sd": 0.09309049126861373,
+      "production_sigmoid_a": -8.680770333555376,
+      "production_sigmoid_b": 0.036855927806981444,
+      "production_effective_coefficient_norm": 0.8824843541629392,
+      "training_normalization_center": 0.003908900297398184,
+      "training_normalization_scale": 0.09900468171070531,
+      "normalized_sigmoid_a": -0.8594369204113155,
+      "normalized_sigmoid_b": 0.0029236611297361044,
+      "normalized_effective_coefficient_norm": 0.8824843711402608,
+      "production_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 9,
+        "function_evaluations": 11,
+        "objective": 84.53678007859527,
+        "gradient": [
+          -1.7332130730629558e-09,
+          -3.510003399043171e-10
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "independent_replay_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 9,
+        "function_evaluations": 11,
+        "objective": 84.53678007859527,
+        "gradient": [
+          -1.7332130730629558e-09,
+          -3.510003399043171e-10
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "normalized_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 6,
+        "function_evaluations": 7,
+        "objective": 84.53678007859527,
+        "gradient": [
+          -3.649247775072695e-07,
+          -2.9639034559991728e-08
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "production_training_platt_objective": {
+        "loss": 84.53678007859527,
+        "gradient_a": -1.7332132118408339e-09,
+        "gradient_b": -3.5099900763668757e-10
+      },
+      "normalized_training_platt_objective": {
+        "loss": 84.53678007859529,
+        "gradient_a": -3.649247783954479e-07,
+        "gradient_b": -2.9639035004080938e-08
+      },
+      "normalized_minus_production_training_objective": 1.4210854715202004e-14,
+      "heldout_raw": {
+        "brier": 0.24693511547664565,
+        "log_loss": 0.6870172668942249,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.023222410175945712,
+        "probability_min": 0.4592925240108331,
+        "probability_max": 0.5559354486385627
+      },
+      "heldout_production_calibrated": {
+        "brier": 0.2515968231675682,
+        "log_loss": 0.7073748263014437,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.17723829550900172,
+        "probability_min": 0.18946649748858013,
+        "probability_max": 0.8714184646412141
+      },
+      "heldout_normalized_calibrated": {
+        "brier": 0.25159682359234303,
+        "log_loss": 0.707374827890244,
+        "balanced_accuracy": 0.6176470588235293,
+        "probability_sd": 0.17723829816649092,
+        "probability_min": 0.1894664933472573,
+        "probability_max": 0.871418468877565
+      },
+      "heldout_production_vs_normalized_max_abs_probability_difference": 4.286202948122764e-09,
+      "warnings": []
+    },
+    {
+      "c": 0.0001,
+      "base_coefficient_l2_norm": 0.011273525362891368,
+      "base_intercept": [
+        7.33495670269846e-11
+      ],
+      "base_iterations": [
+        2
+      ],
+      "training_oof_margin_sd": 0.010884448072297118,
+      "training_oof_margin_max_abs": 0.033319281120692865,
+      "heldout_margin_sd": 0.010419484915445558,
+      "production_sigmoid_a": -76.67256462191523,
+      "production_sigmoid_b": 0.03643384337070882,
+      "production_effective_coefficient_norm": 0.8643701019030887,
+      "training_normalization_center": 0.0004343861108033922,
+      "training_normalization_scale": 0.010884448072297118,
+      "normalized_sigmoid_a": -0.8345385631261744,
+      "normalized_sigmoid_b": 0.003128339387544107,
+      "normalized_effective_coefficient_norm": 0.8643701173658395,
+      "production_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 8,
+        "function_evaluations": 13,
+        "objective": 84.95754797317193,
+        "gradient": [
+          1.608523730878275e-11,
+          1.6248792467088435e-07
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "independent_replay_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 8,
+        "function_evaluations": 13,
+        "objective": 84.95754797317193,
+        "gradient": [
+          1.608523730878275e-11,
+          1.6248792467088435e-07
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "normalized_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 6,
+        "function_evaluations": 7,
+        "objective": 84.95754797317193,
+        "gradient": [
+          -3.2777485436952247e-07,
+          -4.2107139330838095e-08
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "production_training_platt_objective": {
+        "loss": 84.95754797317193,
+        "gradient_a": 1.608523730878275e-11,
+        "gradient_b": 1.6248792533701817e-07
+      },
+      "normalized_training_platt_objective": {
+        "loss": 84.95754797317193,
+        "gradient_a": -3.277748548136117e-07,
+        "gradient_b": -4.2107137998570465e-08
+      },
+      "normalized_minus_production_training_objective": 0.0,
+      "heldout_raw": {
+        "brier": 0.24963792458088366,
+        "log_loss": 0.6924230287902008,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.0026047982117836078,
+        "probability_min": 0.4953794005592012,
+        "probability_max": 0.5065404723445587
+      },
+      "heldout_production_calibrated": {
+        "brier": 0.2534958869758468,
+        "log_loss": 0.7121339309942115,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.17517886406021335,
+        "probability_min": 0.18945320479448496,
+        "probability_max": 0.8775659651885223
+      },
+      "heldout_normalized_calibrated": {
+        "brier": 0.253495887415719,
+        "log_loss": 0.7121339326607354,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.17517886644037978,
+        "probability_min": 0.1894532018591378,
+        "probability_max": 0.877565969714231
+      },
+      "heldout_production_vs_normalized_max_abs_probability_difference": 5.0307115140313385e-09,
+      "warnings": []
+    },
+    {
+      "c": 1e-05,
+      "base_coefficient_l2_norm": 0.0011402000104149726,
+      "base_intercept": [
+        7.667303295303606e-15
+      ],
+      "base_iterations": [
+        2
+      ],
+      "training_oof_margin_sd": 0.00109974358983284,
+      "training_oof_margin_max_abs": 0.0033649264568772156,
+      "heldout_margin_sd": 0.0010549677732173094,
+      "production_sigmoid_a": -756.3004153899814,
+      "production_sigmoid_b": 0.03636170050799491,
+      "production_effective_coefficient_norm": 0.8623337415045048,
+      "training_normalization_center": 4.39174686927147e-05,
+      "training_normalization_scale": 0.00109974358983284,
+      "normalized_sigmoid_a": -0.8317365476467931,
+      "normalized_sigmoid_b": 0.003146899414369078,
+      "normalized_effective_coefficient_norm": 0.8623337558471557,
+      "production_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 9,
+        "function_evaluations": 15,
+        "objective": 85.00490815668392,
+        "gradient": [
+          -1.3826353256751744e-12,
+          7.138911684023697e-11
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "independent_replay_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 9,
+        "function_evaluations": 15,
+        "objective": 85.00490815668392,
+        "gradient": [
+          -1.3826353256751744e-12,
+          7.138911684023697e-11
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "normalized_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 6,
+        "function_evaluations": 7,
+        "objective": 85.00490815668391,
+        "gradient": [
+          -3.004911719450831e-07,
+          -3.9881024482824046e-08
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "production_training_platt_objective": {
+        "loss": 85.00490815668391,
+        "gradient_a": -1.3826374940795194e-12,
+        "gradient_b": 7.138867275102712e-11
+      },
+      "normalized_training_platt_objective": {
+        "loss": 85.00490815668391,
+        "gradient_a": -3.0049117327735075e-07,
+        "gradient_b": -3.9881024482824046e-08
+      },
+      "normalized_minus_production_training_objective": 0.0,
+      "heldout_raw": {
+        "brier": 0.24996309695942248,
+        "log_loss": 0.6930733744776836,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.0002637418672450151,
+        "probability_min": 0.49953179061261066,
+        "probability_max": 0.5006650018810895
+      },
+      "heldout_production_calibrated": {
+        "brier": 0.2537019832697327,
+        "log_loss": 0.7126409681983854,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.17495510314087334,
+        "probability_min": 0.1895725642043513,
+        "probability_max": 0.8781904026318139
+      },
+      "heldout_normalized_calibrated": {
+        "brier": 0.2537019836547211,
+        "log_loss": 0.7126409696472219,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.17495510540480863,
+        "probability_min": 0.18957256069647765,
+        "probability_max": 0.8781904062888063
+      },
+      "heldout_production_vs_normalized_max_abs_probability_difference": 3.772335999130405e-09,
+      "warnings": []
+    },
+    {
+      "c": 1e-06,
+      "base_coefficient_l2_norm": 0.00011415021948105925,
+      "base_intercept": [
+        1.905582263723828e-21
+      ],
+      "base_iterations": [
+        1
+      ],
+      "training_oof_margin_sd": 0.00011008859843612414,
+      "training_oof_margin_max_abs": 0.00033682201489407135,
+      "heldout_margin_sd": 0.00010563018438081532,
+      "production_sigmoid_a": -7552.307453605646,
+      "production_sigmoid_b": 0.036353930794544916,
+      "production_effective_coefficient_norm": 0.8620975534175241,
+      "training_normalization_center": 4.396703226694318e-06,
+      "training_normalization_scale": 0.00011008859843612414,
+      "normalized_sigmoid_a": -0.831422953578113,
+      "normalized_sigmoid_b": 0.003148654246744607,
+      "normalized_effective_coefficient_norm": 0.8620975648772508,
+      "production_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 8,
+        "function_evaluations": 16,
+        "objective": 85.01020464713567,
+        "gradient": [
+          -3.30316787919456e-12,
+          6.145450677230713e-07
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "independent_replay_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 8,
+        "function_evaluations": 16,
+        "objective": 85.01020464713567,
+        "gradient": [
+          -3.30316787919456e-12,
+          6.145450677230713e-07
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "normalized_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 6,
+        "function_evaluations": 7,
+        "objective": 85.01020464713565,
+        "gradient": [
+          -2.967858945268631e-07,
+          -3.951601978968711e-08
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "production_training_platt_objective": {
+        "loss": 85.01020464713567,
+        "gradient_a": -3.3031680147198317e-12,
+        "gradient_b": 6.145450672789821e-07
+      },
+      "normalized_training_platt_objective": {
+        "loss": 85.01020464713565,
+        "gradient_a": -2.9678589674730915e-07,
+        "gradient_b": -3.951601756924106e-08
+      },
+      "normalized_minus_production_training_objective": -1.4210854715202004e-14,
+      "heldout_raw": {
+        "brier": 0.2499963029926365,
+        "log_loss": 0.6931397865452171,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 2.6407546018813994e-05,
+        "probability_min": 0.49995311583723856,
+        "probability_max": 0.5000666150692745
+      },
+      "heldout_production_calibrated": {
+        "brier": 0.2537249574795775,
+        "log_loss": 0.7126971561917816,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.17492883188447053,
+        "probability_min": 0.18958816611822818,
+        "probability_max": 0.878257964629152
+      },
+      "heldout_normalized_calibrated": {
+        "brier": 0.25372495789653576,
+        "log_loss": 0.7126971577991628,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.17492883346930513,
+        "probability_min": 0.1895881665375305,
+        "probability_max": 0.8782579697941305
+      },
+      "heldout_production_vs_normalized_max_abs_probability_difference": 6.9782324363387715e-09,
+      "warnings": []
+    },
+    {
+      "c": 1e-08,
+      "base_coefficient_l2_norm": 1.141645631873741e-06,
+      "base_intercept": [
+        3.143282338064509e-23
+      ],
+      "base_iterations": [
+        1
+      ],
+      "training_oof_margin_sd": 1.1010135626988784e-06,
+      "training_oof_margin_max_abs": 3.3686294788255342e-06,
+      "heldout_margin_sd": 1.0564345749014112e-06,
+      "production_sigmoid_a": -755141.6244528241,
+      "production_sigmoid_b": 0.03635351011247224,
+      "production_effective_coefficient_norm": 0.8621041370026076,
+      "training_normalization_center": 4.3971387517332484e-08,
+      "training_normalization_scale": 1.1010135626988784e-06,
+      "normalized_sigmoid_a": -0.8314211839524928,
+      "normalized_sigmoid_b": 0.0031488838460100523,
+      "normalized_effective_coefficient_norm": 0.8621041511786133,
+      "production_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 9,
+        "function_evaluations": 20,
+        "objective": 85.01023852914815,
+        "gradient": [
+          -1.270629465494966e-15,
+          6.582623335305016e-11
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "independent_replay_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 9,
+        "function_evaluations": 20,
+        "objective": 85.01023852914815,
+        "gradient": [
+          -1.270629465494966e-15,
+          6.582623335305016e-11
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "normalized_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 6,
+        "function_evaluations": 7,
+        "objective": 85.01023852914815,
+        "gradient": [
+          -2.9697450987242746e-07,
+          -3.953845917337162e-08
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "production_training_platt_objective": {
+        "loss": 85.01023852914815,
+        "gradient_a": -1.270629465494966e-15,
+        "gradient_b": 6.582645539765508e-11
+      },
+      "normalized_training_platt_objective": {
+        "loss": 85.01023852914815,
+        "gradient_a": -2.9697451031651667e-07,
+        "gradient_b": -3.9538457174970176e-08
+      },
+      "normalized_minus_production_training_objective": 0.0,
+      "heldout_raw": {
+        "brier": 0.24999996301815383,
+        "log_loss": 0.6931471065962529,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 2.64108643717624e-07,
+        "probability_min": 0.49999953109945816,
+        "probability_max": 0.5000006662344028
+      },
+      "heldout_production_calibrated": {
+        "brier": 0.25372513478662684,
+        "log_loss": 0.7126978236104645,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.1749298702856756,
+        "probability_min": 0.18958656892020145,
+        "probability_max": 0.8782596527624907
+      },
+      "heldout_normalized_calibrated": {
+        "brier": 0.2537251351674508,
+        "log_loss": 0.7126978250436292,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.17492987252356654,
+        "probability_min": 0.18958656545269992,
+        "probability_max": 0.8782596563776741
+      },
+      "heldout_production_vs_normalized_max_abs_probability_difference": 3.730201814100553e-09,
+      "warnings": []
+    },
+    {
+      "c": 1e-10,
+      "base_coefficient_l2_norm": 1.1416470664264127e-08,
+      "base_intercept": [
+        1.2924696907093277e-26
+      ],
+      "base_iterations": [
+        1
+      ],
+      "training_oof_margin_sd": 1.1010148386318962e-08,
+      "training_oof_margin_max_abs": 3.368633572626804e-08,
+      "heldout_margin_sd": 1.0564359023807973e-08,
+      "production_sigmoid_a": 0.0,
+      "production_sigmoid_b": 0.0,
+      "production_effective_coefficient_norm": 0.0,
+      "training_normalization_center": 4.39714310740767e-10,
+      "training_normalization_scale": 1.1010148386318962e-08,
+      "normalized_sigmoid_a": -0.8314211662541935,
+      "normalized_sigmoid_b": 0.0031488861422567563,
+      "normalized_effective_coefficient_norm": 0.8621042170497674,
+      "production_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 0,
+        "function_evaluations": 1,
+        "objective": 94.26801655615256,
+        "gradient": [
+          2.656426052123717e-07,
+          -0.0
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "independent_replay_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 0,
+        "function_evaluations": 1,
+        "objective": 94.26801655615256,
+        "gradient": [
+          2.656426052123717e-07,
+          -0.0
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "normalized_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 6,
+        "function_evaluations": 7,
+        "objective": 85.01023886800853,
+        "gradient": [
+          -2.969763950311233e-07,
+          -3.953868188411036e-08
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "production_training_platt_objective": {
+        "loss": 94.26801655615256,
+        "gradient_a": 2.656426052123717e-07,
+        "gradient_b": 3.1086244689504383e-15
+      },
+      "normalized_training_platt_objective": {
+        "loss": 85.01023886800851,
+        "gradient_a": -2.969763954752125e-07,
+        "gradient_b": -3.953868144002115e-08
+      },
+      "normalized_minus_production_training_objective": -9.257777688144046,
+      "heldout_raw": {
+        "brier": 0.24999999963018035,
+        "log_loss": 0.6931471798203059,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 2.6410897617042388e-09,
+        "probability_min": 0.49999999531098865,
+        "probability_max": 0.5000000066623524
+      },
+      "heldout_production_calibrated": {
+        "brier": 0.25,
+        "log_loss": 0.6931471805599453,
+        "balanced_accuracy": 0.49999999999999994,
+        "probability_sd": 0.0,
+        "probability_min": 0.5,
+        "probability_max": 0.5
+      },
+      "heldout_normalized_calibrated": {
+        "brier": 0.25372513694038334,
+        "log_loss": 0.7126978317169316,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.17492988291536915,
+        "probability_min": 0.18958654943992173,
+        "probability_max": 0.8782596732454905
+      },
+      "heldout_production_vs_normalized_max_abs_probability_difference": 0.3782596732454905,
+      "warnings": []
+    },
+    {
+      "c": 1e-12,
+      "base_coefficient_l2_norm": 1.1416470807719571e-10,
+      "base_intercept": [
+        2.0194839171094654e-28
+      ],
+      "base_iterations": [
+        1
+      ],
+      "training_oof_margin_sd": 1.1010148513912414e-10,
+      "training_oof_margin_max_abs": 3.368633613564868e-10,
+      "heldout_margin_sd": 1.0564359156556074e-10,
+      "production_sigmoid_a": 0.0,
+      "production_sigmoid_b": 0.0,
+      "production_effective_coefficient_norm": 0.0,
+      "training_normalization_center": 4.397143150964457e-12,
+      "training_normalization_scale": 1.1010148513912414e-10,
+      "normalized_sigmoid_a": -0.8314211660772103,
+      "normalized_sigmoid_b": 0.0031488861652192598,
+      "normalized_effective_coefficient_norm": 0.8621042177084792,
+      "production_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 0,
+        "function_evaluations": 1,
+        "objective": 94.26801655615256,
+        "gradient": [
+          2.6564260824445694e-09,
+          -0.0
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "independent_replay_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 0,
+        "function_evaluations": 1,
+        "objective": 94.26801655615256,
+        "gradient": [
+          2.6564260824445694e-09,
+          -0.0
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "normalized_optimizer": {
+        "success": true,
+        "status": 0,
+        "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+        "iterations": 6,
+        "function_evaluations": 7,
+        "objective": 85.01023887139714,
+        "gradient": [
+          -2.969764145710485e-07,
+          -3.95386836604672e-08
+        ],
+        "options": {
+          "gtol": 1e-06,
+          "ftol": 1.4210854715202004e-14
+        }
+      },
+      "production_training_platt_objective": {
+        "loss": 94.26801655615256,
+        "gradient_a": 2.656426082444569e-09,
+        "gradient_b": 3.1086244689504383e-15
+      },
+      "normalized_training_platt_objective": {
+        "loss": 85.01023887139714,
+        "gradient_a": -2.9697641545922693e-07,
+        "gradient_b": -3.953868277228878e-08
+      },
+      "normalized_minus_production_training_objective": -9.257777684755425,
+      "heldout_raw": {
+        "brier": 0.2499999999963018,
+        "log_loss": 0.6931471805525489,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 2.6410892191249134e-11,
+        "probability_min": 0.49999999995310995,
+        "probability_max": 0.5000000000666235
+      },
+      "heldout_production_calibrated": {
+        "brier": 0.25,
+        "log_loss": 0.6931471805599453,
+        "balanced_accuracy": 0.49999999999999994,
+        "probability_sd": 0.0,
+        "probability_min": 0.5,
+        "probability_max": 0.5
+      },
+      "heldout_normalized_calibrated": {
+        "brier": 0.2537251369581128,
+        "log_loss": 0.7126978317836649,
+        "balanced_accuracy": 0.588235294117647,
+        "probability_sd": 0.17492988301928716,
+        "probability_min": 0.18958654927979357,
+        "probability_max": 0.8782596734141686
+      },
+      "heldout_production_vs_normalized_max_abs_probability_difference": 0.37825967341416855,
+      "warnings": []
+    }
+  ],
+  "array_archive": "cache/calibration_scale_validation_20260930/margins-and-probabilities.npz",
+  "array_archive_sha256": "ad633dbaabf61035c1c3e109c558047e7690b90e92c82b89af5fd68d6201e536"
+}

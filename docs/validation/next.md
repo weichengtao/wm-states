@@ -1,5 +1,54 @@
 # Next pipeline validation
 
+## Smaller C and confidence shrinkage — 2026-09-30
+
+The [regularization study](../next/regularization-confidence.md) extends the
+same 25-session, three-seed, two-class outer validation to nine fixed C values
+from 1 to 10⁻¹⁰. Its 175 tasks completed in **132.9 seconds with eight workers**.
+
+- Both raw and sigmoid-calibrated predictions use identical final training
+  fits. C=1 and C=0.01 calibrated anchors reproduce the previous prediction
+  archives exactly across every task and seed. Input, identity, label, source,
+  and archive checks preserve the existing evidence and production caches.
+- Fixed alpha shrinkage controls and an exact Brier identity distinguish
+  probability amplitude from label alignment. Even an optimistic, retrospectively
+  label-tuned global shrink factor cannot match fixed C=0.01's Brier score in
+  either panel; this is a descriptive bound, not validated tuning performance.
+- C=0.001 has only a small, uncertain primary-panel advantage, and worsens both
+  probability losses in the all-cell/fixed-cue panel for all three monkeys.
+  Smaller calibrated C largely plateaus; uncalibrated probability losses
+  approach the constant-p=0.5 reference as confidence becomes too weak.
+- A separate **2.16-second**, single-worker diagnostic reconstructs training
+  calibration margins and fits the same weighted Platt objective in normalized
+  coordinates. It identifies zero-iteration optimizer stopping at tiny margins,
+  while explicitly showing that better training optimization need not improve
+  the held-out Brier score. Normalization uses training OOF margins only.
+- Numerical degeneration affects some full-panel fits at C=10⁻⁸ and most at
+  C=10⁻¹⁰; no such zero-slope fits occur through C=10⁻⁶. These endpoints should
+  not be interpreted as purely statistical regularization limits.
+- An independent audit recomputes **91,875** task/seed score values directly
+  from saved probabilities, including rank-based AUC, agreeing within
+  1.12×10⁻¹⁵. The curve figure is visually reviewed. Compact evidence lives in
+  `docs/validation/`; full task/fold records and raw probabilities remain in
+  ignored archives with recorded hashes. No production defaults change.
+- **655 Python tests** pass in **23.954 seconds**, including 15 new statistical,
+  holdout, objective-invariance, alignment, and calibration checks. **161
+  dashboard tests** pass. TypeScript/Vite build, formatting, strict MkDocs
+  build, and `git diff --check` also pass.
+  Final provenance verification matches **42 distinct input/source/artifact
+  files** and confirms the unchanged scientific decoder digest.
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python scripts/next/validate_regularization_path.py --workers 8 --max-wall-seconds 3300
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python scripts/next/validate_calibration_scale.py
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MPLCONFIGDIR=/tmp/wm-states-mpl .venv/bin/python -m unittest discover -s tests -q
+npm --prefix dashboard test -- --maxWorkers=2
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+.venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
 ## Decoder quality, state robustness, and M1 evidence — 2026-09-30
 
 The [robustness report](../next/decoder-state-robustness.md) separates held-out

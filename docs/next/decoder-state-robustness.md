@@ -88,6 +88,13 @@ the distinction between reliability and proper probability scores.
 
 ### C search and averaging need a more precise conclusion
 
+The subsequent [regularization-path study](regularization-confidence.md) tests
+C=0.001 through 10⁻¹⁰ and direct probability shrinkage. C=0.01's advantage is
+not reproduced by one common shrink factor. C=0.001 is nearly tied in this
+primary panel but worse in the all-cell/fixed-cue panel; extremely small C also
+exposes numerical calibration problems. The tables below retain the original
+five-procedure comparison.
+
 The production C search optimizes **balanced accuracy**, not probability loss.
 Weighted fixed C=0.01 improves Brier over the default by **0.00295**, with a
 paired session-bootstrap interval **[0.00219, 0.00380]** for search minus fixed

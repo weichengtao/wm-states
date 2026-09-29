@@ -35,6 +35,10 @@ auditable statistical evidence under `docs/validation/`; raw predictions and
 experiment design checkpoints remain in ignored `cache/` directories. They
 are explicit reproduction utilities, not production stages or automatic
 optimizers of downstream scientific outcomes.
+`validate_regularization_path.py` and `validate_calibration_scale.py` extend
+that study to smaller C and numerical calibration behavior. Their compact
+summaries are versioned; full fold diagnostics and probabilities stay in ignored
+experiment archives with hashes recorded in the summaries.
 
 ## Downstream analysis modules
 

@@ -26,6 +26,7 @@ guide** opens these pages from the same server at `/wm-states/docs/`.
 | Review the default preset’s methods, populations, and validation design | [Analysis methods](next/methods.md) |
 | Review evidence for class weighting, confidence calibration, and C selection | [Statistical choices](next/statistical-choices.md) |
 | Assess two-class decoder quality and whether cell counts predict OFF durations in held-out sessions | [Decoder and state robustness](next/decoder-state-robustness.md) |
+| Understand smaller C, confidence shrinkage, and probability scores | [Regularization and confidence](next/regularization-confidence.md) |
 | Understand screening and decoder estimates | [Selection and decoding](next/selection-decoding.md) |
 | Compare trial-level statistical models | [Mixed-effects analyses](next/mixed-effects.md) |
 | Find caches, figures, scores, and invocation history | [Outputs and inspection](next/outputs.md) |

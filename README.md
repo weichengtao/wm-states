@@ -66,6 +66,10 @@ promising alternative to the current C search, and separates joint count
 prediction from the less certain preferred-cell-specific maximum-OFF effect.
 Count prediction also overlaps strongly with measured decoder quality; it does
 not by itself establish a change in biological state dynamics.
+The [smaller-C follow-up](docs/next/regularization-confidence.md) tests values
+down to 10⁻¹⁰. C=0.01's gain is not explained by uniform confidence shrinkage;
+C=0.001 has no consistent advantage, and extremely small C can cause numerical
+calibration collapse.
 
 Set the null count in `decode.n_decode_shuffle` in the JSON preset. The default
 uses 100; the smoke preset uses 3. Use `--dry-run` to inspect resolved settings
