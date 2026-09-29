@@ -8,6 +8,13 @@ procedures for [model families](methods.md#models),
 It includes references for statsmodels estimation, variance-component R², and
 validation, with the assumptions needed to interpret each result.
 
+For evidence about the nested-activity M1 cell-count claim, read the
+[robustness analysis](decoder-state-robustness.md#2-test-m1-at-the-level-where-cell-counts-vary).
+It tests prediction in held-out sessions, separates maximum and total duration,
+and shows why joint predictive value is stronger evidence than the individual
+preferred-cell maximum-OFF coefficient. Counts vary across sessions; more
+trial holdouts do not create more independent count observations.
+
 After completing the default pipeline, run all six mixed-effects stages with
 the same preset and cache:
 

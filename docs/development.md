@@ -28,6 +28,13 @@ figures in `docs/assets/`. Evidence snapshots are intentional versioned
 documentation inputs, not copies of raw caches. Their reproduction tools belong
 in `scripts/next/`; for example, `compare_statistical_choices.py` rebuilds the
 evidence and figure for [Statistical choices](next/statistical-choices.md).
+The supplementary `validate_decoder_choices.py`, `validate_m1_robustness.py`,
+`validate_state_confidence.py`, and `validate_focused_nulls.py` follow the same layout for the
+[robustness study](next/decoder-state-robustness.md). They retain compact,
+auditable statistical evidence under `docs/validation/`; raw predictions and
+experiment design checkpoints remain in ignored `cache/` directories. They
+are explicit reproduction utilities, not production stages or automatic
+optimizers of downstream scientific outcomes.
 
 ## Downstream analysis modules
 

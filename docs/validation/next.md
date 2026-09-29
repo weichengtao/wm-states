@@ -1,5 +1,74 @@
 # Next pipeline validation
 
+## Decoder quality, state robustness, and M1 evidence — 2026-09-30
+
+The [robustness report](../next/decoder-state-robustness.md) separates held-out
+probability quality, state sensitivity, and prediction of session-mean OFF
+durations. Its supplementary utilities live in `scripts/next/`, evidence JSON
+in `docs/validation/`, and the scientific figure in `docs/assets/`. Raw fitted
+predictions and experiment design checkpoints remain in ignored `cache/` paths.
+
+- Two-class validation uses all 25 sessions, three predefined seeds, common
+  five-fold outer trial holdouts, and five decoder procedures. A separate
+  all-cell/four-fixed-cue-pair panel removes activity-derived feature/cue
+  selection. Weights and calibration improve probability scores; fixed C=0.01
+  outperforms the current balanced-accuracy C search in these panels. The
+  production default is unchanged; candidate selection remains exploratory.
+- Session-level M1 checks include equal-session fitting, HC3/t intervals,
+  5,000 pairs-bootstrap draws, 19,999 permutations, leave-one-session-out
+  prediction, covariate-matched reduced models, and influence diagnostics.
+  Joint count prediction is stronger than preferred-specific maximum-OFF
+  evidence. All three additional decoder-quality proxies are reported, including
+  the negative incremental total-OFF result after conditioning on Brier score.
+- The user-supplied animal mapping is retained explicitly with its provenance.
+  Leave-one-animal-out count prediction improves on the training-session mean
+  in each monkey for both `005` outcomes; pooled session-equal R² is 0.523 for
+  maximum OFF and 0.628 for total OFF. Animal and year fixed-effect fits are
+  verified identical. Both decoder panels agree on proper-score directions
+  within each of the three monkeys.
+  Repeated sessions within only three monkeys limit population inference;
+  session-level intervals are nominal, not animal-level biological uncertainty.
+- State sensitivity first exactly reproduces all 50 production OFF masks for
+  `001` and `005`. It then tests 40 N=100 null-bank bootstraps, five partitions
+  into two N=50 halves, five alternative state rules, and 20 held-out-null
+  negative controls. M1 associations are stable under these perturbations,
+  while individual-trial estimates can change. Controls do not establish a
+  false-positive rate, inactivity, or a causal cell-count effect.
+- Focused fresh fits compare matched C-search/fixed-C procedures and independent
+  versus shared-time label permutations in three predefined trials, with
+  100 null fits per bin. These are candidate OFF summaries, not recomputed
+  full-session cluster corrections or M1 outcomes.
+  All 12 fits finish in **13.7 minutes with eight workers**. Shared assignments
+  increase null temporal correlation and run length in all six paired
+  comparisons, while observed candidate maxima are unchanged. The three
+  searched-C independent-null fits reproduce their `005` observed and null
+  arrays bit-for-bit. Float64 reprocessing with an exact constant-null guard
+  changes no candidate durations; original fitting and final summary sources
+  are identified separately, and `--summarize-only` verifies stored archives.
+- Source hashes guard evidence provenance and production inputs. The decoder
+  scientific source digest is unchanged at
+  `65fbff72d8d55bfbcfc15ab6ad8e6951d09688822f8133e465450a1107bc1c5b`.
+  No production decoder, cache, or default setting is modified.
+  Final verification checks **97 distinct input/source/artifact files** against
+  the four evidence reports. The original five-run evidence is unchanged.
+- **640 Python tests** pass in **23.770 seconds**, including 38 new checks for
+  the supplementary analyses. **161 dashboard tests** pass across 22 files.
+  The TypeScript/Vite production build, formatting check, strict MkDocs build,
+  and `git diff --check` pass. The decoder figure was visually reviewed.
+
+```bash
+.venv/bin/python scripts/next/validate_decoder_choices.py --workers 6
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python scripts/next/validate_m1_robustness.py
+.venv/bin/python scripts/next/validate_state_confidence.py
+.venv/bin/python scripts/next/validate_focused_nulls.py --workers 8 --n-null 100 --max-wall-seconds 3300
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MPLCONFIGDIR=/tmp/wm-states-mpl .venv/bin/python -m unittest discover -s tests -q
+npm --prefix dashboard test -- --maxWorkers=2
+npm --prefix dashboard run build
+npm --prefix dashboard run format:check
+.venv/bin/python -m mkdocs build --strict
+git diff --check
+```
+
 ## Configurable dashboard and documentation URL prefixes — 2026-09-30
 
 The default layout is `/wm-states/dashboard/` and `/wm-states/docs/`.

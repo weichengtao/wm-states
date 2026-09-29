@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "provenance": {
+    "kind": "user_supplied",
+    "date": "2026-09-30",
+    "statement": "The user confirmed that sessions 210921–211015 belong to monkey A, 221017–221027 to H, and 240208–240222 to J.",
+    "scope": "Explicit mapping for these 25 sessions only. Do not infer animal identity for additional dates."
+  },
+  "expected_session_counts": {"A": 10, "H": 8, "J": 7},
+  "sessions": {
+    "210921": "A",
+    "210927": "A",
+    "210929": "A",
+    "211001": "A",
+    "211006": "A",
+    "211007": "A",
+    "211008": "A",
+    "211011": "A",
+    "211013": "A",
+    "211015": "A",
+    "221017": "H",
+    "221019": "H",
+    "221020": "H",
+    "221021": "H",
+    "221024": "H",
+    "221025": "H",
+    "221026": "H",
+    "221027": "H",
+    "240208": "J",
+    "240209": "J",
+    "240214": "J",
+    "240215": "J",
+    "240216": "J",
+    "240221": "J",
+    "240222": "J"
+  }
+}

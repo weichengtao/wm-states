@@ -91,6 +91,12 @@
   },
   "helpTopics": [
     {
+      "title": "Does a stronger M1 result validate the decoder?",
+      "keywords": "M1 cell counts selective cells max total off states robustness calibration Brier held out session uncertainty confidence",
+      "answer": "Evaluate decoder probabilities independently of downstream M1 performance. The robustness study scores both cue classes on held-out trials, checks null and state-rule sensitivity, and predicts held-out session means. Counts vary between sessions, and joint M1 prediction does not establish every individual count effect or a causal change in biological OFF states.",
+      "path": "next/decoder-state-robustness/"
+    },
+    {
       "title": "Evidence for statistical choices",
       "keywords": "statistical choices confidence calibration regularization C grid search class weighting seed stability off duration next_run_004 next_run_005",
       "answer": "The five-run comparison covers training balance, calibration, and C selection. Weighted training modestly improves pooled preferred-cue probability scores, with mixed session effects. Calibration and C selection also change null probabilities and state durations. Shorter OFF states alone do not indicate a better estimator; one production seed cannot establish seed stability.",

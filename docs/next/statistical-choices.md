@@ -6,6 +6,15 @@ are calibrated, and how regularization is selected. It separates the current
 analysis policy from the evidence supporting it. **Shorter OFF states are not,
 by themselves, evidence of a better estimator.**
 
+**Follow-up, 2026-09-30:** [Decoder and state robustness](decoder-state-robustness.md)
+adds two-class outer validation, session-level M1 prediction, and sensitivity
+analyses. Weighting and calibration gain stronger support for probability
+estimation. The C conclusion needs qualification: weighted calibrated fixed
+C=0.01 outperforms the current accuracy-based search in that validation. The
+production comparisons below remain a dated record; they do not establish that
+search is better than every fixed C or that stronger M1 performance validates
+a decoder choice.
+
 The evidence snapshot is dated **2026-09-29**. It covers the completed runs
 `next_run_001` through `next_run_005`, plus the focal experiments described below.
 Runs `001`–`004` test the four combinations of calibration and C selection
@@ -26,7 +35,7 @@ settings, SVM handling, and migration.
 | --- | --- | --- |
 | Training-class balance | Use all eligible training trials with balanced class weights; balance calibration for the same cue prior | `005` vs `001`: modest pooled probability-score gains, lower Brier in 16/25 sessions; improved seed stability in the earlier focal experiment |
 | Confidence calibration | Retain training-only sigmoid calibration for observed and null fits | Better preferred-cue Brier and log loss in all 25 sessions at both C settings; much less extreme null probabilities |
-| Regularization | Retain training-only C search as the current reference; evaluate cheaper alternatives separately | Better preferred-cue Brier and log loss at both calibration settings, at substantial runtime cost; weighted fixed-C alternatives remain untested |
+| Regularization | C search remains the production reference; compare alternatives independently of M1 | Better preferred-cue scores than C=1 in these runs; the follow-up weighted two-class validation favors fixed C=0.01 over this search |
 
 The completed-run comparisons align **25 sessions, 1,590 preferred-cue test
 trials, and 161 time bins per trial**. The delay analysis uses the 91 bin starts
@@ -455,8 +464,12 @@ probability scores among the four downsampled configurations.
 In weighted `005`, C search selects 1, 0.1, and 0.01 in **15.92%, 24.73%, and
 59.35%** of observed delay fits, respectively. Stronger regularization is still
 frequently selected, but `005` alone does not measure its advantage over fixed
-C or the advantage of calibration within the weighted procedure. Those
-weighted ablations have not been run.
+C or the advantage of calibration within the weighted procedure. Full production
+weighted ablations were not available for this five-run snapshot. The
+[follow-up two-class validation](decoder-state-robustness.md#c-search-and-averaging-need-a-more-precise-conclusion)
+now tests those choices in held-out trial folds and favors fixed C=0.01 over
+the current search on probability scores; it does not regenerate the full
+production state outcomes for that candidate.
 
 ### Runtime and the practical decision
 
@@ -488,9 +501,11 @@ not establish that the full grid is necessary or that C=1 is the best fixed
 choice. The default now uses all-trial weighting, whose sample count and loss
 differ from those in the C ablations. Retain C search and calibration pending
 a controlled comparison of their alternatives under the weighted procedure.
+The subsequent follow-up supplies such a probability-quality comparison, making
+weighted calibrated C=0.01 a candidate for matched production-null evaluation.
 
-A useful future comparison would evaluate fixed C values and probability-based
-selection on common outer holdouts containing both cue classes, with all
+After that follow-up, the remaining comparison should test additional fixed C
+values and probability-based selection on independent outer holdouts, with all
 calibration inside training folds. Every null must repeat the chosen search
 procedure. Do not choose C, its scoring rule, or a seed by inspecting the
 target's state duration.

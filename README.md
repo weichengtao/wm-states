@@ -59,6 +59,13 @@ five completed runs, including the weighted default. Weighting modestly improves
 pooled preferred-cue probability scores, with mixed effects across sessions;
 calibration and C selection also materially affect the fitted nulls and state
 durations. Shorter OFF states alone do not indicate a better estimator.
+The [robustness follow-up](docs/next/decoder-state-robustness.md) adds two-class
+held-out decoder validation, null sensitivity, and M1 prediction in held-out
+sessions. It supports weighting/calibration, identifies fixed C=0.01 as a
+promising alternative to the current C search, and separates joint count
+prediction from the less certain preferred-cell-specific maximum-OFF effect.
+Count prediction also overlaps strongly with measured decoder quality; it does
+not by itself establish a change in biological state dynamics.
 
 Set the null count in `decode.n_decode_shuffle` in the JSON preset. The default
 uses 100; the smoke preset uses 3. Use `--dry-run` to inspect resolved settings
@@ -70,6 +77,9 @@ trial/shuffle's permutation across time bins. This changes the null policy;
 use a separate run directory and regenerate decoding and downstream outputs.
 The observed estimate is unchanged. See the [null-policy comparison and examples](docs/next/configuration.md#null-shuffle-time-structure)
 for JSON, standalone CLI, dashboard controls, and interpretation limits.
+The [focused null experiment](docs/next/decoder-state-robustness.md#fresh-null-fits-expose-a-temporal-reference-difference)
+shows why this choice matters for temporal run lengths even when observed
+candidate OFF durations barely change.
 
 Figures default to PNG. Add `--figure-formats png pdf` to save dashboard
 previews alongside PDF exports with vector paths and text. The format choice

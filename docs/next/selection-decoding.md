@@ -11,6 +11,11 @@ For the evidence behind training-class weighting, retained confidence
 calibration, and C search, see [Statistical choices](statistical-choices.md).
 That page compares five completed runs, including the weighted default, and
 distinguishes those production results from the earlier focal seed experiment.
+The [robustness follow-up](decoder-state-robustness.md) evaluates both cue labels
+in outer trial holdouts, tests fixed-cue/all-cell populations, and checks whether
+the state/count association generalizes across sessions. It favors weighting
+and calibration for probability scores, while identifying calibrated C=0.01
+as a promising alternative to accuracy-based C search.
 
 - Screening always uses a full session. Each selection result contains
   `num_trials` and one set of selected, stationary, and presence-passing cells.

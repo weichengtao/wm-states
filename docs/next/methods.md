@@ -12,6 +12,10 @@ That decision record compares five completed runs, including the weighted
 default, and retains the earlier focal seed experiment. It separates modest
 production probability-score gains from evidence about seed stability and
 explains why shorter OFF intervals alone do not validate an estimator.
+The [robustness follow-up](decoder-state-robustness.md) adds two-class outer
+validation and held-out-session M1 prediction. It identifies both supporting
+evidence and limits, including uncertainty in the preferred-cell-specific
+maximum-OFF coefficient. These supplementary tests do not change this template.
 
 The default template command runs the first five stages; add `--stages all` to include
 the six preparation and mixed-effects stages described here. See
@@ -779,6 +783,14 @@ form M1. Then cumulatively add preferred-cell mean normalized activity from
 baseline (M2), encoding (M3), pre-delay (M4), and delay (M5). This sequence uses
 two count covariates, unlike the three-count M1 in the general model families.
 It does not add active fractions or EMA predictors.
+
+The two counts are session-constant. Thus M1 describes between-session
+differences and cannot explain within-session trial variation on its own.
+The supplementary [held-out-session analysis](decoder-state-robustness.md#2-test-m1-at-the-level-where-cell-counts-vary)
+uses 25 session means and tests count prediction beyond M0 and measured
+recording-size covariates. Its target differs from the trial-level MixedLM/CV
+reported by this stage. Joint M1 prediction does not establish each count's
+individual effect or a causal change in biological state duration.
 
 Each model is compared with its immediate predecessor using the shared
 likelihood-ratio and CV procedures. PEV weighting would change the

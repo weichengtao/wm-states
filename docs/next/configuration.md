@@ -576,6 +576,10 @@ Carlo variation remain. See [Statistical choices](statistical-choices.md) for th
 five-run production comparison, the earlier focal seed experiment, and their
 limits. The weighted production run has only one fitting seed; it does not
 establish seed stability across sessions.
+The [robustness follow-up](decoder-state-robustness.md) supplies a separate
+two-class held-out comparison and null-resampling checks. Use those measures,
+rather than shorter OFF states or a stronger downstream M1 result, to judge
+probability-estimation choices.
 
 Old JSON and saved templates using `balance_decoder_training_trials=true/false`
 map to `BALANCED_TRAINING_TRIALS`/`NONE`; conflicting old and new settings are
@@ -664,3 +668,7 @@ between held-out trials, cell screening remains a full-session procedure, and
 the state-stage cluster summaries retain their existing definitions. This
 option alone does not establish joint session-wide or selection-corrected
 inference; see [state methods and cluster-test references](methods.md#states).
+The [three-target matched-fit comparison](decoder-state-robustness.md#fresh-null-fits-expose-a-temporal-reference-difference)
+finds much greater null temporal correlation and longer null runs under shared
+assignments, despite unchanged observed maximum candidate OFF duration. It is
+evidence about the temporal reference, not full-session cluster error control.
