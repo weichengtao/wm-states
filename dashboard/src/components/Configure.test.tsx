@@ -60,6 +60,7 @@ function renderConfigure({
 const visibleText = (html: string) =>
   html
     .replace(/<[^>]*>/g, " ")
+    .replaceAll("&amp;", "&")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -226,6 +227,52 @@ describe("configuration templates", () => {
     expect(visibleText(html)).toContain("Template: 2");
     expect(buttonsNamed(html, "Restore template")).toHaveLength(1);
     expect(buttonsNamed(html, "Review changes")[0]).not.toMatch(
+      disabledAttribute,
+    );
+  });
+});
+
+describe("numeric configuration validation", () => {
+  it("uses raw text editors for decimal and shared integer fields", () => {
+    const html = renderConfigure();
+    for (const id of [
+      "field-select-min_presence_ratio",
+      "workers",
+      "max-sessions",
+    ]) {
+      const input = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`))?.[0];
+      expect(input).toContain('type="text"');
+      expect(input).not.toContain('type="number"');
+    }
+  });
+  it("blocks preview, launch and template saving for malformed numeric JSON even in a hidden stage", () => {
+    const html = renderConfigure({
+      seed: {
+        settings: {
+          select: { min_presence_ratio: 0.9 },
+          decode: { n_decode_shuffle: "100" },
+        },
+      },
+    });
+    expect(visibleText(html)).toContain("Decode confidence: N Decode Shuffle");
+    expect(visibleText(html)).toContain("Use a numeric JSON value");
+    for (const label of [
+      "Save as template",
+      "Validate & preview",
+      "Start pipeline",
+    ]) {
+      const buttons = buttonsNamed(html, label);
+      expect(buttons.length).toBeGreaterThan(0);
+      for (const button of buttons) expect(button).toMatch(disabledAttribute);
+    }
+  });
+  it("blocks fractional worker counts without truncating or discarding the value", () => {
+    const html = renderConfigure({ seed: { n_jobs: 1.5 } });
+    expect(html.match(/<input[^>]*id="workers"[^>]*>/)?.[0]).toContain(
+      'value="1.5"',
+    );
+    expect(visibleText(html)).toContain("Enter a whole number");
+    expect(buttonsNamed(html, "Save as template")[0]).toMatch(
       disabledAttribute,
     );
   });

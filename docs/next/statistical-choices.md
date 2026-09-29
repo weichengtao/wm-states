@@ -10,12 +10,11 @@ by themselves, evidence of a better estimator.**
 adds two-class outer validation, session-level M1 prediction, and sensitivity
 analyses. Weighting and calibration gain stronger support for probability
 estimation. The C conclusion needs qualification: weighted calibrated fixed
-C=0.01 outperforms the current accuracy-based search in that validation. The
+C=0.01 outperforms the historical accuracy-based search in that validation. The
 production comparisons below remain a dated record; they do not establish that
 search is better than every fixed C or that stronger M1 performance validates
 a decoder choice.
-The [smaller-C study](regularization-confidence.md) further checks the proposed
-0.01 candidate: uniform probability shrinkage cannot explain its advantage,
+The [smaller-C study](regularization-confidence.md) further checks C=0.01: uniform probability shrinkage cannot explain its advantage,
 and C=0.001 does not improve consistently across validation panels.
 
 The evidence snapshot is dated **2026-09-29**. It covers the completed runs
@@ -24,8 +23,11 @@ Runs `001`–`004` test the four combinations of calibration and C selection
 under downsampling; `005` tests the complete weighted procedure against `001`.
 No analysis configuration or production cache was modified to prepare it.
 
-**Current default:** `configs/next/default_pipeline.json` implements
-the all-trial weighting policy and is the dashboard's default template. Choose
+**Current default (2026-09-30):** `configs/next/default_pipeline.json` implements
+all-trial balanced class weights, **fixed C=0.01 with grid search disabled**,
+and five-fold sigmoid calibration. It is the dashboard's default template.
+This follows the probability-score comparisons in the two-class and smaller-C follow-ups;
+historical weighted run `005` still uses C search. Choose
 `decode.training_balance` to use balanced class weights, historical balanced
 trial subsampling, or no balancing. Weighting applies within every classifier
 fit and to pooled probability calibration, including null fits. The completed
@@ -38,7 +40,7 @@ settings, SVM handling, and migration.
 | --- | --- | --- |
 | Training-class balance | Use all eligible training trials with balanced class weights; balance calibration for the same cue prior | `005` vs `001`: modest pooled probability-score gains, lower Brier in 16/25 sessions; improved seed stability in the earlier focal experiment |
 | Confidence calibration | Retain training-only sigmoid calibration for observed and null fits | Better preferred-cue Brier and log loss in all 25 sessions at both C settings; much less extreme null probabilities |
-| Regularization | C search remains the production reference; compare alternatives independently of M1 | Better preferred-cue scores than C=1 in these runs; the follow-up weighted two-class validation favors fixed C=0.01 over this search |
+| Regularization | Fixed C=0.01, with C search disabled; retain weights and sigmoid calibration | The historical search beats C=1 here; later weighted two-class and regularization-path validation favor fixed C=0.01, without establishing a universal optimum |
 
 The completed-run comparisons align **25 sessions, 1,590 preferred-cue test
 trials, and 161 time bins per trial**. The delay analysis uses the 91 bin starts
@@ -375,7 +377,7 @@ calibration cue prior consistent with the weighting policy.
 
 The logistic classifier uses L2 regularization. `C` is the inverse
 regularization-strength parameter: smaller values shrink coefficients more
-strongly. The current search evaluates **C=(1, 0.1, 0.01)** using mean balanced
+strongly. The optional search, used in historical runs `001`, `002`, and `005`, evaluates **C=(1, 0.1, 0.01)** using mean balanced
 accuracy over five source-trial-grouped inner folds, with scaling fitted only
 inside each training fold. A tie selects the first candidate in that order.
 See the [estimator definition](https://scikit-learn.org/1.8/modules/generated/sklearn.linear_model.LogisticRegression.html).
@@ -471,7 +473,7 @@ C or the advantage of calibration within the weighted procedure. Full production
 weighted ablations were not available for this five-run snapshot. The
 [follow-up two-class validation](decoder-state-robustness.md#c-search-and-averaging-need-a-more-precise-conclusion)
 now tests those choices in held-out trial folds and favors fixed C=0.01 over
-the current search on probability scores; it does not regenerate the full
+the historical search on probability scores; it does not regenerate the full
 production state outcomes for that candidate.
 
 ### Runtime and the practical decision
@@ -496,22 +498,28 @@ consistent with fitting more training trials, but the timing comparison does
 not isolate the cause or predict runtime on other machines. `004` is much
 faster and has the poorest probability scores of these five runs.
 
-**Decision:** keep C search as the current reference because the completed
-runs show a consistent probability-score benefit. Treat fixed C=1 as a faster
-alternative with a measured accuracy/probability tradeoff, not an equivalent
-configuration. The comparison has not tested fixed C=0.1 or C=0.01, so it does
-not establish that the full grid is necessary or that C=1 is the best fixed
-choice. The default now uses all-trial weighting, whose sample count and loss
-differ from those in the C ablations. Retain C search and calibration pending
-a controlled comparison of their alternatives under the weighted procedure.
-The subsequent follow-up supplies such a probability-quality comparison, making
-weighted calibrated C=0.01 a candidate for matched production-null evaluation.
+**Historical decision from the five-run snapshot:** retain C search as the
+reference because it improves probability scores over fixed C=1. That comparison
+did not test fixed C=0.1 or C=0.01, so it did not establish that the full grid
+was necessary. Its C ablations used downsampling; weighted training changes
+sample count and the balance between loss and regularization.
 
-After that follow-up, the remaining comparison should test additional fixed C
-values and probability-based selection on independent outer holdouts, with all
-calibration inside training folds. Every null must repeat the chosen search
-procedure. Do not choose C, its scoring rule, or a seed by inspecting the
-target's state duration.
+**Current template decision, 2026-09-30:** use balanced class weights, fixed
+C=0.01 with search disabled, and sigmoid calibration. The subsequent
+[two-class validation](decoder-state-robustness.md) and
+[regularization-path study](regularization-confidence.md) motivated this
+choice through held-out probability scores, independently of target OFF duration
+or M1 significance. C=0.001 has no consistent advantage across the two panels.
+These are exploratory comparisons on the existing cohort, not evidence of a
+universal optimum; run `005` and all figures below retain their historical
+searched-C configuration.
+
+A revised selection rule, such as probability-loss-based C search, should be
+evaluated on fresh holdouts with calibration inside training folds. Every null
+must repeat the chosen fitting procedure: fixed C=0.01 for the current default,
+or a complete new search when search is enabled. Regenerate observed, null,
+and downstream outputs together when changing C policy. Do not choose C, its
+scoring rule, or a seed by inspecting the target's state duration.
 
 ### Evidence, reproduction, and remaining limitations
 

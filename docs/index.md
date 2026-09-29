@@ -39,7 +39,7 @@ guide** opens these pages from the same server at `/wm-states/docs/`.
 | --- | --- |
 | `scripts/next/` | Analysis scripts and shared implementation, including the dashboard backend |
 | `dashboard/` | React and TypeScript dashboard frontend |
-| `configs/next/` | Weighted default, historical downsampled example, and smoke JSON presets |
+| `configs/next/` | Weighted fixed-C default, historical downsampled example, and integration smoke JSON presets |
 | `tests/next/` | Tests for the new implementation |
 | `docs/next/` | Pipeline guides |
 | `docs/validation/next.md` | Dated validation results |

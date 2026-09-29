@@ -151,10 +151,10 @@ export function builtInTemplates(schema: Schema): PipelineTemplate[] {
           : "Smoke test",
     description:
       id === "default"
-        ? "All training trials with balanced class weights and calibration."
+        ? "Balanced class weights, sigmoid calibration, and fixed C = 0.01 without C search."
         : id === "example"
           ? "Historical analysis with downsampled balanced training trials."
-          : "Reduced weighted decoding and model work for an integration check.",
+          : "Reduced weighted decoding with C search for an integration check.",
     builtin: true,
     config: templateConfig(
       initialRun(

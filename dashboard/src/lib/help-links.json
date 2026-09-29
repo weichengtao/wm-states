@@ -91,9 +91,15 @@
   },
   "helpTopics": [
     {
+      "title": "Set decoder regularization",
+      "keywords": "classifier_c grid_search_for_c fixed C 0.01 default template regularization smoke example",
+      "answer": "Default pipeline fixes Classifier C at 0.01 and disables Grid search for C, retaining balanced class weights and sigmoid calibration for observed and null fits. Classifier C must be positive and is used only when search is off. Smoke and Example templates retain C search; bare decoder defaults retain fixed C=1. Existing saved settings keep their choices. Use a fresh run directory when changing C policy.",
+      "path": "next/configuration/#decoder-regularization"
+    },
+    {
       "title": "Does smaller C win by shrinking confidence toward 50%?",
       "keywords": "C regularization 0.01 0.001 Brier log loss confidence shrinkage sigmoid calibration numerical",
-      "answer": "The smaller-C study separates raw probabilities, sigmoid calibration, and direct shrinkage on matched held-out trials. Fixed C=0.01 improves more than one uniform shrink factor can explain; C=0.001 has no consistent advantage across panels. Extremely small C can trigger numerical calibration collapse, so near-50% confidence alone does not validate a setting.",
+      "answer": "The smaller-C study separates raw probabilities, sigmoid calibration, and direct shrinkage on matched held-out trials. The current default uses fixed C=0.01 with search disabled: its advantage exceeds what one uniform shrink factor explains, while C=0.001 has no consistent advantage across panels. These cohort comparisons do not establish a universal optimum. Extremely small C can trigger numerical calibration collapse.",
       "path": "next/regularization-confidence/"
     },
     {
@@ -105,7 +111,7 @@
     {
       "title": "Evidence for statistical choices",
       "keywords": "statistical choices confidence calibration regularization C grid search class weighting seed stability off duration next_run_004 next_run_005",
-      "answer": "The five-run comparison covers training balance, calibration, and C selection. Weighted training modestly improves pooled preferred-cue probability scores, with mixed session effects. Calibration and C selection also change null probabilities and state durations. Shorter OFF states alone do not indicate a better estimator; one production seed cannot establish seed stability.",
+      "answer": "The five historical runs compare training balance, calibration, and C selection; weighted run005 still uses C search. Later two-class and regularization-path validation motivate the current weighted, calibrated, fixed-C=0.01 default. Shorter OFF states or stronger M1 results do not validate an estimator, and the existing-cohort comparisons do not establish a universal optimum.",
       "path": "next/statistical-choices/"
     },
     {
@@ -147,7 +153,7 @@
     {
       "title": "What does calibrated confidence mean?",
       "keywords": "probability logistic_calibration_method logistic_calibration_cv sigmoid isotonic classifier_c grid_search_for_c sklearn reference",
-      "answer": "The default template fits logistic regression and sigmoid calibration using held-out inner-fold predictions, then evaluates one untouched outer test trial. C is selected before calibration, not separately inside every calibration fold. Screening and cue selection use the full session, so performance is conditional on those choices.",
+      "answer": "The default template uses fixed C=0.01 and sigmoid calibration from held-out inner-fold predictions, then evaluates one untouched outer test trial. If C search is enabled, C is selected before calibration, not separately within each calibration fold. Screening and cue selection use the full session, so performance is conditional on those choices.",
       "path": "next/methods/#decode",
       "reference": {
         "label": "scikit-learn: probability calibration",

@@ -43,6 +43,15 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
 import SaveTemplateDialog from "./SaveTemplateDialog";
+import NumericInput from "./NumericInput";
+import {
+  numericKey,
+  numericSpecs,
+  parseNumericDraft,
+  resolveNumericDrafts,
+  setNumericValue,
+  type NumericDrafts,
+} from "@/lib/numeric-fields";
 import { LegacyTrustPanel } from "./LegacyTrust";
 import PathInput from "./PathInput";
 import DataAvailability from "./DataAvailability";
@@ -64,6 +73,7 @@ function FieldEditor({
   templateValue,
   templateName,
   onChange,
+  numeric,
 }: {
   stageId: string;
   field: Field;
@@ -71,11 +81,19 @@ function FieldEditor({
   templateValue: Json;
   templateName: string;
   onChange: (value: Json) => void;
+  numeric: {
+    value: string;
+    error?: string;
+    pending: boolean;
+    onDraft: (text: string) => void;
+    onCommit: () => void;
+  };
 }) {
   const id = `field-${stageId}-${field.name}`;
   const selectedChoice = choiceValue(field, value);
   const helpPath = fieldHelpPath(stageId, field.name);
-  const changed = !sameFieldValue(field, value, templateValue);
+  const changed =
+    numeric.pending || !sameFieldValue(field, value, templateValue);
   return (
     <div className={`parameter ${changed ? "parameter-changed" : ""}`}>
       <div className="parameter-label">
@@ -147,22 +165,15 @@ function FieldEditor({
           ]}
         />
       ) : ["integer", "number"].includes(field.type) ? (
-        <Input
+        <NumericInput
           id={id}
           aria-describedby={`${id}-description`}
-          type="number"
-          step={field.type === "integer" ? 1 : "any"}
-          value={value === null ? "" : String(value)}
+          integer={field.type === "integer"}
+          value={numeric.value}
+          error={numeric.error}
           placeholder={field.nullable ? "None (optional)" : ""}
-          onChange={(e) =>
-            onChange(
-              e.target.value === ""
-                ? field.nullable
-                  ? null
-                  : ""
-                : Number(e.target.value),
-            )
-          }
+          onDraft={numeric.onDraft}
+          onCommit={numeric.onCommit}
         />
       ) : field.path_kind ? (
         <PathInput
@@ -263,6 +274,15 @@ export default function Configure({
   const [templateFeedback, setTemplateFeedback] = useState("");
   const [reviewChanges, setReviewChanges] = useState(false);
   const [form, setForm] = useState(initial);
+  const formRef = useRef(form);
+  const [numericDrafts, setNumericDrafts] = useState<NumericDrafts>({});
+  const numericDraftsRef = useRef(numericDrafts);
+  const [numericTouched, setNumericTouched] = useState<Record<string, boolean>>(
+    {},
+  );
+  const specs = useMemo(() => numericSpecs(schema), [schema]);
+  const numericState = resolveNumericDrafts(form, numericDrafts, schema);
+  const numericBlocked = !numericState.valid;
   const dataAvailability = useDataAvailability(form);
   const recordingsBlocked = dataAvailability.result?.blocking === true;
   const [active, setActive] = useState(schema.stages[0].id);
@@ -285,22 +305,96 @@ export default function Configure({
     jsonDirty: boolean;
     jsonMode: boolean;
     template: PipelineTemplate;
+    numericDrafts: NumericDrafts;
+    numericTouched: Record<string, boolean>;
   } | null>(null);
   const [validation, setValidation] = useState<{
     command: string;
     resolved: Settings;
   } | null>(null);
-  const update = (patch: Partial<RunRequest>) => {
+  const edited = () => {
     revision.current += 1;
-    setForm((v) => updateRunDraft(v, patch));
     setUndo(null);
     setValidation(null);
     setError("");
     setTemplateFeedback("");
   };
+  const update = (patch: Partial<RunRequest>) => {
+    edited();
+    formRef.current = updateRunDraft(formRef.current, patch);
+    setForm(formRef.current);
+  };
+  const replaceNumericDrafts = (next: NumericDrafts) => {
+    numericDraftsRef.current = next;
+    setNumericDrafts(next);
+    setNumericTouched((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([key]) => Object.hasOwn(next, key)),
+      ),
+    );
+  };
+  const clearNumericDraft = (key: string) => {
+    const next = { ...numericDraftsRef.current };
+    delete next[key];
+    replaceNumericDrafts(next);
+  };
+  const editNumeric = (key: string, text: string) => {
+    edited(); // Even an incomplete entry invalidates an in-flight preview.
+    replaceNumericDrafts({ ...numericDraftsRef.current, [key]: text });
+    setNumericTouched((current) => ({ ...current, [key]: false }));
+  };
+  const commitNumeric = (key: string) => {
+    if (!Object.hasOwn(numericDraftsRef.current, key)) return;
+    const spec = specs.find((item) => item.key === key)!;
+    const result = parseNumericDraft(numericDraftsRef.current[key], spec);
+    if (result.error !== undefined) {
+      setNumericTouched((current) => ({ ...current, [key]: true }));
+      return; // Keep invalid text visible.
+    }
+    update(setNumericValue(formRef.current, spec, result.value));
+    clearNumericDraft(key);
+  };
+  const prepareSnapshot = (): RunRequest | null => {
+    const result = resolveNumericDrafts(
+      formRef.current,
+      numericDraftsRef.current,
+      schema,
+    );
+    if (!result.valid) {
+      setNumericTouched(
+        Object.fromEntries(
+          Object.keys(numericDraftsRef.current).map((key) => [key, true]),
+        ),
+      );
+      setError(
+        "Fix the numeric entries shown above before validating, saving, or starting.",
+      );
+      return null;
+    }
+    if (Object.keys(numericDraftsRef.current).length) {
+      update(result.form);
+      replaceNumericDrafts({});
+    }
+    return structuredClone(result.form);
+  };
+  const numericIssue = (key: string) =>
+    !Object.hasOwn(numericDrafts, key) || numericTouched[key]
+      ? numericState.issues[key]
+      : undefined;
+  const visibleNumericIssues = specs.filter((spec) => numericIssue(spec.key));
+  const numericProps = (key: string, value: Json) => ({
+    value: numericDrafts[key] ?? (value === null ? "" : String(value)),
+    error: numericIssue(key),
+    onDraft: (text: string) => editNumeric(key, text),
+    onCommit: () => commitNumeric(key),
+  });
   const stage = schema.stages.find((s) => s.id === active)!;
   const templateForm = templateRun(form, selectedTemplate);
-  const differences = templateChanges(form, selectedTemplate, schema);
+  const differences = templateChanges(
+    numericState.form,
+    selectedTemplate,
+    schema,
+  );
   const sharedDifferences = differences.filter(
     (item) => item.stage === "shared",
   );
@@ -315,11 +409,12 @@ export default function Configure({
     ) : null;
   };
   const changedFields = (stageId: string, fields: Field[]) =>
-    fields.filter((field) =>
-      differences.some(
-        (difference) =>
-          difference.stage === stageId && difference.field === field.name,
-      ),
+    fields.filter(
+      (field) =>
+        differences.some(
+          (difference) =>
+            difference.stage === stageId && difference.field === field.name,
+        ) || Object.hasOwn(numericDrafts, numericKey(stageId, field.name)),
     );
   const changes = changedFields(stage.id, stage.fields);
   const filtered = stage.fields.filter(
@@ -334,13 +429,16 @@ export default function Configure({
   ) => {
     const previous = structuredClone({
       label,
-      form,
+      form: formRef.current,
       jsonText,
       jsonDirty,
       jsonMode,
       template: selectedTemplate,
+      numericDrafts: numericDraftsRef.current,
+      numericTouched,
     });
     update({ ...next, trust_unverified_legacy_results: false });
+    replaceNumericDrafts({});
     setJsonText(JSON.stringify(next.settings, null, 2));
     setJsonDirty(false);
     setUndo(previous);
@@ -392,7 +490,8 @@ export default function Configure({
     ]);
     const unchanged =
       !draftRef.current.jsonDirty &&
-      JSON.stringify(draftRef.current.form) === JSON.stringify(snapshot);
+      !Object.keys(numericDraftsRef.current).length &&
+      JSON.stringify(formRef.current) === JSON.stringify(snapshot);
     if (unchanged) {
       setSelectedTemplate(freezeTemplate(saved, schema));
       setUndo(null);
@@ -406,6 +505,14 @@ export default function Configure({
   const applyJson = () => {
     try {
       update({ settings: parseSettings(jsonText) });
+      // JSON replaces stage overrides; shared controls retain their own drafts.
+      replaceNumericDrafts(
+        Object.fromEntries(
+          Object.entries(numericDraftsRef.current).filter(([key]) =>
+            key.startsWith("shared."),
+          ),
+        ),
+      );
       setJsonDirty(false);
       return true;
     } catch (e) {
@@ -418,12 +525,34 @@ export default function Configure({
       if (jsonDirty && !applyJson()) return;
       setJsonMode(false);
     } else {
-      setJsonText(JSON.stringify(form.settings, null, 2));
+      // Only stage drafts need to enter settings JSON. Shared controls remain visible.
+      const stageDrafts = Object.fromEntries(
+        Object.entries(numericDraftsRef.current).filter(
+          ([key]) => !key.startsWith("shared."),
+        ),
+      );
+      for (const [key, text] of Object.entries(stageDrafts)) {
+        if (
+          parseNumericDraft(
+            text,
+            specs.find((spec) => spec.key === key)!,
+          ).error !== undefined
+        ) {
+          setError(
+            "Complete or reset the invalid numeric stage entries before switching to JSON.",
+          );
+          return;
+        }
+      }
+      for (const key of Object.keys(stageDrafts)) commitNumeric(key);
+      setJsonText(JSON.stringify(formRef.current.settings, null, 2));
       setJsonDirty(false);
       setJsonMode(true);
     }
   };
   async function submit(launch: boolean) {
+    const current = prepareSnapshot();
+    if (!current) return;
     const requestedRevision = revision.current;
     setBusy(launch ? "launch" : "validate");
     setError("");
@@ -432,7 +561,7 @@ export default function Configure({
         throw new Error(
           "Apply your JSON changes before validating or starting.",
         );
-      if (!form.stages.length) throw new Error("Choose at least one stage.");
+      if (!current.stages.length) throw new Error("Choose at least one stage.");
       if (launch && running)
         throw new Error(
           "Another pipeline is running. You can still save this setup as a template.",
@@ -440,7 +569,7 @@ export default function Configure({
       if (launch && recordingsBlocked)
         throw new Error(dataAvailability.result!.message);
       const submission = structuredClone({
-        ...form,
+        ...current,
         source_template: selectedTemplate,
       });
       if (launch) {
@@ -448,10 +577,11 @@ export default function Configure({
           await launchRun(submission, () => {
             revision.current += 1;
             // Clear only consent: edits made while the request was pending stay.
-            setForm((current) => ({
-              ...current,
+            formRef.current = {
+              ...formRef.current,
               trust_unverified_legacy_results: false,
-            }));
+            };
+            setForm(formRef.current);
             setUndo(null);
             setValidation(null);
           }),
@@ -508,6 +638,8 @@ export default function Configure({
             running={running}
             onSaved={savedTemplate}
             onError={setTemplateError}
+            prepareSnapshot={prepareSnapshot}
+            numericBlocked={numericBlocked}
           />
           <Button
             onClick={() => submit(true)}
@@ -519,6 +651,7 @@ export default function Configure({
             disabled={
               !!busy ||
               jsonDirty ||
+              numericBlocked ||
               !form.stages.length ||
               running ||
               recordingsBlocked
@@ -604,6 +737,11 @@ export default function Configure({
                   Apply JSON to update comparisons and save a template.
                 </span>
               </>
+            ) : Object.keys(numericDrafts).length ? (
+              <span>
+                Numeric edits in progress · leave the field or press Enter to
+                apply.
+              </span>
             ) : differences.length ? (
               <>
                 <span className="template-change-dot" />
@@ -635,7 +773,7 @@ export default function Configure({
             >
               {reviewChanges ? "Hide changes" : "Review changes"}
             </Button>
-            {!!differences.length && (
+            {(!!differences.length || !!Object.keys(numericDrafts).length) && (
               <Button
                 variant="outline"
                 size="sm"
@@ -706,6 +844,8 @@ export default function Configure({
             size="sm"
             onClick={() => {
               update({ ...undo.form, trust_unverified_legacy_results: false });
+              replaceNumericDrafts(undo.numericDrafts);
+              setNumericTouched(undo.numericTouched);
               setJsonText(undo.jsonText);
               setJsonDirty(undo.jsonDirty);
               setJsonMode(undo.jsonMode);
@@ -715,6 +855,22 @@ export default function Configure({
             <Undo2 /> Undo
           </Button>
         </div>
+      )}
+      {!!visibleNumericIssues.length && (
+        <Notice>
+          <div role="alert">
+            <strong>
+              Fix numeric entries before validating, saving, or starting:
+            </strong>
+            <ul>
+              {visibleNumericIssues.map((spec) => (
+                <li key={spec.key}>
+                  {spec.label}: {numericState.issues[spec.key]}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Notice>
       )}
       <section className="panel run-setup">
         <div className="section-heading">
@@ -791,13 +947,11 @@ export default function Configure({
           </div>
           <div className={fieldClass("n_jobs")}>
             <label htmlFor="workers">Parallel workers</label>
-            <Input
+            <NumericInput
               id="workers"
               aria-describedby="workers-help"
-              type="number"
-              step={1}
-              value={form.n_jobs}
-              onChange={(e) => update({ n_jobs: Number(e.target.value) })}
+              integer
+              {...numericProps("shared.n_jobs", form.n_jobs)}
             />
             {sharedHint("n_jobs")}
             <p id="workers-help" className="field-hint">
@@ -808,19 +962,14 @@ export default function Configure({
             <label htmlFor="max-sessions">
               Maximum sessions <span>optional</span>
             </label>
-            <Input
+            <NumericInput
               id="max-sessions"
-              type="number"
-              min={1}
+              integer
               placeholder="All eligible sessions"
-              value={form.max_sessions_to_run ?? ""}
-              onChange={(e) =>
-                update({
-                  max_sessions_to_run: e.target.value
-                    ? Number(e.target.value)
-                    : null,
-                })
-              }
+              {...numericProps(
+                "shared.max_sessions_to_run",
+                form.max_sessions_to_run,
+              )}
             />
             {sharedHint("max_sessions_to_run")}
           </div>
@@ -1089,20 +1238,31 @@ export default function Configure({
                     key={`${stage.id}-${field.name}`}
                     stageId={stage.id}
                     field={field}
-                    value={fieldValue(form, stage.id, field)}
+                    value={fieldValue(numericState.form, stage.id, field)}
                     templateValue={fieldValue(templateForm, stage.id, field)}
                     templateName={selectedTemplate.name}
-                    onChange={(value) =>
+                    numeric={{
+                      ...numericProps(
+                        numericKey(stage.id, field.name),
+                        fieldValue(numericState.form, stage.id, field),
+                      ),
+                      pending: Object.hasOwn(
+                        numericDrafts,
+                        numericKey(stage.id, field.name),
+                      ),
+                    }}
+                    onChange={(value) => {
+                      clearNumericDraft(numericKey(stage.id, field.name));
                       update({
                         settings: {
-                          ...form.settings,
+                          ...formRef.current.settings,
                           [stage.id]: {
-                            ...form.settings[stage.id],
+                            ...formRef.current.settings[stage.id],
                             [field.name]: value,
                           },
                         },
-                      })
-                    }
+                      });
+                    }}
                   />
                 ))}
               </div>
@@ -1162,7 +1322,9 @@ export default function Configure({
           <Button
             variant="outline"
             onClick={() => submit(false)}
-            disabled={!!busy || jsonDirty || !form.stages.length}
+            disabled={
+              !!busy || jsonDirty || numericBlocked || !form.stages.length
+            }
           >
             {busy === "validate" ? (
               <LoaderCircle className="animate-spin" />
@@ -1181,6 +1343,7 @@ export default function Configure({
             disabled={
               !!busy ||
               jsonDirty ||
+              numericBlocked ||
               !form.stages.length ||
               running ||
               recordingsBlocked

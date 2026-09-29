@@ -23,9 +23,9 @@ class TemplateStore:
     directory_parts = ('configs', 'next', 'templates')
     shared_fields = {'stages', 'n_jobs', 'max_sessions_to_run', 'figure_formats', 'figure_font'}
     builtin_details = {
-        'default': ('Default pipeline', 'All training trials with balanced class weights and calibration.'),
+        'default': ('Default pipeline', 'Balanced class weights, sigmoid calibration, and fixed C = 0.01 without C search.'),
         'example': ('Example pipeline', 'Historical analysis with downsampled balanced training trials.'),
-        'smoke': ('Smoke test', 'Reduced computation for an integration check.'),
+        'smoke': ('Smoke test', 'Reduced weighted decoding with C search for an integration check.'),
     }
 
     def __init__(self, repo_root: Path):

@@ -139,11 +139,14 @@ uniform shrinkage cannot make those changes. Primary probability spread
 increases; sensitivity mean distance decreases only slightly
 (13.882 → 13.856 percentage points).
 
-**Decision:** C=0.01 remains the more consistent fixed-C candidate across these
-panels. C=0.001 has no robust advantage. This does not establish a universal
-optimum or validate the production search scoring rule. Evaluate any revised
-selection rule on fresh holdouts before changing defaults or recomputing
-matched state/null estimates.
+**Current template decision, 2026-09-30:** the default adopted **fixed C=0.01**,
+disabled C grid search, and retained balanced class weights and sigmoid
+calibration. C=0.01 is the more consistent fixed-C choice across these panels;
+C=0.001 has no robust advantage. This does not establish a universal optimum
+or validate the historical search scoring rule. The comparisons are exploratory
+on the existing cohort. Evaluate future selection rules on fresh holdouts, and
+regenerate observed and matched null estimates together before interpreting
+state outcomes under the new default. Historical run `005` remains searched-C.
 
 ## Why very small C need not give calibrated probabilities of 50%
 
@@ -205,7 +208,9 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python scripts/next/validate_
 Raw held-out probabilities, per-task scores, and calibration diagnostics stay in
 ignored experiment directories. The versioned evidence records source hashes,
 software versions, equal-session and per-animal results, and the experiment
-design. Production defaults and caches are unchanged.
+design. The experiments left production caches unchanged. The subsequent
+decision updated the default template to fixed C=0.01 with search disabled;
+historical runs and the evidence values above retain their original settings.
 
 - [Regularization-path evidence](../validation/regularization-path-validation.json).
 - [Training-only calibration-scale diagnostic](../validation/calibration-scale-validation.json).

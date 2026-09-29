@@ -232,6 +232,8 @@ class TrainingBalanceTests(unittest.TestCase):
             self.assertEqual(decoded['training_balance'], 'balanced_class_weights')
             self.assertEqual(decoded['probability_calibration_method'], 'sigmoid')
             self.assertEqual(decoded['calibration_effective_cv_folds'], [5])
+            np.testing.assert_array_equal(decoded['decoding_classifier_c'], 0.01)
+            np.testing.assert_array_equal(decoded['decoding_classifier_c_null'], 0.01)
             self.assertEqual(decoded['decoding_confidence_null'].shape, (12, 3, 4))
             self.assertEqual(evaluated['training_balance'], 'balanced_class_weights')
             self.assertEqual(states[0]['decoding_training_balance'], 'balanced_class_weights')
@@ -240,6 +242,8 @@ class TrainingBalanceTests(unittest.TestCase):
             manifest = json.loads((cache / 'pipeline_manifest.json').read_text())
             self.assertTrue(all(stage['status'] == 'complete' for stage in manifest['stages']))
             self.assertEqual(manifest['settings']['decode']['training_balance'], 'balanced_class_weights')
+            self.assertEqual(manifest['settings']['decode']['classifier_c'], 0.01)
+            self.assertFalse(manifest['settings']['decode']['grid_search_for_c'])
 
 
 if __name__ == '__main__':

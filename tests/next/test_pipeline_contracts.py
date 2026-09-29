@@ -304,6 +304,9 @@ class RunnerTest(unittest.TestCase):
                     self.assertTrue(all(item['status'] == 'complete' for item in manifest['stages']))
                     if 'decode' in expected:
                         self.assertEqual(manifest['settings']['decode']['n_decode_shuffle'], null_count)
+                        default = preset == 'default_pipeline.json'
+                        self.assertEqual(manifest['settings']['decode']['classifier_c'], 0.01 if default else 1)
+                        self.assertEqual(manifest['settings']['decode']['grid_search_for_c'], not default)
 
     def test_removed_stages_are_rejected_before_writing_outputs(self):
         from scripts.next import pipeline

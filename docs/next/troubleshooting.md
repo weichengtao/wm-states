@@ -110,14 +110,16 @@ stage's settings before running. See [Migration](migration.md).
 
 ## Decoding cannot construct the requested CV folds
 
-C search requires at least **six correct preferred-cue trials and five correct
+When enabled, C search requires at least **six correct preferred-cue trials and five correct
 opposite-cue trials** before fitting. Each preferred-trial holdout must leave
 five training trials from each class, including after training-class balancing.
 Session preflight reports the actual counts before launching workers.
 Calibration can reduce its fold count with a warning, but still needs at least
-two usable folds. Inspect class counts and trial eligibility first. If using a
-fixed C is appropriate for the analysis, set
-`decode.grid_search_for_c` to `false`; that changes the analysis design.
+two usable folds. The current default already disables C search and fixes
+C=0.01; its calibrated decoder needs at least three preferred and two opposite
+trials before holdout. Inspect class counts and trial eligibility first.
+Disabling search in a historical or custom searched-C configuration changes
+the analysis design and requires regenerated decoding and downstream estimates.
 
 ## Observed evaluation accuracy differs from native decoder accuracy
 

@@ -50,8 +50,8 @@ class Config:
     svm_kernel: SVMKernel = SVMKernel.LINEAR  # Used only by the SVM decoder.
     # Balanced class weights retain all trials and balance classifier and calibration fits; balanced training trials randomly downsamples cue groups; none fits all trials unweighted. The default template selects class weights; the bare script retains historical downsampling.
     training_balance: TrainingBalance = TrainingBalance.BALANCED_TRAINING_TRIALS
-    classifier_c: float = 1.0  # Inverse regularization strength; used only when C search is disabled.
-    grid_search_for_c: bool = False  # Search C = 1, 0.1, 0.01 by five-fold balanced accuracy; enabled in the default and example presets.
+    classifier_c: float = 1.0  # Inverse regularization strength; used only when C search is disabled. The default template fixes C = 0.01; the bare script retains C = 1.
+    grid_search_for_c: bool = False  # Search C = 1, 0.1, 0.01 by five-fold balanced accuracy; disabled in the default template, enabled in the historical example and integration smoke presets.
     logistic_calibration_method: LogisticCalibrationMethod = LogisticCalibrationMethod.SIGMOID  # Logistic-only probability calibration; none uses the classifier's raw probabilities.
     logistic_calibration_cv: int = 5  # Requested source-trial-grouped calibration folds; reduced with a warning when class counts require it.
     min_cell_per_group: int = 1  # Minimum selected cells in the session's largest preferred-cue group, independent of decoder pool choice.

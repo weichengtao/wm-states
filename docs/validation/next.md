@@ -1,5 +1,46 @@
 # Next pipeline validation
 
+## Fixed-C default and numeric configuration editing — 2026-09-30
+
+The current default template adopts **fixed C=0.01 with C search disabled**,
+retaining all-trial balanced class weights and five-fold sigmoid calibration.
+See [regularization evidence](../next/regularization-confidence.md) for the
+probability-score rationale and exploratory limits, and
+[migration](../next/migration.md#default-fixed-regularization) for applying it
+to a fresh analysis. Earlier entries below describe the defaults at the time
+of their checks; historical runs and evidence files retain their settings.
+
+- The real default-template fixture runs selection, observed/null decoding,
+  evaluation, and state detection on an imbalanced synthetic recording. All
+  observed and null C values equal 0.01; weighted calibration metadata and
+  state provenance remain valid. Dashboard schema resolution, runner manifests,
+  and the documented standalone command agree with the template.
+- Bare-script defaults and the example/smoke templates retain their previous
+  settings. Both C and the search flag affect cache fingerprints; searched
+  estimates cannot silently resume as fixed-C estimates. The scientific decoder
+  source digest remains
+  `65fbff72d8d55bfbcfc15ab6ad8e6951d09688822f8133e465450a1107bc1c5b`.
+- Numeric inputs retain raw drafts until blur, Enter, or an action snapshot.
+  Incomplete/invalid drafts block validation, saving, and launch without being
+  replaced by an earlier value. Draft errors appear after blur/Enter and clear
+  when editing resumes. New keystrokes invalidate pending command previews.
+- Browser QA reproduced the old bug: typing `0.01` character by character
+  produced `1`. The updated input preserves `0`, `0.`, `0.0`, and `0.01`.
+  Immediate validation/save requests contain the latest numeric value, verified
+  in an isolated server fixture. A captured launch request likewise uses the
+  current C, worker count, and optional session limit; its test handler starts
+  no pipeline process.
+- Additional browser checks cover exponent entry, fractional-integer rejection,
+  nullable clearing and toggle actions, hidden invalid drafts after stage
+  changes, per-field reset, Reset/Undo with restored errors, JSON/form round
+  trips, and a delayed validation response arriving after another edit.
+- **655 Python tests** pass in **23.986 seconds**. **172 dashboard tests** pass,
+  including 11 new numeric parser, snapshot, and rendered-control checks.
+  These automated frontend checks are supplemented by the browser interaction
+  checks above. TypeScript/Vite build, formatting, strict MkDocs build, and
+  `git diff --check` pass. No production pipeline is launched and no scientific
+  cache is modified during these checks.
+
 ## Smaller C and confidence shrinkage — 2026-09-30
 
 The [regularization study](../next/regularization-confidence.md) extends the

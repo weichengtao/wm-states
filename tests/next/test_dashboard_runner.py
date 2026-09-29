@@ -48,7 +48,11 @@ class DashboardSchemaTests(unittest.TestCase):
         stages = {stage['id']: stage for stage in schema['stages']}
         fields = {field['name']: field for field in stages['decode']['fields']}
         self.assertEqual(fields['grid_search_for_c']['default'], False)
+        self.assertEqual(fields['classifier_c']['default'], 1.0)
+        self.assertEqual(schema['presets']['default']['decode']['classifier_c'], 0.01)
+        self.assertFalse(schema['presets']['default']['decode']['grid_search_for_c'])
         self.assertTrue(schema['presets']['example']['decode']['grid_search_for_c'])
+        self.assertTrue(schema['presets']['smoke']['decode']['grid_search_for_c'])
         self.assertEqual(fields['n_decode_shuffle']['default'], 100)
         self.assertEqual(fields['n_decode_shuffle']['type'], 'integer')
         self.assertEqual(fields['preserve_null_time_structure']['type'], 'boolean')
@@ -66,13 +70,16 @@ class DashboardSchemaTests(unittest.TestCase):
         self.assertTrue(next(field for field in stages['activity']['fields']
                              if field['name'] == 'max_points_per_color_group')['nullable'])
 
-    def test_example_resolves_and_command_quotes_paths_without_shell(self):
+    def test_default_resolves_and_command_quotes_paths_without_shell(self):
         (self.root / 'data' / 'sample.mat').touch()
         schema = get_schema(self.root)
         values = {**schema['defaults'], 'data_dir': 'data', 'cache_dir': "cache/a 'quoted' name"}
         plan = self.manager.validate(RunRequest(**values))
         self.assertEqual(list(plan['resolved']), list(pipeline.STAGES))
-        self.assertTrue(plan['resolved']['decode']['grid_search_for_c'])
+        self.assertFalse(plan['resolved']['decode']['grid_search_for_c'])
+        self.assertEqual(plan['resolved']['decode']['classifier_c'], 0.01)
+        self.assertEqual(plan['resolved']['decode']['logistic_calibration_method'], 'sigmoid')
+        self.assertEqual(plan['resolved']['decode']['logistic_calibration_cv'], 5)
         self.assertEqual(plan['resolved']['decode']['training_balance'], 'balanced_class_weights')
         self.assertEqual(shlex.split(plan['command']), plan['argv'])
         self.assertEqual(plan['argv'][1], '-u')
@@ -100,6 +107,8 @@ class DashboardSchemaTests(unittest.TestCase):
                  ({'decode': {'save_figures': 'false'}}, 'expected bool'),
                  ({'decode': {'preserve_null_time_structure': 'false'}}, 'expected bool'),
                  ({'decode': {'classifier_c': float('inf')}}, 'finite'),
+                 ({'decode': {'classifier_c': 0}}, 'positive'),
+                 ({'decode': {'classifier_c': '0.01'}}, 'expected a finite number'),
                  ({'states': {'cc_method_on': 'invented'}}, 'choose one'),
                  ({'select': {'max_abs_preferred_cue_drift_r': 2}}, 'finite and in'),
                  ({'select': {'temp_dep_r_threshold': 0.3}}, 'unknown setting'),

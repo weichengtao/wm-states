@@ -62,7 +62,8 @@ uv run python scripts/next/pipeline.py \
 
 This runs all 11 stages with a 400 ms decoding stride, three null shuffles,
 one mixed-effects holdout, one activity threshold, and a reduced optimization
-budget. It checks integration; use the default preset for scientific analyses.
+budget. It retains C search to exercise that path during integration checks;
+use the default preset for scientific analyses.
 Small smoke runs can produce rank-deficient or nonconverged statistical fits.
 
 For the full dataset, use the default preset:
@@ -75,6 +76,11 @@ uv run python scripts/next/pipeline.py \
   --session-list-file configs/decoding_sessions.txt \
   --n-jobs 10
 ```
+
+The default uses balanced class weights, fixed C=0.01 with C search disabled,
+and five-fold sigmoid calibration for observed and shuffled-null estimates.
+See [decoder regularization](configuration.md#decoder-regularization) for the
+evidence and differences from bare scripts and the example/smoke templates.
 
 This runs selection, decoding, evaluation, state detection, and activity comparison. Add `--stages all` to include the
 mixed-effects analyses. The session-list file selects whole sessions by ID;

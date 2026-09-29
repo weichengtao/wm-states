@@ -25,8 +25,8 @@
     "svm_kernel": "LINEAR",
     "logistic_calibration_method": "SIGMOID",
     "logistic_calibration_cv": 5,
-    "classifier_c": 1,
-    "grid_search_for_c": true,
+    "classifier_c": 0.01,
+    "grid_search_for_c": false,
     "seed": 42,
     "training_balance": "BALANCED_CLASS_WEIGHTS"
   },

@@ -53,8 +53,8 @@ produce the same stage outputs but do not create runner-history records.
 These standalone commands reproduce the first five stages of
 `configs/next/default_pipeline.json` and use the same session list as the
 [getting-started command](getting-started.md). They explicitly enable balanced
-class weights, C search, and sigmoid calibration; standalone scripts do not
-load the JSON template automatically. Run them in order with the same data and
+class weights, fixed C=0.01 with C search disabled, and sigmoid calibration.
+Standalone scripts do not load the JSON template automatically. Run them in order with the same data and
 cache directories.
 
 ```bash
@@ -95,8 +95,8 @@ uv run python scripts/next/decoding_confidence.py \
   --decoder-model LOGISTIC_REGRESSION \
   --logistic-calibration-method SIGMOID \
   --logistic-calibration-cv 5 \
-  --classifier-c 1 \
-  --grid-search-for-c \
+  --classifier-c 0.01 \
+  --no-grid-search-for-c \
   --seed 42
 
 # 3. Evaluate observed and shuffled null confidence.

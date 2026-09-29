@@ -20,6 +20,8 @@ export default function SaveTemplateDialog({
   running = false,
   onSaved,
   onError,
+  prepareSnapshot,
+  numericBlocked = false,
 }: {
   schema: Schema;
   form: RunRequest;
@@ -27,6 +29,8 @@ export default function SaveTemplateDialog({
   running?: boolean;
   onSaved: (template: PipelineTemplate, snapshot: RunRequest) => void;
   onError: (message: string) => void;
+  prepareSnapshot?: () => RunRequest | null;
+  numericBlocked?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [snapshot, setSnapshot] = useState(form);
@@ -39,10 +43,12 @@ export default function SaveTemplateDialog({
   const openRef = useRef(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
   function changeOpen(next: boolean) {
+    const current = next ? (prepareSnapshot ? prepareSnapshot() : form) : null;
+    if (next && !current) return;
     openRef.current = next;
     setOpen(next);
     if (next) {
-      setSnapshot(structuredClone(form));
+      setSnapshot(structuredClone(current!));
       setName("");
       setDescription("");
       setIncludePaths(false);
@@ -82,11 +88,13 @@ export default function SaveTemplateDialog({
       <DialogTrigger asChild>
         <Button
           variant="outline"
-          disabled={jsonDirty || saving}
+          disabled={jsonDirty || numericBlocked || saving}
           title={
             jsonDirty
               ? "Apply your JSON changes before saving a template."
-              : undefined
+              : numericBlocked
+                ? "Fix invalid numeric entries before saving a template."
+                : undefined
           }
         >
           {saving ? (

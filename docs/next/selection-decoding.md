@@ -8,14 +8,16 @@ Those sections link to papers and library documentation beside the relevant
 choices, and distinguish standard estimators from the custom state rules.
 
 For the evidence behind training-class weighting, retained confidence
-calibration, and C search, see [Statistical choices](statistical-choices.md).
-That page compares five completed runs, including the weighted default, and
-distinguishes those production results from the earlier focal seed experiment.
+calibration, and regularization, see [Statistical choices](statistical-choices.md).
+That page compares five completed historical runs, including weighted C-search
+reference `next_run_005`, and distinguishes those production results from the earlier focal seed experiment.
 The [robustness follow-up](decoder-state-robustness.md) evaluates both cue labels
 in outer trial holdouts, tests fixed-cue/all-cell populations, and checks whether
 the state/count association generalizes across sessions. It favors weighting
-and calibration for probability scores, while identifying calibrated C=0.01
-as a promising alternative to accuracy-based C search.
+and calibration for probability scores. Following that evidence and the
+[regularization-path study](regularization-confidence.md), the current default
+uses calibrated fixed C=0.01 with C search disabled. This is an exploratory
+choice on the existing cohort, not proof of a universal optimum.
 
 - Screening always uses a full session. Each selection result contains
   `num_trials` and one set of selected, stationary, and presence-passing cells.
@@ -34,8 +36,8 @@ as a promising alternative to accuracy-based C search.
   targets and caps affect plots only, with no change to screening or CSV rows; see
   [Diagnostic tools](outputs.md#diagnostic-tools).
 - Decoding uses correct preferred- and opposite-cue trials, testing each
-  preferred-cue trial once. Training, normalization, C search, and calibration
-  exclude all time bins of the held-out trial. Cell screening itself remains
+  preferred-cue trial once. Training, normalization, optional C search, and
+  calibration exclude all time bins of the held-out trial. Cell screening itself remains
   a full-session procedure; it is not nested within decoder cross-validation.
 - There is exactly one observed estimate per trial/bin. With N null shuffles,
   `decoding_confidence` and `decoding_classifier_c` have shape `(trial, bin)`;
@@ -57,7 +59,12 @@ as a promising alternative to accuracy-based C search.
   and training-trial selection/balancing. Every observed and null fit uses only
   the current time bin, with one sample per training trial. Pooled-delay decoding
   and cell-wise label-preserving shuffles are not supported.
-- `--grid-search-for-c` selects among C=(1, 0.1, 0.01) using balanced accuracy
+- The default template uses `--classifier-c 0.01 --no-grid-search-for-c` for
+  every observed and null fit, including calibration-fold base fits. Bare
+  decoder defaults retain fixed C=1; example and smoke templates retain C search.
+  See [decoder regularization](configuration.md#decoder-regularization) for
+  migration and cache regeneration.
+- Optional `--grid-search-for-c` selects among C=(1, 0.1, 0.01) using balanced accuracy
   and exactly five source-trial-grouped folds for every distinct observed/null
   training problem. Calibration uses the selected C and grouped training-only
   folds. Calibration may reduce its fold count when necessary; C search requires
@@ -65,7 +72,8 @@ as a promising alternative to accuracy-based C search.
   candidates without using validation data. Without search, `--classifier-c` is used directly.
   Preflight checks require at least six correct preferred-cue trials and five
   correct opposite-cue trials with C search enabled, so five of each remain
-  after the preferred trial is held out. Calibration fold reductions warn.
+  after the preferred trial is held out. Fixed-C calibration needs at least
+  three preferred and two opposite trials; calibration fold reductions warn.
   The default uses L2-regularized logistic regression; smaller C applies
   stronger regularization. Its weighted sigmoid calibration targets an equal
   cue prior. Null fits recompute weights using their permuted labels. Weighted
@@ -93,9 +101,10 @@ decoding controls. The standalone decoder exposes
 `--preserve-null-time-structure` and `--no-preserve-null-time-structure`.
 See the [comparison table and complete command examples](configuration.md#null-shuffle-time-structure).
 
-When enabled, both the permuted training labels and their inner C-search and
-calibration folds are reused across a held-out trial's time bins. Each bin still
-has its own fitted scaler, selected C, classifier, and calibration. Different
+When enabled, both the permuted training labels and their calibration folds
+(and C-search folds if search is enabled) are reused across a held-out trial's
+time bins. Each bin still has its own fitted scaler, classifier, and calibration;
+C is fixed by default or separately selected when search is enabled. Different
 held-out trials use independent permutations, so this is not a joint
 session-wide shuffle or a correction for full-session cell selection.
 

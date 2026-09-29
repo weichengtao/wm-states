@@ -13,12 +13,16 @@ on maximum OFF duration or causal shortening of biological OFF states. It also
 finds substantial overlap between cell-count prediction and measured decoder
 quality: adding counts to Brier score does not improve total-OFF prediction.
 This is a conditional predictive comparison, not a causal adjustment. It
-narrows the earlier C-search conclusion: the current accuracy-based search beats
+narrows the earlier C-search conclusion: the historical accuracy-based search beats
 fixed C=1, but a prespecified fixed **C=0.01** gives better probability scores in
 the new weighted validation.
 
-All production caches and scientific defaults are unchanged. The analyses below
-are exploratory checks on an existing cohort, not an independent replication.
+The analyses left production caches unchanged and are exploratory checks on
+an existing cohort, not an independent replication. **Subsequent template
+decision, 2026-09-30:** the default adopted fixed C=0.01 with C search disabled,
+retaining balanced weights and sigmoid calibration. Historical run `005` and
+its state/M1 results below still use C search; they are not fixed-C production
+results. Changing the C policy requires new observed and matched null fits.
 
 ## 1. Test probability quality on both cue classes
 
@@ -51,9 +55,9 @@ measure different aspects of performance.
 | Procedure | Primary Brier | Primary log loss | Primary balanced accuracy | Fixed-cue/all-cell Brier |
 | --- | ---: | ---: | ---: | ---: |
 | Downsampled, C search, sigmoid | 0.20450 | 0.59676 | 67.48% | 0.22266 |
-| Weighted, C search, sigmoid (default) | 0.20175 | 0.58996 | 68.00% | 0.22041 |
+| Weighted, C search, sigmoid (historical reference) | 0.20175 | 0.58996 | 68.00% | 0.22041 |
 | Weighted, C=1, sigmoid | 0.21074 | 0.61019 | 65.69% | 0.22374 |
-| Weighted, C=0.01, sigmoid | **0.19880** | **0.58306** | **68.50%** | **0.21897** |
+| Weighted, C=0.01, sigmoid (current template choice) | **0.19880** | **0.58306** | **68.50%** | **0.21897** |
 | Weighted, C search, no calibration | 0.22002 | 0.68113 | 68.29% | 0.23657 |
 | Constant probability 0.5 | 0.25000 | 0.69315 | 50.00% | 0.25000 |
 
@@ -72,7 +76,7 @@ Using the user-confirmed animal mapping, the mean Brier difference for weights
 versus downsampling is −0.00265, −0.00375, and −0.00175 in monkeys A, H, and J,
 respectively. All three monkeys also favor weighting in the fixed-cue/all-cell
 panel. Calibration improves mean Brier/log loss in each monkey in both panels,
-as does fixed C=0.01 versus the current search. This is descriptive consistency
+as does fixed C=0.01 versus the historical search. This is descriptive consistency
 across three animals, not a population-level test with 25 independent animals.
 
 Calibration improves Brier and log loss in both panels. It does **not** improve
@@ -95,8 +99,8 @@ primary panel but worse in the all-cell/fixed-cue panel; extremely small C also
 exposes numerical calibration problems. The tables below retain the original
 five-procedure comparison.
 
-The production C search optimizes **balanced accuracy**, not probability loss.
-Weighted fixed C=0.01 improves Brier over the default by **0.00295**, with a
+The optional C search used by the historical production reference optimizes **balanced accuracy**, not probability loss.
+Weighted fixed C=0.01 improves Brier over that searched-C reference by **0.00295**, with a
 paired session-bootstrap interval **[0.00219, 0.00380]** for search minus fixed
 C; 24/25 primary sessions favor fixed C. The corresponding sensitivity gain is
 **0.00144 [0.00073, 0.00215]**, with 20/25 sessions favoring it. Log loss and
@@ -105,7 +109,7 @@ validation fits; it was motivated by frequent selection of that grid boundary
 in existing runs. This is evidence for a promising cheaper candidate, not proof
 that it is globally optimal.
 
-Averaging each trial's three held-out predictions reduces default Brier from
+Averaging each trial's three held-out searched-C predictions reduces Brier from
 **0.20175 to 0.19764**, and from **0.22041 to 0.21590** in the sensitivity.
 Every component excludes the scored trial. Improvement relative to the mean
 component Brier/log loss follows convexity, so the useful result is the size
@@ -114,16 +118,20 @@ of the gain, not a claim of an independent discovery. These are ensembles of
 procedure for observed and shuffled estimates**, with new state outputs; it
 must not be compared against old single-fit nulls.
 
-**Decision:** retain weighting and calibration. Treat weighted calibrated
-C=0.01 and probability-based C selection as candidates for the next controlled
-comparison. Do not choose between them by OFF duration or M1 significance, or
-silently change the production default after inspecting these outer results.
-The current evidence tests a small candidate set on the same recordings.
-Outer CV keeps each test trial out of every fit, but candidate selection across
-this report is exploratory. Also, the production-style procedure selects C on
-the complete outer training set before calibration folds; C is not reselected
-inside each calibration fold. The outer test remains untouched, while the inner
-calibration margins are not held out from hyperparameter selection itself.
+**Current decision:** retain weighting and calibration, and use fixed C=0.01
+with search disabled in the default template, based on these probability-score
+comparisons and the subsequent [regularization-path evidence](regularization-confidence.md).
+The choice is based on probability quality, not OFF duration or M1 significance.
+The current evidence tests a small candidate set on the same recordings. Outer
+CV keeps each test trial out of every fit, but candidate selection across these
+reports is exploratory; new cohorts are needed to assess generalization of the
+choice. Probability-loss-based C search remains an unevaluated alternative.
+
+The historical searched-C procedure selects C on the complete outer training
+set before calibration folds; C is not reselected inside each calibration fold.
+The outer test remains untouched, while the inner calibration margins are not
+held out from hyperparameter selection itself. The current fixed-C template
+has no such training-data C-selection step.
 
 ![Two-class decoder validation with cached populations and fixed-cue all-cell sensitivity](../assets/decoder-choice-validation.png)
 
@@ -274,7 +282,9 @@ persistence establishes a causal mechanism or controls true decoder sensitivity.
 ## 3. Separate null Monte Carlo noise from state-definition sensitivity
 
 The state audit exactly reproduces all 50 cached OFF masks from runs `001` and
-`005`, including full-time-grid clustering, before changing any setting.
+`005`, including full-time-grid clustering, before changing any setting. Both
+historical runs used C search; these are not state results from the new fixed-C
+default template.
 It holds the observed fits fixed, resamples cached null maps, and recomputes null
 moments and the pooled OFF mass cutoff. Each null draw retains all time bins
 and trials in its cached map. This preserves the existing null policy; it does

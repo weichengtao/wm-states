@@ -305,12 +305,14 @@ preset's scientific choices and [Pipeline stages](pipeline.md) for dependencies.
 
 Under **Decode**, **Training balance** selects **Balanced class weights**,
 **Balanced training trials**, or **None**. Default pipeline and Smoke test use
-class weights throughout fitting, C search, and calibration, including nulls.
-Example pipeline keeps the historical downsampling procedure. The
-[statistical choices comparison](statistical-choices.md) evaluates the weighted
-default alongside calibration and C-selection alternatives in five completed
-runs. Existing saved
-templates retain their prior choice; old balancing booleans are translated when
+class weights throughout fitting and calibration, including nulls. **Default
+pipeline** fixes **Classifier C** at **0.01** and disables **Grid search for C**.
+Smoke test retains C search for integration coverage; Example pipeline keeps
+historical downsampling and C search. See
+[decoder regularization](configuration.md#decoder-regularization) for the
+current choice and [statistical choices](statistical-choices.md) for the five
+historical runs, including weighted C-search run `005`. Existing saved
+templates retain their prior choices; old balancing booleans are translated when
 used or imported. See [training-class balance](configuration.md#training-class-balance).
 
 1. Set the data directory containing the session `.mat` files and a new run
@@ -325,6 +327,16 @@ used or imported. See [training-class balance](configuration.md#training-class-b
    setting unset; deleting a field restores its Python default. Switching back
    to the form applies valid JSON and keeps invalid drafts available to correct.
 4. Validate the configuration, review the generated command, and start the run.
+
+Numeric fields retain the text you type, including intermediate values such as
+`0.0` or `1e-`, until you leave the field, press Enter, or validate, save, or
+start. Complete decimals and scientific notation are accepted, so **Classifier
+C** can be entered as `0.01` or `1e-2`. Incomplete or invalid entries block
+validation, saving a template, and starting a run. Their error messages appear
+after leaving the field or pressing Enter, and clear when typing resumes.
+Integer fields require whole numbers; optional numeric fields can be left
+blank to remain unset. Additional setting-specific checks still run during
+configuration validation.
 
 Dropdowns use the same controls throughout the dashboard. Focus one and press
 Enter or Space to open it. With the menu open, use the up/down arrows to move,

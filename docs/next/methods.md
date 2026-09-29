@@ -8,14 +8,19 @@ refer to `scripts/next/`.
 
 For the empirical rationale behind training-class weighting, confidence
 calibration, and C selection, see [Statistical choices](statistical-choices.md).
-That decision record compares five completed runs, including the weighted
-default, and retains the earlier focal seed experiment. It separates modest
+That decision record compares five completed historical runs, including the
+weighted C-search reference `next_run_005`, and retains the earlier focal seed
+experiment. It separates modest
 production probability-score gains from evidence about seed stability and
 explains why shorter OFF intervals alone do not validate an estimator.
 The [robustness follow-up](decoder-state-robustness.md) adds two-class outer
 validation and held-out-session M1 prediction. It identifies both supporting
 evidence and limits, including uncertainty in the preferred-cell-specific
-maximum-OFF coefficient. These supplementary tests do not change this template.
+maximum-OFF coefficient. Following those tests and the
+[regularization-path study](regularization-confidence.md),
+the default template adopted fixed C=0.01 with C search disabled on 2026-09-30.
+The historical evidence retains its original configurations; this choice is
+not a claim of a universal optimum or a choice based on M1 significance.
 
 The default template command runs the first five stages; add `--stages all` to include
 the six preparation and mixed-effects stages described here. See
@@ -36,7 +41,7 @@ recorded code revision for exact package versions.
 | --- | --- |
 | Screening | At least 320 total trials; correct-trial presence ≥0.9, absolute baseline Pearson r ≤0.3, and PEV >2.5% for at least 100 ms |
 | Decoding population | Stationary cells; correct preferred- and opposite-cue training trials, preferred-cue test trials only |
-| Decoder | Logistic regression; all-trial balanced class weights; five-fold C search; sigmoid calibration; seed 42 |
+| Decoder | Logistic regression; all-trial balanced class weights; fixed C=0.01; C search disabled; sigmoid calibration; seed 42 |
 | Decoding time grid | 50 ms windows starting −200 through 1400 ms, every 10 ms: 161 bins |
 | Estimates | One observed estimate and 100 training-label null estimates per tested trial/bin |
 | Null time structure | `preserve_null_time_structure=false`: independently permuted training labels at each bin |
@@ -51,8 +56,8 @@ These are the resolved settings, including inherited defaults. In particular,
 **PEV weighting in activity plots does not enable weighting in mixed-effects
 models**. The 50 model holdouts are independent of the 100 decoding null
 shuffles. The smoke preset uses fewer bins, null estimates, holdouts, and
-thresholds for integration testing; its outputs do not implement the full
-default analysis.
+thresholds and retains C search for integration testing; its outputs do not
+implement the full default analysis.
 
 ## Populations, time conventions, and normalization
 
@@ -102,7 +107,7 @@ Normalization also depends on the stage:
 
 | Stage | Data used to estimate each cell's mean and standard deviation |
 | --- | --- |
-| Decoder fitting | Outer-training trials at one bin; inner C-search/calibration fits use their own training folds |
+| Decoder fitting | Outer-training trials at one bin; inner calibration fits (and optional C-search fits) use their own training folds |
 | Activity plots | Combined balanced preferred/opposite trials, separately for each bin |
 | Full-data mixed-effects table | Cached preferred-cue trials, separately for each session and period |
 | Mixed-effects CV | Training model rows only, separately for each session and period; apply those moments to all trials |
@@ -224,7 +229,8 @@ optional `select/diagnostics/`.
 **Stage:** `decode` · **Implementation:** `decoding_confidence.py`
 
 **Default choices.** Decode stationary cells with logistic regression,
-five-fold C search, sigmoid calibration requesting five folds, and seed 42.
+fixed C=0.01 with C search disabled, sigmoid calibration requesting five folds,
+and seed 42.
 Fit one observed estimate and 100 null estimates per tested trial/bin, with
 `preserve_null_time_structure=false` as explicitly set in the preset.
 Windows are 50 ms wide; inherited defaults set bin starts from −200 through
@@ -257,23 +263,27 @@ The default template fits standardized **L2-regularized logistic regression**, w
 fitted intercept, the `liblinear` solver, and `max_iter=1000`.
 Smaller C means stronger regularization; see the
 [LogisticRegression API](https://scikit-learn.org/1.8/modules/generated/sklearn.linear_model.LogisticRegression.html).
-Each observed or null training problem selects C from `{1, 0.1, 0.01}` by
-mean balanced accuracy in five stratified source-trial-grouped folds. Equal
-scores choose the first candidate in that order.
-[Balanced accuracy](https://scikit-learn.org/1.8/modules/generated/sklearn.metrics.balanced_accuracy_score.html)
-averages recall across the two classes for this inner model-selection step.
+Each observed or null training problem uses the same fixed C=0.01, including
+each calibration-fold base estimator and the final full-training refit. The
+default template sets `classifier_c=0.01` and `grid_search_for_c=false`; it does
+not select C from these training data.
 [StandardScaler](https://scikit-learn.org/1.8/modules/generated/sklearn.preprocessing.StandardScaler.html)
 fits cell means and population standard deviations (`ddof=0`) within each
 training fold, following the [training-only preprocessing rule](https://scikit-learn.org/1.8/common_pitfalls.html#data-leakage).
-Although the JSON sets `classifier_c=1`, enabling `grid_search_for_c` means the
-selected value is used for each fit. Sigmoid calibration uses only outer-training
-trials and can reduce the requested five folds when necessary; the C search
-still requires five folds. Calibration uses out-of-fold training scores and
+Sigmoid calibration uses only outer-training trials and can reduce the
+requested five folds when necessary. It uses out-of-fold training scores and
 then refits the base classifier on all outer-training trials (`ensemble=False`).
-C is selected before calibration and shared across its folds, rather than
-reselected within each calibration fold. The held-out test trial enters neither
-step. `svm_kernel=LINEAR` is present in the preset but has no effect because the
-selected decoder is logistic regression.
+The held-out test trial enters neither step. `svm_kernel=LINEAR` is present in
+the preset but has no effect because the selected decoder is logistic regression.
+
+**Optional C search**, retained by the example and smoke templates, selects
+from `{1, 0.1, 0.01}` separately for each observed or null training problem. It
+uses mean [balanced accuracy](https://scikit-learn.org/1.8/modules/generated/sklearn.metrics.balanced_accuracy_score.html)
+in exactly five stratified source-trial-grouped folds; equal scores select the
+first candidate in that order. This overrides `classifier_c`. C is selected
+before calibration and shared across its folds, not reselected within each
+calibration fold. The outer test trial remains untouched, but calibration
+margins are not held out from that optional hyperparameter selection.
 The [calibration guide](https://scikit-learn.org/1.8/modules/calibration.html)
 explains sigmoid calibration and `ensemble=False`. Calibration uses inverse-class-frequency sample weights computed from the
 outer-training labels, giving each cue equal total calibration weight. These
@@ -286,23 +296,26 @@ class weights. See the [metadata routing API](https://scikit-learn.org/1.8/metad
 for the explicit separation of calibration and base-estimator weights.
 
 Before launching session fit workers, validate the correct-trial class counts:
-the default template's C search needs at least six preferred-cue and five opposite-cue
-trials, leaving at least five of each after every preferred-trial holdout.
-Calibration warns when available training counts reduce its requested folds;
-insufficient counts for the configured procedure are an error.
+the fixed-C calibrated default needs at least three preferred-cue and two
+opposite-cue trials, leaving at least two of each after every preferred-trial
+holdout. Five calibration folds require six preferred and five opposite trials;
+smaller eligible pools warn and reduce the calibration fold count. Optional C
+search always requires six preferred and five opposite trials. Insufficient
+counts for the configured procedure are an error.
 
 The observed fit uses the original training labels. In the default template's default
 null policy, each null fit independently permutes those labels after the outer
 split, for each bin and shuffle. It uses the same complete training membership
-and repeats C selection, fold-local classifier weighting, and weighted
-calibration under the permuted labels. Each permutation preserves class counts;
-weights follow the shuffled labels, not the original identities.
+and refits fold-local classifier weighting and weighted calibration with the
+same fixed C=0.01 under the permuted labels. Optional C search is rerun only
+when enabled. Each permutation preserves class counts; weights follow the
+shuffled labels, not the original identities.
 
 The optional `decode.preserve_null_time_structure=true` policy instead uses one
 training-label permutation per held-out trial and shuffle across all time bins.
-It also reuses that permutation's inner C-search and calibration fold indices
-across bins. Scaling, C selection, model fitting, and calibration remain
-separate at every bin; time bins are not pooled. Permutations remain independent
+It also reuses that permutation's calibration fold indices and, when enabled,
+C-search fold indices across bins. Scaling, optional C selection, model fitting,
+and calibration remain separate at every bin; time bins are not pooled. Permutations remain independent
 across held-out trials, whose training sets differ. This preserves the label
 assignment through time within each trial's null trajectory; it does not create
 a joint session-wide permutation test or correct for full-session selection.
@@ -321,16 +334,18 @@ not call scikit-learn's `permutation_test_score` or produce its single
 cross-validated permutation-test p-value.
 
 Outputs include preferred-cue probabilities, observed class predictions,
-selected C values, original test-trial IDs, and provenance. Caches also record
+C values (fixed at 0.01 by default), original test-trial IDs, and provenance.
+Caches also record
 `training_balance`, `probability_calibration_method`, effective calibration
 folds, `preserve_null_time_structure`, the resolved `config`, and `null_policy`.
-Changing either balancing or null policy invalidates resume checkpoints and requires regenerated
-decoding and dependent outputs. Observed arrays
+Changing C settings, balancing, or null policy invalidates resume checkpoints
+and requires regenerated decoding and dependent outputs. Observed arrays
 have shape `(trial, 161)` and null arrays `(trial, 161, 100)` with the default template's
 resolved time grid. Since only preferred-cue trials are tested, the resulting scores describe that class;
 they are not estimates of balanced two-class test performance.
 
-**Alternatives, not used here:** other cell populations, SVM decoding, balanced-trial subsampling, no balancing, fixed C,
+**Alternatives, not used here:** other cell populations, SVM decoding,
+balanced-trial subsampling, no balancing, five-fold C search or other fixed C values,
 isotonic or disabled logistic calibration, and different null counts/time grids.
 Weighted SVM uses explicit grouped five-fold sigmoid calibration with balanced
 calibration weights and `SVC(probability=False)`; nonweighted SVM modes retain

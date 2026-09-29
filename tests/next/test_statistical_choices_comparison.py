@@ -45,6 +45,8 @@ class StatisticalChoicesComparisonTest(unittest.TestCase):
             return comparison.scientific_settings(json.loads(json.dumps(asdict(config), default=json_value)))
         self.assertEqual(settings(cli), settings(template))
         self.assertEqual(cli.training_balance.value, 'balanced_class_weights')
+        self.assertEqual(cli.classifier_c, 0.01)
+        self.assertFalse(cli.grid_search_for_c)
 
     def test_fitting_manifest_is_distinct_from_latest_plot_and_state_invocation(self):
         with tempfile.TemporaryDirectory() as directory:

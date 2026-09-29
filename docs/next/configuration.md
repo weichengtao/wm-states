@@ -519,12 +519,54 @@ at least two null estimates, so run only `select decode evaluate` for an
 observed-only analysis. Preserve the other preset settings when editing this
 field; unspecified values revert to script defaults.
 
+## Decoder regularization
+
+The **Default pipeline** uses fixed **C=0.01**, with C grid search disabled and
+balanced class weights plus five-fold sigmoid calibration retained. Smaller C
+means stronger L2 regularization. The [two-class validation](decoder-state-robustness.md)
+and [regularization-path study](regularization-confidence.md) motivated this
+2026-09-30 default change through probability scores, independently of OFF duration
+or M1 significance. The comparisons use the existing cohort and do not establish
+a universal optimum.
+
+| Configuration | Training balance | C policy |
+| --- | --- | --- |
+| `default_pipeline.json` / Default pipeline | All-trial balanced class weights | Fixed C=0.01; `grid_search_for_c=false` |
+| `example_pipeline.json` / Example pipeline | Balanced trial downsampling | Search over 1, 0.1, 0.01; scalar `classifier_c=1` is overridden |
+| `smoke_pipeline.json` / Smoke test | All-trial balanced class weights | Same C search, retained to exercise model selection during integration checks |
+| Bare decoder or runner without a settings file | Balanced trial downsampling | Fixed C=1 for backward compatibility |
+
+To use the default regularization policy, edit these fields **inside the
+existing preset's `decode` object**; this fragment is not a complete preset:
+
+```json
+{
+  "decode": {
+    "classifier_c": 0.01,
+    "grid_search_for_c": false
+  }
+}
+```
+
+`classifier_c` must be positive. It controls every observed and shuffled-null
+fit, including calibration-fold base estimators, when search is disabled.
+Enabling `grid_search_for_c` instead selects C separately for each training
+problem by five-fold balanced accuracy; the scalar C setting is then ignored.
+The standalone equivalents are `--classifier-c 0.01 --no-grid-search-for-c`.
+
+Existing saved templates, manifests, and **Reuse settings** retain their recorded
+choices. They are not migrated to the new C value. Use a fresh cache directory
+when changing C policy and regenerate observed fits, matched null fits, and all
+dependent stages. Do not combine fixed-C observed confidence with a searched-C
+null cache. See [migration](migration.md#default-fixed-regularization).
+
 ## Training-class balance
 
 `decode.training_balance` chooses one complete fitting policy. The dashboard's
 **Default pipeline** uses `configs/next/default_pipeline.json`, with balanced
-class weights, C search, and sigmoid calibration enabled. **Smoke test** uses
-the same weighting policy with reduced computation. **Example pipeline** retains
+class weights, fixed C=0.01, C search disabled, and sigmoid calibration enabled.
+**Smoke test** uses the same weighting policy with reduced computation, but
+retains C search for integration coverage. **Example pipeline** retains
 the historical downsampling settings in `configs/next/example_pipeline.json`.
 
 | Setting / dashboard choice | Training membership after holdout | Classifier loss | Calibration target |
@@ -552,9 +594,10 @@ template for the complete weighted analysis settings.
 In weighted mode, each class-k observation receives `n / (2 * n_k)` loss weight.
 `n` and `n_k` are recalculated from each fitting fold's labels, including C-search
 folds, out-of-fold calibration predictors, and the final full-training refit.
-The scaler remains unweighted and sees only that fitting fold. C is still
-selected by five-fold balanced accuracy in all three modes; “None” changes
-training and calibration weights, not this model-selection objective.
+The scaler remains unweighted and sees only that fitting fold. When C search
+is enabled, all three balancing modes use the same five-fold balanced-accuracy
+objective; “None” changes training and calibration weights, not that objective.
+The default instead uses fixed C=0.01.
 
 Calibration pools held-out inner-fold margins and weights them to equal total
 mass per cue. Those sample weights apply only to calibration; they are never
@@ -567,7 +610,7 @@ calibration options do not control SVM. Other SVM modes retain the native
 probability routine.
 
 Each null fit uses exactly the observed fit's training membership. Labels are
-permuted first, then C search, fold-local weights, and calibration are refitted
+permuted first, then optional C search, fold-local weights, and calibration are refitted
 under those labels. Class counts are preserved by permutation; weights follow
 the current labels. Both null time-structure policies support every balance mode.
 No held-out trial activity participates in these steps. Class weighting removes
@@ -599,8 +642,8 @@ All supplied presets explicitly use `false`. Set it within the existing
 | --- | --- | --- |
 | Null labels | Independently permuted for every held-out trial, shuffle, and time bin | One permutation for each held-out trial and shuffle, reused across all its time bins |
 | When labels are permuted | After holding out the test trial and selecting/balancing the training trials | Same |
-| Inner C-search/calibration folds | Constructed from each bin's permuted labels | The same folds are reused across bins for that trial and shuffle |
-| Fitted models | A separate model, scaler, C search, and calibration at each bin | Same; only the label assignment and folds are shared |
+| Calibration folds and optional C-search folds | Constructed from each bin's permuted labels | The same folds are reused across bins for that trial and shuffle |
+| Fitted models | A separate model, scaler, calibration, and C search if enabled, at each bin | Same; only the label assignment and folds are shared |
 | Across held-out trials | Independent permutations | Still independent permutations |
 | Observed estimate | One fit using original training labels per trial/bin | Unchanged when the seed and other settings match |
 | Null array | `(trial, bin, N)` | Same shape |
@@ -635,13 +678,13 @@ it as a boolean control in the decoding settings, with the same default and
 saved JSON value.
 
 For a standalone decoder, enable it alongside the default template's weighted
-training, C search, and sigmoid calibration choices:
+training, fixed C=0.01, and sigmoid calibration choices:
 
 ```bash
 uv run python scripts/next/decoding_confidence.py \
   --data-dir data/nature --cache-dir cache/next_shared_null \
   --training-balance BALANCED_CLASS_WEIGHTS \
-  --grid-search-for-c \
+  --classifier-c 0.01 --no-grid-search-for-c \
   --logistic-calibration-method SIGMOID --logistic-calibration-cv 5 \
   --n-decode-shuffle 100 --seed 42 --preserve-null-time-structure
 ```

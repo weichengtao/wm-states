@@ -4,6 +4,25 @@ The new implementation lives in `scripts/next/`, presets in `configs/next/`, and
 tests in `tests/next/`. Historical scripts remain available in their original
 locations. Start each migrated analysis with a fresh cache directory.
 
+## Default fixed regularization
+
+As of 2026-09-30, `configs/next/default_pipeline.json` uses
+`decode.classifier_c=0.01` and `decode.grid_search_for_c=false`, while retaining
+balanced class weights and five-fold sigmoid calibration. This changes only
+the default template. Bare decoder defaults retain downsampling and fixed C=1;
+the historical example and integration smoke templates retain C search.
+See [decoder regularization](configuration.md#decoder-regularization) for the
+settings and [regularization evidence](regularization-confidence.md) for the
+rationale and its exploratory limits.
+
+Saved templates, manifests, and **Reuse settings** preserve their recorded C
+policy; loading an old run does not silently adopt the current default.
+To adopt fixed C=0.01, change both fields explicitly or start from the current
+default template. Use a fresh cache directory and regenerate observed and
+matched null estimates, evaluation, states, and dependent analyses. Historical
+run `next_run_005` remains a weighted C-search reference; it does not describe
+the new fixed-C estimates. Do not mix new observed fits with old searched-C nulls.
+
 ## Decoder training balance
 
 The new **Default pipeline** template (`configs/next/default_pipeline.json`)

@@ -41,35 +41,41 @@ The session list filters files present in the data directory; omit it to
 consider all available sessions.
 
 The **Default pipeline** template retains all eligible training trials with
-balanced class weights. Weighting is recomputed inside C-search and calibration
-folds; probability calibration also gives each cue equal total weight, for both
-observed and shuffled-null fits. `decode.training_balance` selects
+balanced class weights, **fixed C=0.01**, and five-fold sigmoid calibration;
+C grid search is disabled. Weighting is recomputed inside each calibration
+training fold; probability calibration also gives each cue equal total weight
+for both observed and shuffled-null fits. `decode.training_balance` selects
 `BALANCED_CLASS_WEIGHTS`, `BALANCED_TRAINING_TRIALS` (random downsampling), or
 `NONE` (all trials, unweighted). The historical `example_pipeline.json` keeps
-downsampling; the smoke template uses weighting. See
+downsampling and C search; the smoke template uses weighting and retains C
+search for integration coverage. See
 [training-class balance](docs/next/configuration.md#training-class-balance) for
-statistical details and migration. Use a fresh run directory when changing modes.
+statistical details and migration. Use a fresh run directory when changing
+balancing or C settings, and regenerate observed, null, and downstream estimates.
 Standalone scripts do not load this template automatically; the
 [stage-by-stage commands](docs/next/pipeline.md#default-stages-one-script-at-a-time)
-explicitly select the weighted policy. Bare script defaults retain downsampling
-for compatibility.
+explicitly select the weighted, fixed-C policy. Bare script defaults retain
+downsampling and fixed C=1 for compatibility.
 
 The [statistical choices comparison](docs/next/statistical-choices.md) covers
-five completed runs, including the weighted default. Weighting modestly improves
-pooled preferred-cue probability scores, with mixed effects across sessions;
+five completed historical runs, including weighted C-search run `next_run_005`.
+Weighting modestly improves pooled preferred-cue probability scores, with mixed
+effects across sessions;
 calibration and C selection also materially affect the fitted nulls and state
 durations. Shorter OFF states alone do not indicate a better estimator.
 The [robustness follow-up](docs/next/decoder-state-robustness.md) adds two-class
 held-out decoder validation, null sensitivity, and M1 prediction in held-out
-sessions. It supports weighting/calibration, identifies fixed C=0.01 as a
-promising alternative to the current C search, and separates joint count
-prediction from the less certain preferred-cell-specific maximum-OFF effect.
+sessions. It supports weighting/calibration and the fixed C=0.01 choice, and
+separates joint count prediction from the less certain preferred-cell-specific
+maximum-OFF effect.
 Count prediction also overlaps strongly with measured decoder quality; it does
 not by itself establish a change in biological state dynamics.
 The [smaller-C follow-up](docs/next/regularization-confidence.md) tests values
 down to 10⁻¹⁰. C=0.01's gain is not explained by uniform confidence shrinkage;
 C=0.001 has no consistent advantage, and extremely small C can cause numerical
-calibration collapse.
+calibration collapse. The current default adopts C=0.01 based on these
+probability-score comparisons, which remain exploratory evidence on the same
+cohort and do not establish a universal optimum. Historical run `005` still uses C search.
 
 Set the null count in `decode.n_decode_shuffle` in the JSON preset. The default
 uses 100; the smoke preset uses 3. Use `--dry-run` to inspect resolved settings
