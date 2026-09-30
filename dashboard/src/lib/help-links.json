@@ -110,8 +110,8 @@
     },
     {
       "title": "Evidence for statistical choices",
-      "keywords": "statistical choices confidence calibration regularization C grid search class weighting seed stability off duration next_run_004 next_run_005",
-      "answer": "The five historical runs compare training balance, calibration, and C selection; weighted run005 still uses C search. Later two-class and regularization-path validation motivate the current weighted, calibrated, fixed-C=0.01 default. Shorter OFF states or stronger M1 results do not validate an estimator, and the existing-cohort comparisons do not establish a universal optimum.",
+      "keywords": "statistical choices confidence calibration regularization C grid search class weighting seed stability off duration next_run_004 next_run_005 next_run_006 fixed C 0.01",
+      "answer": "The six-run comparison includes weighted C-search run005 and fixed-C=0.01 run006. Run006 improves preferred-cue Brier and log loss in all 25 sessions and reduces recorded decoder time from 19.79 to 7.26 hours. Two-class and regularization-path validation support the same default; production scores alone cover only the preferred cue. Shorter OFF states or stronger M1 results do not validate an estimator, and the existing-cohort comparisons do not establish a universal optimum.",
       "path": "next/statistical-choices/"
     },
     {

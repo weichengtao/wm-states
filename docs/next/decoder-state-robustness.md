@@ -22,11 +22,14 @@ an existing cohort, not an independent replication. **Subsequent template
 decision, 2026-09-30:** the default adopted fixed C=0.01 with C search disabled,
 retaining balanced weights and sigmoid calibration. Historical run `005` and
 its state/M1 results below still use C search; they are not fixed-C production
-results. Changing the C policy requires new observed and matched null fits.
+results. The [completed `006`/`005` comparison](statistical-choices.md#weighted-fixed-c001-next_run_005-versus-next_run_006)
+now supplies full production fixed-C evidence and a separate downstream M1
+audit. The original experiments and numerical results on this page remain
+unchanged. See the [consolidated recommendation](statistical-choices.md#consolidated-recommendation).
 
 ## 1. Test probability quality on both cue classes
 
-The five completed runs cache test predictions for the preferred cue only.
+The original five-run comparison caches test predictions for the preferred cue only.
 Their paired score differences are useful, but cannot establish two-class
 decoder performance. The new experiment fits both cue classes with common
 five-fold **outer trial holdouts**, using three predefined split/fitting seeds

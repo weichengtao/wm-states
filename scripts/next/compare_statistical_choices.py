@@ -5,7 +5,7 @@ Run from the repository root with its existing Python environment:
 
 No fitting, worker pool, environment synchronization, or dashboard access.
 Only the evidence JSON and documentation figure are written.
-This is a reproduction utility for the dated next_run_001 through 005 comparison,
+This is a reproduction utility for the dated next_run_001 through 006 comparison,
 not a pipeline stage or a general-purpose run selector.
 """
 if __package__ in (None, ""):
@@ -19,6 +19,7 @@ for variable in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS', '
     os.environ[variable] = '1'
 os.environ.setdefault('MPLCONFIGDIR', '/tmp/wm_statistical_choices_mpl')
 import gc
+from collections import Counter
 import hashlib
 import json
 import pickle
@@ -28,7 +29,11 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE_PATH = ROOT / 'docs/validation/statistical-choices-evidence.json'
 FIGURE_PATH = ROOT / 'docs/assets/statistical-choices-comparison.png'
-RUNS = [f'next_run_{number:03d}' for number in range(1, 6)]
+RUNS = [f'next_run_{number:03d}' for number in range(1, 7)]
+ANIMAL_MAP_PATH = ROOT / 'docs/validation/session-animal-mapping.json'
+BOOTSTRAP_SEED = 20260930
+BOOTSTRAP_REPEATS = 10000
+PROBABILITY_CHANGE_TOLERANCE = 1e-6
 HIST_EDGES = np.linspace(0, 1, 51)
 NON_SCIENTIFIC_SETTINGS = {
     'cache_dir', 'plot_only', 'resume', 'save_figures', 'plot_actual_trial_id',
@@ -41,6 +46,7 @@ CONTRASTS = [
     ('next_run_001', 'next_run_005', {'training_balance'}, 'all-trial class weighting'),
     ('next_run_003', 'next_run_004', {'logistic_calibration_method'}, 'calibration at fixed C=1'),
     ('next_run_002', 'next_run_004', {'grid_search_for_c'}, 'C search without calibration'),
+    ('next_run_005', 'next_run_006', {'grid_search_for_c', 'classifier_c'}, 'weighted calibrated fixed C=0.01 versus C search'),
 ]
 
 
@@ -110,7 +116,8 @@ def metrics(p):
             'brier': float(np.square(1-a).mean()),
             'log_loss': float(-np.log(np.clip(a, np.finfo(float).eps, 1)).mean()),
             'preferred_cue_accuracy': float((a >= .5).mean()),
-            'fraction_p_lt_0_1_or_gt_0_9': float(((a < .1) | (a > .9)).mean())}
+            'fraction_p_lt_0_1_or_gt_0_9': float(((a < .1) | (a > .9)).mean()),
+            'mean_abs_probability_minus_half': float(np.abs(a - .5).mean())}
 
 def encode_c(a):
     a = np.asarray(a)
@@ -125,6 +132,111 @@ def counts_c(encoded):
     return {str(c): {'count': int(n), 'fraction': float(n / counts.sum())}
             for c, n in zip((1., .1, .01), counts)}
 
+def animal_mapping(sessions, path=ANIMAL_MAP_PATH):
+    """Use the user's explicit mapping only, with exact cohort coverage."""
+    mapping = json.loads(path.read_text())
+    identities = mapping['sessions']
+    assert set(sessions) == set(identities), 'Animal mapping must cover exactly the analyzed sessions'
+    assert dict(Counter(identities.values())) == mapping['expected_session_counts'], 'Animal counts differ'
+    assert set(identities.values()) == {'A', 'H', 'J'}, 'Expected three user-confirmed monkeys'
+    return identities
+
+
+def paired_session_summary(values, *, repeats=BOOTSTRAP_REPEATS, seed=BOOTSTRAP_SEED):
+    """Descriptive session resampling; this is not a population-of-monkeys CI."""
+    values = np.asarray(values, dtype=float)
+    assert values.ndim == 1 and len(values) and np.isfinite(values).all()
+    assert repeats > 0
+    rng = np.random.default_rng(seed)
+    means = values[rng.integers(0, len(values), size=(repeats, len(values)))].mean(axis=1)
+    return {'n_sessions': len(values), 'mean': float(values.mean()), 'median': float(np.median(values)),
+            'session_bootstrap_95_interval': np.quantile(means, [.025, .975]).tolist(),
+            'n_negative': int((values < 0).sum()), 'n_zero': int((values == 0).sum()),
+            'n_positive': int((values > 0).sum())}
+
+
+def session_contrast_inference(per_session, identities):
+    """Aggregate each session once; show each monkey separately without a 3-cluster CI."""
+    assert set(per_session) == set(identities)
+    result = {'unit': 'one mean paired contrast per session, equally weighted',
+              'bootstrap_seed': BOOTSTRAP_SEED, 'bootstrap_repeats': BOOTSTRAP_REPEATS,
+              'interval_caveat': 'Descriptive paired session-resampling percentile intervals. Sessions within a monkey may be dependent; 25 sessions from only three monkeys do not establish population-of-monkeys uncertainty.',
+              'metrics': {}}
+    for metric in next(iter(per_session.values())):
+        if metric == 'changed_max_off_trials':
+            continue
+        entries = {session: row[metric] for session, row in per_session.items()}
+        groups = {}
+        for animal in sorted(set(identities.values())):
+            values = np.array([value for session, value in entries.items() if identities[session] == animal])
+            groups[animal] = {'n_sessions': len(values), 'mean': float(values.mean()),
+                              'median': float(np.median(values)), 'n_negative': int((values < 0).sum()),
+                              'n_zero': int((values == 0).sum()), 'n_positive': int((values > 0).sum())}
+        result['metrics'][metric] = {
+            **paired_session_summary(list(entries.values())), 'per_monkey': groups,
+            'monkey_equal_mean': float(np.mean([group['mean'] for group in groups.values()])),
+        }
+    return result
+
+
+def verify_current_primary_row(run, row):
+    """Read-only v2 verification, including primary/checkpoint payload equality."""
+    from scripts.next.decoding_provenance import verify_decoding_fingerprint
+    checkpoint_path = ROOT / 'cache' / run / 'decode/checkpoints' / f"{row['session']}.pkl"
+    selection_path = ROOT / 'cache' / run / 'select/cell_screening.pkl'
+    data_path = Path(row['config']['data_dir']) / f"{row['session']}.mat"
+    hashes = {str(path.relative_to(ROOT)): digest(path) for path in (checkpoint_path, data_path)}
+    with checkpoint_path.open('rb') as stream:
+        cached = pickle.load(stream)
+    assert cached['fingerprint'] == row['fingerprint'] == cached['result']['fingerprint']
+    assert cached['result'].keys() == row.keys()
+    for key, value in row.items():
+        other = cached['result'][key]
+        assert (np.array_equal(value, other, equal_nan=True) if isinstance(value, np.ndarray) else value == other), (run, row['session'], key, 'primary/checkpoint mismatch')
+    verification = verify_decoding_fingerprint(row['fingerprint'], row['config'], selection_path, data_path)
+    assert verification.scheme == 'current', (run, row['session'], 'not current verified provenance')
+    assert all(digest(ROOT / path) == value for path, value in hashes.items()), 'Checkpoint/data changed while reading'
+    return {'scheme': verification.scheme, 'fingerprint': row['fingerprint'],
+            'primary_checkpoint_payload_equal': True, 'source_hashes': hashes}
+
+
+def matching_c_anchor(base, other, c=.01):
+    """Require exact probabilities when selected C and all remaining procedures match."""
+    encoded_c = (1., .1, .01).index(c)
+    totals = {'observed_entries': 0, 'null_entries': 0}
+    per_session = {}
+    for session, a in base.items():
+        b = other[session]
+        row = {}
+        for label, c_key, p_key in [('observed', 'C', 'p'), ('null', 'C_null', 'null')]:
+            assert np.all(b[c_key] == encoded_c), 'Comparison run must use the stated fixed C everywhere'
+            mask = a[c_key] == encoded_c
+            first, second = a[p_key][mask], b[p_key][mask]
+            count = int(mask.sum())
+            assert np.array_equal(first, second), (session, label, 'matched-C probabilities differ')
+            row[f'{label}_entries'] = count
+            totals[f'{label}_entries'] += count
+        per_session[session] = row
+    return {'fixed_c': c, 'scope': 'all 161 time bins, observed and null fits separately',
+            'exact_equality_verified': True, 'mismatches': 0, **totals, 'per_session': per_session}
+
+
+def verify_cached_off_state(observed, null, state, state_config, times):
+    """Recompute the recorded OFF policy before comparing cached state durations."""
+    from scripts.next.validate_state_confidence import off_mask, duration_arrays
+    assert state_config['cp_method_off'] == state_config['cc_method_off'] == 'one_tailed'
+    assert state_config['cc_alpha_off'] == .05, 'Audit helper uses the recorded 95th percentile cutoff'
+    mask, details = off_mask(observed, null, threshold=state_config['z_threshold_off'],
+                             minimum_bins=state_config['cluster_size_threshold_off'], mass_filter=True)
+    assert np.array_equal(mask, state['off_state_mask']), 'Cached OFF mask differs from reconstructed policy'
+    durations = duration_arrays(mask, times)
+    for computed, cached in [('maximum_off_state_duration_ms', 'max_off_state_duration_per_trial'),
+                             ('total_off_state_duration_ms', 'off_state_duration_per_trial')]:
+        assert np.array_equal(durations[computed], state[cached]), ('Cached OFF durations differ', computed)
+    return {'exact_mask_and_durations_verified': True, 'scope': 'full 161-bin mask and cached inclusive-delay max/total durations',
+            'null_mass_cutoff': details['mass_cutoff'], 'zero_variance_bins': details['zero_variance_bins']}
+
+
 def run_summary(run):
     folder = ROOT / 'cache' / run
     decode_path = folder / 'decode/decoding_confidence.pkl'
@@ -135,13 +247,15 @@ def run_summary(run):
     states = {d['session']: d for d in state_rows}
     assert len(states) == len(state_rows), f'{run}: duplicate state sessions'
     decoded = read(decode_path)
-    summaries = {}; compact = {}; config = decoded[0]['config']
+    summaries = {}; compact = {}; config = decoded[0]['config']; provenance_rows = {}
     assert len({d['session'] for d in decoded}) == len(decoded), f'{run}: duplicate decoded sessions'
     assert {d['session'] for d in decoded} == set(states), f'{run}: decode/state sessions differ'
     fit_path, manifest, states_manifest_path, states_manifest, state_config = run_manifests(folder, config)
     manifest_hashes = {str(path.relative_to(ROOT)): digest(path) for path in sorted({fit_path, states_manifest_path})}
     for d in decoded:
         session = d['session']; s = states[session]
+        if run in {'next_run_005', 'next_run_006'}:
+            provenance_rows[session] = verify_current_primary_row(run, d)
         assert scientific_settings(d['config']) == scientific_settings(config), (run, session, 'config')
         assert s['decoding_fingerprint'] == d['fingerprint']
         assert np.array_equal(s['trial_idx'], d['trial_idx'])
@@ -155,12 +269,17 @@ def run_summary(run):
         assert null.shape == (*p.shape, 100)
         assert np.isfinite(p).all() and np.isfinite(null).all()
         assert ((p >= 0) & (p <= 1)).all() and ((null >= 0) & (null <= 1)).all()
+        if run in {'next_run_005', 'next_run_006'}:
+            provenance_rows[session]['state_reconstruction'] = verify_cached_off_state(p, null, s, state_config, times)
         # Null summaries are per-bin fitted distributions, not evaluation over
         # opposite-cue held-out labels (which these caches do not contain).
         mu = null.mean(-1, dtype=float); sd = null.std(-1, dtype=float)
         c_obs = encode_c(d['decoding_classifier_c'])
         c_null = encode_c(d['decoding_classifier_c_null'])
-        entry = {'trials': len(d['trial_idx']), 'cells': d['num_cells'], 'cue': int(d['cue']),
+        assert d['decoding_predicted_labels'].shape == p.shape
+        assert np.isin(d['decoding_predicted_labels'], [0, 1]).all()
+        entry = {'native_preferred_cue_accuracy_delay': float((d['decoding_predicted_labels'][:, delay] == 1).mean()),
+                 'trials': len(d['trial_idx']), 'cells': d['num_cells'], 'cue': int(d['cue']),
                  'observed_all_bins': metrics(p), 'observed_delay': metrics(p[:, delay]),
                  'null_delay': metrics(null[:, delay]),
                  'null_mean_delay': float(mu[:, delay].mean()),
@@ -182,6 +301,8 @@ def run_summary(run):
                             'max_off': s['max_off_state_duration_per_trial'].copy(),
                             'total_off': s['off_state_duration_per_trial'].copy(),
                             'off_mask': s['off_state_mask'].copy(), 'on_mask': s['on_state_mask'].copy()}
+        if run in {'next_run_005', 'next_run_006'}:
+            compact[session]['null'] = null.copy()
         summaries[session] = entry
     del decoded
     gc.collect()
@@ -193,7 +314,7 @@ def run_summary(run):
             if metric != 'n':
                 aggregate[period][metric] = sum(s[period][metric]*s[period]['n'] for s in summaries.values()) / total
         aggregate[period]['session_mean_brier'] = float(np.mean([s[period]['brier'] for s in summaries.values()]))
-    for key in ['mean_null_sd_delay', 'null_mean_delay', 'off_fraction_delay', 'on_fraction_delay', 'fraction_on_probability_cutoff_above_one_delay']:
+    for key in ['mean_null_sd_delay', 'null_mean_delay', 'off_fraction_delay', 'on_fraction_delay', 'fraction_on_probability_cutoff_above_one_delay', 'native_preferred_cue_accuracy_delay']:
         aggregate[key] = sum(s[key]*s['trials'] for s in summaries.values())/aggregate['trials']
     for key in ['max_off', 'total_off']:
         aggregate[key] = describe(np.concatenate([v[key] for v in compact.values()]))
@@ -207,8 +328,11 @@ def run_summary(run):
     assert {path: digest(ROOT / path) for path in manifest_hashes} == manifest_hashes
     return {'config': config, 'fitting_manifest_id': manifest['run_id'],
             'scientific_config': scientific_settings(config),
+            'selection_scientific_config': {key: value for key, value in manifest['settings']['select'].items()
+                                            if key not in NON_SCIENTIFIC_SETTINGS | {'n_jobs_session'}},
             'state_config': state_config, 'state_manifest_id': states_manifest['run_id'],
             'manifest_fingerprints': manifest_hashes,
+            'current_primary_checkpoint_verification': provenance_rows,
             'decode_workers': config['n_jobs'],
             'decode_wall_seconds': timing['seconds'], 'fingerprints': fingerprints,
             'aggregate': aggregate, 'per_session': summaries}, compact
@@ -218,6 +342,9 @@ def compare(base, other, a_summary, b_summary):
     per_session = {}; structural = True; c_equal = True; cn_equal = True
     max_deltas = []; p_deltas = []; all_off_diff = []; all_native_diff = []
     c1_prob_deltas = []
+    probability_changed_native_same = []; off_changed_native_same = []
+    native_transitions = np.zeros((2, 2), dtype=int)
+    probability_transitions = np.zeros((2, 2), dtype=int)
     for session, a in base.items():
         b = other[session]
         for field in ['trial_idx','cell_idx','times']:
@@ -230,17 +357,37 @@ def compare(base, other, a_summary, b_summary):
         pd = b['p'][:,delay].astype(float)-a['p'][:,delay].astype(float);p_deltas.extend(pd.ravel().tolist())
         off_diff = a['off_mask'][:,delay] != b['off_mask'][:,delay];all_off_diff.extend(off_diff.ravel().tolist())
         native_diff = a['native_prediction'][:,delay] != b['native_prediction'][:,delay];all_native_diff.extend(native_diff.ravel().tolist())
+        for first, second, destination in [(a['native_prediction'][:,delay], b['native_prediction'][:,delay], native_transitions),
+                                            (a['p'][:,delay] >= .5, b['p'][:,delay] >= .5, probability_transitions)]:
+            destination += np.bincount((2 * first.astype(int) + second.astype(int)).ravel(), minlength=4).reshape(2, 2)
+        same_native_probability_change = (~native_diff) & (np.abs(pd) > PROBABILITY_CHANGE_TOLERANCE)
+        same_native_off_change = (~native_diff) & off_diff
+        probability_changed_native_same.extend(same_native_probability_change.ravel().tolist())
+        off_changed_native_same.extend(same_native_off_change.ravel().tolist())
         selected_c1 = a['C'] == 0
         if selected_c1.any():c1_prob_deltas.extend(np.abs(a['p'][selected_c1]-b['p'][selected_c1]).tolist())
         per_session[session] = {'other_minus_baseline_brier_delay': b_summary['per_session'][session]['observed_delay']['brier']-a_summary['per_session'][session]['observed_delay']['brier'],
                                 'other_minus_baseline_log_loss_delay': b_summary['per_session'][session]['observed_delay']['log_loss']-a_summary['per_session'][session]['observed_delay']['log_loss'],
+                                'other_minus_baseline_native_preferred_cue_accuracy_delay': float((b['native_prediction'][:,delay] == 1).mean() - (a['native_prediction'][:,delay] == 1).mean()),
+                                'other_minus_baseline_probability_threshold_preferred_cue_accuracy_delay': float((b['p'][:,delay] >= .5).mean() - (a['p'][:,delay] >= .5).mean()),
+                                'native_prediction_disagreement_delay': float(native_diff.mean()),
+                                'probability_changed_native_prediction_unchanged_delay': float(same_native_probability_change.mean()),
+                                'off_changed_native_prediction_unchanged_delay': float(same_native_off_change.mean()),
+                                'other_minus_baseline_mean_abs_probability_minus_half_delay': float(np.abs(b['p'][:,delay].astype(float) - .5).mean() - np.abs(a['p'][:,delay].astype(float) - .5).mean()),
                                 'mean_abs_probability_difference_delay': float(np.abs(pd).mean()),
                                 'off_mask_disagreement_delay': float(off_diff.mean()),
                                 'mean_max_off_difference_ms': float(delta.mean()),
+                                'mean_total_off_difference_ms': float((b['total_off'] - a['total_off']).mean()),
                                 'changed_max_off_trials': int(np.count_nonzero(delta))}
     return {'structural_alignment_verified': structural,
             'observed_C_identical_all_bins': bool(c_equal), 'null_C_identical_all_bins': bool(cn_equal),
             'native_prediction_disagreement_delay': float(np.mean(all_native_diff)),
+            'probability_changed_native_prediction_unchanged_delay': float(np.mean(probability_changed_native_same)),
+            'off_changed_native_prediction_unchanged_delay': float(np.mean(off_changed_native_same)),
+            'probability_change_tolerance': PROBABILITY_CHANGE_TOLERANCE,
+            'native_prediction_transition_counts_delay': native_transitions.tolist(),
+            'probability_threshold_transition_counts_delay': probability_transitions.tolist(),
+            'transition_matrix_definition': 'Rows baseline label, columns other label; order [0,1]. Probability label1 includes p=0.5.',
             'probability_mean_abs_difference_delay': float(np.abs(p_deltas).mean()),
             'off_mask_disagreement_delay': float(np.mean(all_off_diff)),
             'max_off_changed_trial_count': int(np.count_nonzero(max_deltas)),
@@ -255,11 +402,12 @@ def compare(base, other, a_summary, b_summary):
             'per_session': per_session}
 
 
-def compare_contrast(baseline, other, expected, label, runs, datasets):
+def compare_contrast(baseline, other, expected, label, runs, datasets, identities=None):
     a, b = runs[baseline], runs[other]
     difference = config_differences(a['scientific_config'], b['scientific_config'])
     assert set(difference) == expected, (baseline, other, difference)
     assert a['state_config'] == b['state_config'], (baseline, other, 'state methods differ')
+    assert a['selection_scientific_config'] == b['selection_scientific_config'], (baseline, other, 'selection settings differ')
     result = compare(datasets[baseline], datasets[other], a, b)
     result.update({
         'contrast': label,
@@ -268,7 +416,10 @@ def compare_contrast(baseline, other, expected, label, runs, datasets):
             {k: v for k, v in a['config'].items() if k not in NON_SCIENTIFIC_SETTINGS},
             {k: v for k, v in b['config'].items() if k not in NON_SCIENTIFIC_SETTINGS}),
         'state_config_identical': True,
+        'selection_config_identical': True,
     })
+    if identities is not None:
+        result['paired_session_equal'] = session_contrast_inference(result['per_session'], identities)
     return result
 
 
@@ -327,9 +478,23 @@ def prior_experiments(previous, recorded):
 
 
 def main():
-    evidence = {'analysis_date':'2026-09-29','population':'preferred-cue test trials only; all labels = 1',
+    from scripts.next.decoding_provenance import _runtime_versions
+    from scripts.next.decoding_signature import scientific_source_digest
+    generator_hash = digest(Path(__file__))
+    scientific_hash = scientific_source_digest()
+    state_source_hashes = {str(path.relative_to(ROOT)): digest(path) for path in [
+        ROOT / 'scripts/next/validate_state_confidence.py', ROOT / 'scripts/next/on_off_states.py']}
+    evidence = {'analysis_date':'2026-09-30','population':'preferred-cue test trials only; all labels = 1',
                 'delay_bin_starts_ms':[500,1400], 'delay_bin_count':91,
-                'aggregation':'each trial-bin equally weighted; descriptive paired comparisons, not independent-bin tests',
+                'aggregation':'Historical pooled metrics retain equal trial-bin weighting. Additional paired contrasts first average within session, then weight each session equally; descriptive session bootstrap, not independent-bin inference.',
+                'limitations': ['Cached observed test trials contain only preferred-cue labels (=1): neither two-class discrimination nor calibration validity can be established from these scores alone.',
+                                'All runs reuse full-session cell screening and preferred-cue selection; reported cache scores are conditional, not independent validation of the entire decoder procedure.',
+                                'Only three user-confirmed monkeys; session-resampling intervals are descriptive and do not establish animal-population uncertainty.',
+                                'All six runs use 100 independently shuffled labels per time bin. Longer/shorter OFF durations do not validate the temporal null or biological interpretation.',
+                                'Historical delay summaries retain bin starts 500 through 1400 inclusive (91 bins); the final 50 ms window extends beyond the 1400 ms delay boundary.',
+                                'C=.01 was motivated by earlier analyses of this cohort. Run006 is a controlled procedure comparison, not an untouched confirmatory data set.'],
+                'prediction_definitions': {'native': 'cached estimator model.predict label; this includes calibration when enabled, not the uncalibrated base decision', 'probability_threshold': 'preferred-cue probability >=0.5, including ties', 'unchanged_native_probability_changed': f'fraction of all delay trial-bins with equal native labels and absolute probability change >{PROBABILITY_CHANGE_TOLERANCE}'},
+                'generator': {'path': str(Path(__file__).resolve().relative_to(ROOT)), 'sha256': generator_hash},
                 'histogram_edges':HIST_EDGES.tolist(),'runs':{},'comparisons':{}}
     datasets = {}
     for run in RUNS:
@@ -344,25 +509,46 @@ def main():
         gc.collect()
         print(run, json.dumps({'brier':summary['aggregate']['observed_delay']['brier'],
                               'mean_max_off_ms':summary['aggregate']['max_off']['mean']}), flush=True)
+    identities = animal_mapping(datasets[RUNS[0]])
+    mapping_hash = digest(ANIMAL_MAP_PATH)
+    evidence['animal_mapping'] = {'path': str(ANIMAL_MAP_PATH.relative_to(ROOT)), 'sha256': mapping_hash,
+                                  'n_monkeys': len(set(identities.values())), 'session_counts': dict(Counter(identities.values()))}
     for baseline, other, expected, label in CONTRASTS:
         evidence['comparisons'][other+'_vs_'+baseline] = compare_contrast(
-            baseline, other, expected, label, evidence['runs'], datasets)
+            baseline, other, expected, label, evidence['runs'], datasets, identities)
+    evidence['comparisons']['next_run_006_vs_next_run_005']['matching_C_anchor'] = matching_c_anchor(
+        datasets['next_run_005'], datasets['next_run_006'])
+    evidence['comparisons']['next_run_006_vs_next_run_005']['verified_current_provenance'] = {
+        'scientific_source_digest': scientific_hash, 'runtime_packages': _runtime_versions(),
+        'current_primary_checkpoint_pairs_verified': sum(len(evidence['runs'][run]['current_primary_checkpoint_verification'])
+                                                          for run in ['next_run_005', 'next_run_006']),
+        'detail_location': 'runs.next_run_005/006.current_primary_checkpoint_verification',
+        'current_off_masks_and_durations_reconstructed': True, 'state_reconstruction_source_hashes': state_source_hashes,
+        'same_recorded_raw_inputs_verified': all(
+            evidence['runs']['next_run_005']['current_primary_checkpoint_verification'][session]['source_hashes'][f'data/nature/{session}.mat'] ==
+            evidence['runs']['next_run_006']['current_primary_checkpoint_verification'][session]['source_hashes'][f'data/nature/{session}.mat']
+            for session in identities)}
+    assert evidence['comparisons']['next_run_006_vs_next_run_005']['verified_current_provenance']['same_recorded_raw_inputs_verified']
     evidence['calibration_C_factorial_effects'] = calibration_c_effects(evidence['runs'])
     previous=ROOT/'cache/comparisons/run_037_vs_next_001_221024'
     recorded = json.loads(EVIDENCE_PATH.read_text()).get('prior_experiments', {}) if EVIDENCE_PATH.exists() else {}
     evidence['prior_experiments'] = prior_experiments(previous, recorded)
     # Preserve only aggregated evidence in tracked documentation; raw caches stay local.
+    assert digest(ANIMAL_MAP_PATH) == mapping_hash, 'Animal mapping changed while reading'
+    assert digest(Path(__file__)) == generator_hash, 'Comparison script changed while reading'
+    assert scientific_source_digest() == scientific_hash, 'Scientific decoder source changed while reading'
+    assert all(digest(ROOT / path) == value for path, value in state_source_hashes.items()), 'State reconstruction source changed while reading'
     EVIDENCE_PATH.write_text(json.dumps(evidence,indent=2)+'\n')
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from scripts.next.figure_exports import save_figure
     plt.rcParams.update({'font.size':10,'axes.spines.top':False,'axes.spines.right':False})
-    fig,axes=plt.subplots(3,2,figsize=(13,13),layout='constrained')
-    colors=['#267b9a','#d67b43','#735aa8','#b49529','#248656']
+    fig,axes=plt.subplots(4,2,figsize=(13,16),layout='constrained')
+    colors=['#267b9a','#d67b43','#735aa8','#b49529','#248656','#b94c73']
     labels=['001: downsampled, calibrated, C search', '002: downsampled, uncalibrated, C search',
             '003: downsampled, calibrated, C = 1', '004: downsampled, uncalibrated, C = 1',
-            '005: weighted, calibrated, C search']
+            '005: weighted, calibrated, C search', '006: weighted, calibrated, C = 0.01']
     for run,color,label in zip(RUNS,colors,labels):
         agg=evidence['runs'][run]['aggregate'];hist=np.asarray(agg['null_hist_delay'],dtype=float)
         axes[0,0].stairs(hist/hist.sum()/.02,HIST_EDGES,color=color,label=label,lw=1.8)
@@ -395,14 +581,27 @@ def main():
     scatter(axes[2,0], [(RUNS[0],RUNS[4],colors[4],'o','001 vs 005')],
             'Downsampled Brier','All-trial weighted Brier','E  Training balance across 25 sessions',
             'Below line favors class weighting')
+    scatter(axes[2,1], [(RUNS[4],RUNS[5],colors[5],'o','005 vs 006')],
+            'Weighted C-search Brier','Weighted fixed C = 0.01 Brier','F  Fixed C=.01 versus C search',
+            'Below line favors fixed C=.01')
     hours=[evidence['runs'][run]['decode_wall_seconds']/3600 for run in RUNS]
-    axes[2,1].barh([run[-3:] for run in RUNS],hours,color=colors)
-    axes[2,1].invert_yaxis()
-    for i,hours_i in enumerate(hours): axes[2,1].text(hours_i+.2,i,f'{hours_i:.2f} h',va='center',fontsize=9)
-    axes[2,1].set(xlabel='Decoder-stage wall time (hours; 10 workers)',xlim=(0,max(hours)*1.2),
-                  title='F  Actual fitting invocations')
+    axes[3,1].barh([run[-3:] for run in RUNS],hours,color=colors)
+    axes[3,1].invert_yaxis()
+    for i,hours_i in enumerate(hours): axes[3,1].text(hours_i+.2,i,f'{hours_i:.2f} h',va='center',fontsize=9)
+    axes[3,1].set(xlabel='Decoder-stage wall time (hours; 10 workers)',xlim=(0,max(hours)*1.2),
+                  title='H  Actual fitting invocations')
+    contrast=evidence['comparisons']['next_run_006_vs_next_run_005']['per_session']
+    monkey_colors={'A':'#267b9a','H':'#248656','J':'#b94c73'}
+    for i,animal in enumerate(sorted(monkey_colors)):
+        values=[row['other_minus_baseline_brier_delay'] for session,row in contrast.items() if identities[session]==animal]
+        offsets=np.linspace(-.16,.16,len(values))
+        axes[3,0].scatter(i+offsets,values,color=monkey_colors[animal],s=27,alpha=.8)
+        axes[3,0].plot([i-.23,i+.23],[np.mean(values)]*2,color=monkey_colors[animal],lw=3)
+    axes[3,0].axhline(0,color='gray',ls='--',lw=1)
+    axes[3,0].set(xticks=range(3),xticklabels=['A (10 sessions)','H (8)','J (7)'],
+                  ylabel='Brier difference: fixed C=.01 minus search',title='G  Paired directions within each monkey')
     fig.suptitle('Completed-run evidence · 25 aligned sessions · delay-bin starts 500–1400 ms',fontsize=13)
-    fig.supxlabel('Panels C–E: one point per session. Observed scores use preferred-cue test trials only.\nAll five runs use 100 independent-per-bin label shuffles. Runtime is not a controlled hardware/load benchmark.',fontsize=9)
+    fig.supxlabel('Panels C–G: one point per session; bars in G are monkey means. Observed scores use preferred-cue test trials only.\nAll six runs use 100 independent-per-bin label shuffles. Runtime is not a controlled hardware/load benchmark.',fontsize=9)
     FIGURE_PATH.parent.mkdir(exist_ok=True)
     save_figure(fig,FIGURE_PATH,dpi=160);plt.close(fig)
     print('Wrote documentation evidence and figure; source caches unchanged.',flush=True)

@@ -19,7 +19,10 @@ evidence and limits, including uncertainty in the preferred-cell-specific
 maximum-OFF coefficient. Following those tests and the
 [regularization-path study](regularization-confidence.md),
 the default template adopted fixed C=0.01 with C search disabled on 2026-09-30.
-The historical evidence retains its original configurations; this choice is
+The completed `006`/`005` comparison supports this choice on preferred-cue
+probability scores. The [consolidated recommendation](statistical-choices.md#consolidated-recommendation)
+separates decoder selection from state validity and M1 inference. Historical
+evidence retains its original configurations; this choice is
 not a claim of a universal optimum or a choice based on M1 significance.
 
 The default template command runs the first five stages; add `--stages all` to include

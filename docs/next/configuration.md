@@ -526,8 +526,9 @@ balanced class weights plus five-fold sigmoid calibration retained. Smaller C
 means stronger L2 regularization. The [two-class validation](decoder-state-robustness.md)
 and [regularization-path study](regularization-confidence.md) motivated this
 2026-09-30 default change through probability scores, independently of OFF duration
-or M1 significance. The comparisons use the existing cohort and do not establish
-a universal optimum.
+or M1 significance. Completed `006` versus `005` now supports the fixed-C
+choice across all 25 sessions; see the [consolidated recommendation](statistical-choices.md#consolidated-recommendation).
+The comparisons use the existing cohort and do not establish a universal optimum.
 
 | Configuration | Training balance | C policy |
 | --- | --- | --- |
@@ -616,7 +617,7 @@ the current labels. Both null time-structure policies support every balance mode
 No held-out trial activity participates in these steps. Class weighting removes
 random trial omission, but finite-sample influence, CV randomness, and null Monte
 Carlo variation remain. See [Statistical choices](statistical-choices.md) for the
-five-run production comparison, the earlier focal seed experiment, and their
+six-run production comparison, the earlier focal seed experiment, and their
 limits. The weighted production run has only one fitting seed; it does not
 establish seed stability across sessions.
 The [robustness follow-up](decoder-state-robustness.md) supplies a separate

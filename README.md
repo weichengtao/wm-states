@@ -58,24 +58,23 @@ explicitly select the weighted, fixed-C policy. Bare script defaults retain
 downsampling and fixed C=1 for compatibility.
 
 The [statistical choices comparison](docs/next/statistical-choices.md) covers
-five completed historical runs, including weighted C-search run `next_run_005`.
-Weighting modestly improves pooled preferred-cue probability scores, with mixed
-effects across sessions;
-calibration and C selection also materially affect the fitted nulls and state
-durations. Shorter OFF states alone do not indicate a better estimator.
-The [robustness follow-up](docs/next/decoder-state-robustness.md) adds two-class
-held-out decoder validation, null sensitivity, and M1 prediction in held-out
-sessions. It supports weighting/calibration and the fixed C=0.01 choice, and
-separates joint count prediction from the less certain preferred-cell-specific
-maximum-OFF effect.
-Count prediction also overlaps strongly with measured decoder quality; it does
-not by itself establish a change in biological state dynamics.
-The [smaller-C follow-up](docs/next/regularization-confidence.md) tests values
-down to 10⁻¹⁰. C=0.01's gain is not explained by uniform confidence shrinkage;
-C=0.001 has no consistent advantage, and extremely small C can cause numerical
-calibration collapse. The current default adopts C=0.01 based on these
-probability-score comparisons, which remain exploratory evidence on the same
-cohort and do not establish a universal optimum. Historical run `005` still uses C search.
+six completed runs. Fixed-C `next_run_006` improves preferred-cue Brier and log
+loss over weighted C-search `next_run_005` in all 25 sessions; pooled losses
+improve about 1.06% and 1.08%. Recorded decoder time falls from 19.79 to 7.26
+hours on ten workers, although machine load was not controlled. Observed
+confidence moves slightly farther from 0.5, not uniformly toward chance.
+These production scores use preferred-cue trials only.
+
+The [two-class robustness study](docs/next/decoder-state-robustness.md) and
+[smaller-C study](docs/next/regularization-confidence.md) provide broader
+probability-quality support for weighting, calibration, and C=0.01. C=0.001
+has no consistent advantage; extremely small C can cause numerical calibration
+collapse. The [consolidated recommendation](docs/next/statistical-choices.md#consolidated-recommendation)
+keeps observed/null procedures matched, prespecifies seeds, and separates
+probability quality from OFF-state validity and cell-count prediction.
+Shorter OFF states or stronger M1 results do not validate a decoder. The studies
+reuse the same recordings and do not establish a universal optimum or a causal
+change in biological state dynamics.
 
 Set the null count in `decode.n_decode_shuffle` in the JSON preset. The default
 uses 100; the smoke preset uses 3. Use `--dry-run` to inspect resolved settings

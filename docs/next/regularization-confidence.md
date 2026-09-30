@@ -146,7 +146,11 @@ C=0.001 has no robust advantage. This does not establish a universal optimum
 or validate the historical search scoring rule. The comparisons are exploratory
 on the existing cohort. Evaluate future selection rules on fresh holdouts, and
 regenerate observed and matched null estimates together before interpreting
-state outcomes under the new default. Historical run `005` remains searched-C.
+state outcomes under the new default. The [completed production comparison](statistical-choices.md#weighted-fixed-c001-next_run_005-versus-next_run_006)
+now verifies `006` against searched-C `005`: both preferred-cue losses improve
+in every session, and confidence moves slightly farther from 0.5. These runs
+reuse the same recordings; they are not independent validation of this choice.
+See the [consolidated recommendation](statistical-choices.md#consolidated-recommendation).
 
 ## Why very small C need not give calibrated probabilities of 50%
 

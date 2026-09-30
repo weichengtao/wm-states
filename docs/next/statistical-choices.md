@@ -10,28 +10,31 @@ by themselves, evidence of a better estimator.**
 adds two-class outer validation, session-level M1 prediction, and sensitivity
 analyses. Weighting and calibration gain stronger support for probability
 estimation. The C conclusion needs qualification: weighted calibrated fixed
-C=0.01 outperforms the historical accuracy-based search in that validation. The
-production comparisons below remain a dated record; they do not establish that
-search is better than every fixed C or that stronger M1 performance validates
-a decoder choice.
-The [smaller-C study](regularization-confidence.md) further checks C=0.01: uniform probability shrinkage cannot explain its advantage,
-and C=0.001 does not improve consistently across validation panels.
+C=0.01 outperforms the historical accuracy-based search in that validation.
+The updated production comparison now tests this choice directly in `006`
+versus `005`; stronger M1 performance is still not a criterion for choosing
+a decoder.
+The [smaller-C study](regularization-confidence.md) further checks C=0.01:
+uniform probability shrinkage cannot explain its advantage, and C=0.001 does
+not improve consistently across validation panels.
 
-The evidence snapshot is dated **2026-09-29**. It covers the completed runs
-`next_run_001` through `next_run_005`, plus the focal experiments described below.
+The evidence snapshot is updated **2026-09-30**. It covers the completed runs
+`next_run_001` through `next_run_006`, plus the focal experiments described below.
 Runs `001`–`004` test the four combinations of calibration and C selection
-under downsampling; `005` tests the complete weighted procedure against `001`.
+under downsampling; `005` tests the complete weighted procedure against `001`;
+`006` tests weighted, calibrated fixed C=0.01 against weighted C search in `005`.
 No analysis configuration or production cache was modified to prepare it.
 
 **Current default (2026-09-30):** `configs/next/default_pipeline.json` implements
 all-trial balanced class weights, **fixed C=0.01 with grid search disabled**,
 and five-fold sigmoid calibration. It is the dashboard's default template.
-This follows the probability-score comparisons in the two-class and smaller-C follow-ups;
-historical weighted run `005` still uses C search. Choose
+This follows the two-class and smaller-C probability-score studies and is
+now supported by completed fixed-C run `006`; weighted run `005` remains
+the C-search reference. Choose
 `decode.training_balance` to use balanced class weights, historical balanced
 trial subsampling, or no balancing. Weighting applies within every classifier
 fit and to pooled probability calibration, including null fits. The completed
-weighted run now provides evidence across 25 sessions, alongside the earlier
+weighted runs now provide evidence across 25 sessions, alongside the earlier
 single-session experiment. See
 [training-class balance](configuration.md#training-class-balance) for exact
 settings, SVM handling, and migration.
@@ -39,8 +42,8 @@ settings, SVM handling, and migration.
 | Decision | Current policy | Current evidence |
 | --- | --- | --- |
 | Training-class balance | Use all eligible training trials with balanced class weights; balance calibration for the same cue prior | `005` vs `001`: modest pooled probability-score gains, lower Brier in 16/25 sessions; improved seed stability in the earlier focal experiment |
-| Confidence calibration | Retain training-only sigmoid calibration for observed and null fits | Better preferred-cue Brier and log loss in all 25 sessions at both C settings; much less extreme null probabilities |
-| Regularization | Fixed C=0.01, with C search disabled; retain weights and sigmoid calibration | The historical search beats C=1 here; later weighted two-class and regularization-path validation favor fixed C=0.01, without establishing a universal optimum |
+| Confidence calibration | Retain training-only sigmoid calibration for observed and null fits | Downsampled production ablations improve both losses in all 25 sessions with search and with C=1; weighted two-class validation also supports calibration |
+| Regularization | Fixed C=0.01, with C search disabled; retain weights and sigmoid calibration | `006` improves both preferred-cue losses over `005` in all 25 sessions; two-class validation agrees. Decoder wall time falls from 19.79 to 7.26 hours. This is not a universal optimum |
 
 The completed-run comparisons align **25 sessions, 1,590 preferred-cue test
 trials, and 161 time bins per trial**. The delay analysis uses the 91 bin starts
@@ -50,12 +53,15 @@ from 500 through 1400 ms, inclusive: 144,690 observed trial-bin predictions and
 910 ms under the implemented convention.
 
 Session cues, neuron IDs, test-trial IDs/order, and time grids match across all
-five runs. Cached scientific decoder settings differ only as shown below after
-translating the historical balancing boolean to its named mode. All five use
+six runs. Cached scientific decoder settings differ only as shown below after
+translating the historical balancing boolean to its named mode. All six use
 seed 42, stationary cells, and 100
 independently permuted training-label null fits per trial/bin.
 State thresholds and cluster rules match as well. This checks recorded settings
-and cached populations; the manifests do not record a software-version match.
+and cached populations. Older manifests alone do not establish software-version
+parity. For the new `005`/`006` contrast, all 50 native decoder fingerprints
+verify against the same current scientific source, recording/selection inputs,
+and numerical package versions, without a legacy-trust override.
 
 | Run | Training-class balance | Sigmoid calibration | C selection |
 | --- | --- | --- | --- |
@@ -64,6 +70,7 @@ and cached populations; the manifests do not record a software-version match.
 | `next_run_003` | Random downsampling | Enabled, five folds | Fixed C=1 |
 | `next_run_004` | Random downsampling | Disabled | Fixed C=1 |
 | `next_run_005` | All trials + balanced class weights | Enabled, five folds, balanced calibration weights | Search over 1, 0.1, 0.01 |
+| `next_run_006` | All trials + balanced class weights | Enabled, five folds, balanced calibration weights | Fixed C=0.01 |
 
 Reported run-comparison scores weight each delay trial-bin equally. They are
 **preferred-cue-only scores**, not balanced two-class accuracy or a complete
@@ -232,7 +239,7 @@ For session 221024, trial 136, `005` reproduces the weighted maximum of
 bin is therefore no longer OFF. Its z score is 1.611, below the ON threshold
 1.645: breaking an OFF interval does not require becoming ON.
 
-For context, the same focal quantities across all five completed runs are:
+For context, the same focal quantities across all six completed runs are:
 
 | Run | Maximum OFF | Total OFF | Confidence at 830 ms | Own-null OFF cutoff at 830 ms |
 | --- | ---: | ---: | ---: | ---: |
@@ -241,6 +248,7 @@ For context, the same focal quantities across all five completed runs are:
 | `003` | 240 ms | 440 ms | 0.5416 | 0.5760 |
 | `004` | 250 ms | 530 ms | 0.5866 | 0.7461 |
 | `005` | 130 ms | 420 ms | 0.5854 | 0.5426 |
+| `006` | 130 ms | 420 ms | 0.5854 | 0.5471 |
 
 Each production procedure has only **one fitting seed**. `005` therefore does
 not measure seed-to-seed variability across sessions; that evidence still
@@ -466,15 +474,118 @@ not independent-bin significance tests. Neither setting compensates fully for
 disabling the other in these runs: `001`, with both enabled, has the best
 probability scores among the four downsampled configurations.
 
-In weighted `005`, C search selects 1, 0.1, and 0.01 in **15.92%, 24.73%, and
-59.35%** of observed delay fits, respectively. Stronger regularization is still
-frequently selected, but `005` alone does not measure its advantage over fixed
-C or the advantage of calibration within the weighted procedure. Full production
-weighted ablations were not available for this five-run snapshot. The
-[follow-up two-class validation](decoder-state-robustness.md#c-search-and-averaging-need-a-more-precise-conclusion)
-now tests those choices in held-out trial folds and favors fixed C=0.01 over
-the historical search on probability scores; it does not regenerate the full
-production state outcomes for that candidate.
+### Weighted fixed C=0.01: `next_run_005` versus `next_run_006`
+
+This is the direct production test of the current default. Both runs retain
+all training trials, use balanced classifier/calibration weights and sigmoid
+calibration, and regenerate all 100 null fits per trial/bin. The only recorded
+scientific-setting changes are `classifier_c: 1 → 0.01` and
+`grid_search_for_c: true → false`; the scalar C=1 was overridden by search in
+`005`. All 25 session populations, cues, trial IDs, time grids, and state
+settings match. All observed and null C values in `006` are 0.01.
+
+The current scientific decoder digest and runtime/input provenance verify for
+all 50 cached session results. Where `005` already selected C=0.01, `006`
+reproduces **139,714 observed and 10,072,312 null probabilities bit for bit**
+over the full 161-bin grids. This directly checks that matched fits share the
+same fitting and randomization behavior; the changed C policy is the operative
+procedural difference.
+
+| Delay-period metric | `005`: C search | `006`: fixed C=0.01 |
+| --- | ---: | ---: |
+| Preferred-cue-only Brier score | 0.20762 | 0.20542 |
+| Preferred-cue-only log loss | 0.59567 | 0.58926 |
+| Preferred-cue accuracy at p ≥0.5 | 64.51% | 64.79% |
+| Mean absolute distance of observed probability from 0.5 | 0.17778 | 0.18163 |
+| Mean per-trial/bin null probability SD | 0.05775 | 0.05939 |
+| Mean maximum OFF duration per trial | 135.7 ms | 144.5 ms |
+| Mean total OFF duration per trial | 415.8 ms | 410.2 ms |
+
+Both probability losses improve in **25/25 sessions**, and their equal-session
+means improve within **each of monkeys A, H, and J**. Pooled Brier improves
+**1.06%** and log loss **1.08%**. The gain is modest but consistent, and agrees
+with the earlier two-class validation: primary Brier **0.20175 → 0.19880** and
+fixed-cue/all-cell Brier **0.22041 → 0.21897**. Production accuracy remains a
+preferred-cue hit rate; its 0.28-percentage-point increase is not a claim about
+balanced two-class accuracy.
+
+The equal-session Brier change (`006 − 005`) is **−0.002346**, with a
+descriptive 95% session-bootstrap interval **[−0.002922, −0.001792]**; log-loss
+change is **−0.006911 [−0.008705, −0.005272]**. These intervals resample 25
+sessions, not individual bins, and are nominal because sessions within only
+three monkeys can be dependent. They do not quantify uncertainty over a
+population of monkeys. Mean preferred-cue probability rises in every session;
+such a shift can improve these one-class scores without improving
+balanced discrimination or calibration. The earlier two-class results are
+therefore essential complementary evidence.
+
+The confidence change is **not uniform shrinkage toward 0.5**: observed mean
+absolute distance from 0.5 increases. Null SD also increases slightly rather
+than collapsing. The earlier [regularization-path study](regularization-confidence.md)
+provides the stronger two-class discrimination and shrinkage-control evidence;
+this production comparison adds full-session confirmation of the direction.
+
+Fixed C=0.01 is therefore preferable to the tested balanced-accuracy C search
+for the current probability-estimation goal and cohort. This does not establish
+superiority to a search designed and validated for probability loss, nor a
+universal optimum. The choice was motivated by earlier analyses of these same
+recordings, so `006` is a new fitting run, not an independent confirmatory data
+set. Both production runs use one fitting seed. A weighted fixed-C calibration
+ablation is also absent: `006` alone does not isolate the benefit of calibration
+at C=0.01.
+
+### Downstream OFF and M1 outcomes
+
+Improved probability scores do **not** produce uniformly shorter OFF states.
+With fixed C=0.01, mean maximum OFF grows by **8.8 ms** and is longer in
+22/25 session means, while mean total OFF falls by **5.6 ms** and is shorter
+in 20/25 session means. The focal session-221024 trial 136 retains a **130 ms
+maximum and 420 ms total** in both runs. The observed probabilities, null
+scale, and nonlinear cluster filtering jointly determine these outcomes;
+this comparison does not isolate a single mechanism for the duration changes.
+
+The [focused M1 audit](../validation/off-m1-run-comparison.json) aligns the
+**1,565 prepared rows**, predictors, and 50 stored within-session holdouts
+between `005` and `006`. Each repeat holds out 20% of trials within already-seen
+sessions. All 50 fits of each M0/M1 model, per outcome and run, converge and
+are valid.
+M1 adds preferred-selective and all-other-selective cell counts to M0; these
+predictors vary between sessions, not between trials in the same session.
+
+| M1 predictive quantity | `005`: C search | `006`: fixed C=0.01 |
+| --- | ---: | ---: |
+| Fixed-effect trial-holdout R², maximum OFF | 0.14695 | 0.14301 |
+| Fixed-effect trial-holdout R², total OFF | 0.25453 | 0.24091 |
+| Fixed-effect SSE reduction versus own M0, maximum OFF | 14.95% | 14.63% |
+| Fixed-effect SSE reduction versus own M0, total OFF | 25.72% | 24.39% |
+| Held-out-session R², maximum OFF | 0.45945 | 0.40893 |
+| Held-out-session R², total OFF | 0.61440 | 0.61678 |
+| Held-out-animal R², maximum OFF | 0.52269 | 0.49082 |
+| Held-out-animal R², total OFF | 0.62831 | 0.62813 |
+
+Trial-holdout R² is the mean of 50 repeat R² values. The SSE reductions sum
+`n_test × RMSE²` across repeats before taking the M1/M0 ratio; they are not an
+average of percentage gains. The table uses fixed-effect predictions for trial
+holdouts and gives sessions equal weight for animal-holdout scoring.
+Conditional predictions also include fitted intercepts for training sessions; adding counts reduces their
+SSE by only **0.045% → 0.064%** for maximum OFF and **0.075% → 0.082%** for
+total OFF. Session-level validation instead fits an equal-session OLS model
+with the two counts and compares each held-out prediction with a
+training-session-mean baseline; animal holdouts exclude all sessions from the
+test monkey. These are distinct prediction targets. The 50 trial holdouts
+reuse recordings and are not 50 independent replications.
+
+There is **no general M1 performance improvement**. Pooled held-out count
+prediction remains useful relative to each run's own baseline, but maximum-OFF
+generalization weakens, and total-OFF results are mixed. Outcome distributions themselves
+change between runs, so cross-run RMSE or R² is not a comparison against a
+common biological target. The preferred-selective maximum-OFF effect remains
+uncertain: the `006` equal-session bootstrap interval for that coefficient is
+**[−5.899, 1.465] ms/cell**. This is a pointwise 95% session-pairs interval
+conditional on the sampled animals; it is not animal-population uncertainty.
+Three monkeys limit biological generalization.
+This is compatible with retaining C=0.01 for its better probability estimates
+while declining to claim stronger biological evidence from its M1 result.
 
 ### Runtime and the practical decision
 
@@ -488,6 +599,7 @@ configured for ten workers:
 | Downsampled, fixed C=1 + sigmoid calibration (`003`) | 6.37 hours |
 | Downsampled, fixed C=1 without calibration (`004`) | 0.95 hours |
 | All-trial weights, C search + sigmoid calibration (`005`) | 19.79 hours |
+| All-trial weights, fixed C=0.01 + sigmoid calibration (`006`) | 7.26 hours |
 
 These are observed invocation times, not a controlled hardware/load benchmark.
 In particular, `001`'s latest manifest records a 21.8-second **plot-only**
@@ -496,7 +608,10 @@ fitting manifest is identified in the evidence snapshot.
 The weighted run took **26.3% longer** than the corresponding downsampled run,
 consistent with fitting more training trials, but the timing comparison does
 not isolate the cause or predict runtime on other machines. `004` is much
-faster and has the poorest probability scores of these five runs.
+faster and has the poorest probability scores of these six runs.
+Fixed-C `006` uses **63.3% less decoder wall time** than `005` (a **2.73×**
+observed speedup), a reduction of 12.53 hours, while improving the available
+probability scores. Both ran with ten workers; hardware/load was not controlled.
 
 **Historical decision from the five-run snapshot:** retain C search as the
 reference because it improves probability scores over fixed C=1. That comparison
@@ -509,10 +624,10 @@ C=0.01 with search disabled, and sigmoid calibration. The subsequent
 [two-class validation](decoder-state-robustness.md) and
 [regularization-path study](regularization-confidence.md) motivated this
 choice through held-out probability scores, independently of target OFF duration
-or M1 significance. C=0.001 has no consistent advantage across the two panels.
-These are exploratory comparisons on the existing cohort, not evidence of a
-universal optimum; run `005` and all figures below retain their historical
-searched-C configuration.
+or M1 significance. Completed production run `006` now supports that choice.
+C=0.001 has no consistent advantage across the two validation panels. These
+remain exploratory comparisons on the existing cohort, not evidence of a
+universal optimum; run `005` retains its searched-C configuration.
 
 A revised selection rule, such as probability-loss-based C search, should be
 evaluated on fresh holdouts with calibration inside training folds. Every null
@@ -521,23 +636,80 @@ or a complete new search when search is enabled. Regenerate observed, null,
 and downstream outputs together when changing C policy. Do not choose C, its
 scoring rule, or a seed by inspecting the target's state duration.
 
+## Consolidated recommendation
+
+Use the current default template for the next planned analysis: **all-trial
+balanced class weights, fixed C=0.01, C search disabled, and five-fold sigmoid
+calibration**. This recommendation concerns probability estimation and
+computation. It does not claim that the shortest OFF intervals, largest M1
+coefficients, or smallest p values identify the best decoder.
+
+- **Retain information and define the probability target.** Exclude the test
+  trial before fitting, retain the other eligible training trials, and recompute
+  classifier weights within each training fold. Balance pooled calibration
+  weights as well. This targets equal total cue weight; it is not an estimate of
+  a population's natural cue prevalence. Keep scaling and calibration inside
+  the training data.
+- **Keep observed and null procedures matched.** Use the same training-trial
+  identities for the observed estimate and its null fits. Refit scaling,
+  classifier, and calibration after each label permutation with the same fixed
+  C. Regenerate observed, null, evaluation, and state outputs together whenever
+  the fitting procedure changes.
+- **Prespecify seeds instead of searching for a favorable state.** Weighting
+  removes random trial omission, but calibration folds and the finite null bank
+  still vary with the seed. The production comparisons use one seed and cannot
+  establish session-wide seed stability. If uncertainty in a particular
+  maximum matters, repeat complete matched fits under predefined seeds and
+  report the duration distribution. Probability averaging across seeds remains
+  an optional candidate: validate the complete ensemble and reproduce that
+  same procedure for its nulls before using it for states. Do not tune a seed
+  or average observed confidence against an old single-fit null bank.
+- **Evaluate probability quality on both classes.** Use held-out Brier/log loss,
+  discrimination, and reliability with a stated cue prior and session weighting.
+  Production preferred-cue-only scores are useful paired diagnostics. The
+  existing two-class validation gives stronger support for the recommendation,
+  but all these comparisons reuse the same cohort. A new cohort or a properly
+  nested assessment is needed to estimate performance of the model-selection
+  decision itself. Full-session screening remains outside the production
+  trial holdouts.
+- **Treat state validity and M1 prediction as separate questions.** OFF means
+  low confidence relative to this fitted null and rule; there is no biological
+  ON/OFF ground truth here. The default independent-per-bin shuffles do not
+  preserve temporal dependence for cluster inference. Shared-time shuffles
+  address within-trial consistency but alone do not establish a joint
+  session-wide permutation test. Report sensitivity to the null bank and state
+  rule, and evaluate cell-count prediction on held-out sessions and animals.
+  Twenty-five sessions from three monkeys do not provide 25 independent
+  biological replicates.
+
+The full preset and standalone equivalents are documented under
+[decoder regularization](configuration.md#decoder-regularization). Historical
+saved runs and templates keep their recorded choices. Probability-loss-based
+C tuning, much smaller C, and seed ensembles are future alternatives requiring
+validation; none is justified solely by a more favorable OFF/M1 result.
+
 ### Evidence, reproduction, and remaining limitations
 
-![Five completed runs: null distributions, OFF durations, calibration and C contrasts, weighting, and fitting runtime](../assets/statistical-choices-comparison.png)
+![Six completed runs: null distributions, OFF durations, calibration and C contrasts, weighting, and fitting runtime](../assets/statistical-choices-comparison.png)
 
-The [evidence snapshot](../validation/statistical-choices-evidence.json) includes
+The [decoder evidence snapshot](../validation/statistical-choices-evidence.json) includes
 per-session and aggregate metrics, exact alignment checks, focal-bin values,
-selected-C counts, and six paired contrasts: `001` against `002`–`005`, `003`
-against `004`, and `002` against `004`. It checks the expected scientific-setting
+selected-C counts, and seven paired contrasts: `001` against `002`–`005`, `003`
+against `004`, `002` against `004`, and `005` against `006`. The new contrast
+also records nominal paired session-bootstrap summaries, per-monkey
+directions, probability/label transitions, and exact C=0.01 matching anchors. It checks the expected scientific-setting
 differences and identical state settings for each pair, retaining both raw
 settings and normalized balancing modes. It records the actual fitting and
 state-manifest IDs and SHA-256 hashes of those manifests and the selection,
-decoder, and state caches. It also preserves compact summaries and hashes of
+decoder, and state caches. `005`/`006` additionally verify current decoder
+provenance, matching primary caches against all 50 native checkpoints and
+current input/source/package fingerprints. It also preserves compact summaries
+and hashes of
 the earlier weighting, activity, and trial-swap experiments.
 
 The source script `scripts/next/compare_statistical_choices.py` regenerates
 the completed-run evidence and figure using the existing local environment.
-It is a reproduction utility for this dated five-run comparison, not a
+It is a reproduction utility for this dated six-run comparison, not a
 pipeline stage or a tool that automatically selects the latest run.
 Run it from the repository root:
 
@@ -545,23 +717,38 @@ Run it from the repository root:
 .venv/bin/python scripts/next/compare_statistical_choices.py
 ```
 
-It reads `cache/next_run_001` through `cache/next_run_005`
+It reads `cache/next_run_001` through `cache/next_run_006`
 sequentially, with one numerical thread and no model fitting. Optional earlier
 experiment summaries are read from
 `cache/comparisons/run_037_vs_next_001_221024/`. If those optional local reports
 are absent, their existing evidence snapshots are retained with their original
 source hashes; they are not presented as newly recomputed experiments.
-Only `docs/validation/statistical-choices-evidence.json` and
-`docs/assets/statistical-choices-comparison.png` are written. The script checks source-file hashes
+The command writes `docs/validation/statistical-choices-evidence.json` and
+`docs/assets/statistical-choices-comparison.png`. The script checks source-file hashes
 before and after each read; it does not contact the dashboard, synchronize
 dependencies, stop workers, or regenerate production stages.
+
+The separate [OFF/M1 evidence](../validation/off-m1-run-comparison.json)
+records matching prepared rows and holdout indices, cached model validity,
+M0/M1 summaries, relative predictive gains, and session/animal holdout results:
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python scripts/next/compare_off_m1_runs.py
+```
+
+It defaults to `next_run_005` and `next_run_006`, verifies source hashes, reads
+cached mixed-model results, and recomputes small session-level OLS sensitivity
+fits with 5,000 paired-session bootstrap draws. It writes only
+`docs/validation/off-m1-run-comparison.json`; it does not refit production
+decoders or mixed models. The interval summaries remain conditional on these
+25 sessions from three monkeys.
 
 For all three decisions, the remaining limitations are shared: fixed
 full-session cell selection, independently permuted null labels across time,
 preferred-cue-only production evaluation, and no biological ON/OFF ground
 truth. The earlier focal weighted experiment lacks a fully regenerated
-session-level null pool; completed `005` supplies that pool, but only for one
-production seed. The existing
+session-level null pool; completed `005` and `006` supply full pools, but both
+use only production seed 42. The existing
 [null-time-structure option](configuration.md#null-shuffle-time-structure)
 addresses within-trial permutation consistency separately; calibration, C
 search, and balanced weights do not repair that issue automatically.

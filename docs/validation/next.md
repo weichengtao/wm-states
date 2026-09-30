@@ -1,5 +1,55 @@
 # Next pipeline validation
 
+## Completed fixed-C run and consolidated recommendations — 2026-09-30
+
+The [statistical choices comparison](../next/statistical-choices.md) now includes
+`next_run_006` against weighted, calibrated C-search run `next_run_005`.
+The new run uses fixed C=0.01; all other scientific decoding and state settings,
+selected populations, trial identities, and time grids match.
+
+- All **50 decoder primary/checkpoint pairs** verify against current v2 input,
+  scientific-source, and runtime fingerprints. All fixed-C arrays equal 0.01.
+  Where the searched run already chose 0.01, **139,714 observed and 10,072,312
+  null probabilities** match bit for bit across the full grids. All 50 OFF masks
+  and maximum/total durations reconstruct exactly using the current state rule.
+- Preferred-cue Brier improves **0.207621 → 0.205422**, and log loss improves
+  **0.595668 → 0.589264**. Both losses improve in every session and their
+  equal-session means improve within each monkey. The evidence records paired
+  session-resampling intervals as descriptive, not animal-population inference.
+  Mean absolute distance from p=0.5 rises **0.177783 → 0.181634**. Production
+  labels are all preferred cue; the prior two-class study supplies complementary
+  evidence, and these same-cohort comparisons are not independent confirmation.
+- Recorded decoder time is **19.79 → 7.26 hours** with ten workers, a **63.3%**
+  reduction. Both logs show fresh fitting for all 25 sessions. Machine load was
+  not controlled, so the timing is observational.
+- Mean maximum OFF rises **135.69 → 144.45 ms**, while total OFF falls
+  **415.83 → 410.24 ms**. Trial 136 of session 221024 remains **130 ms maximum /
+  420 ms total**. Shorter OFF outcomes do not define decoder improvement.
+- The new `compare_off_m1_runs.py` audit matches all **1,565 prepared rows**,
+  predictors, and **50 stored CV splits**. Every M0/M1 fit used is converged and
+  valid. It compares cached fixed/conditional predictions against each run's
+  own M0 and recomputes session/animal holdouts. M1 has **no general performance
+  improvement**: session-held-out R² changes **0.45945 → 0.40893** for maximum
+  OFF and **0.61440 → 0.61678** for total OFF. The preferred-count maximum-OFF
+  coefficient remains uncertain. Scoring estimands, changing outcomes, and
+  only three animals are explicit limits.
+- The six-run generator preserves every previously recorded numerical value
+  for runs 001–005, adds source/provenance checks and a reviewed eight-panel
+  figure, and writes aggregated evidence under `docs/validation/`. The M1
+  utility records 31 input/source hashes. No production caches, decoder
+  implementation, or default settings change.
+- **667 Python tests** pass in **23.616 seconds**, including 12 additional
+  comparison checks. **172 dashboard tests** pass. TypeScript/Vite, formatting,
+  strict MkDocs, and `git diff --check` pass. The scientific decoder digest
+  remains `65fbff72d8d55bfbcfc15ab6ad8e6951d09688822f8133e465450a1107bc1c5b`.
+
+Reproduce the supplementary evidence without refitting production stages:
+
+```bash
+.venv/bin/python scripts/next/compare_statistical_choices.py
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python scripts/next/compare_off_m1_runs.py
+```
+
 ## Fixed-C default and numeric configuration editing — 2026-09-30
 
 The current default template adopts **fixed C=0.01 with C search disabled**,

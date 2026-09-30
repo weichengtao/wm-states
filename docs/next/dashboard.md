@@ -310,8 +310,9 @@ pipeline** fixes **Classifier C** at **0.01** and disables **Grid search for C**
 Smoke test retains C search for integration coverage; Example pipeline keeps
 historical downsampling and C search. See
 [decoder regularization](configuration.md#decoder-regularization) for the
-current choice and [statistical choices](statistical-choices.md) for the five
-historical runs, including weighted C-search run `005`. Existing saved
+current choice and [statistical choices](statistical-choices.md) for six
+completed runs, including the weighted `005` C-search versus `006` fixed-C
+comparison. Existing saved
 templates retain their prior choices; old balancing booleans are translated when
 used or imported. See [training-class balance](configuration.md#training-class-balance).
 

@@ -96,11 +96,12 @@ class StatisticalChoicesComparisonTest(unittest.TestCase):
         row = {'trial_idx': np.array([136, 150]), 'cell_idx': np.array([3, 9]),
                'times': np.array([500, 510]), 'cue': 1, 'p': np.full((2, 2), .6),
                'C': np.zeros((2, 2), dtype=np.uint8), 'C_null': np.zeros((2, 2, 3), dtype=np.uint8),
-               'max_off': np.array([100., 200.]), 'off_mask': np.ones((2, 2), dtype=bool),
+               'max_off': np.array([100., 200.]), 'total_off': np.array([200., 400.]), 'off_mask': np.ones((2, 2), dtype=bool),
                'native_prediction': np.ones((2, 2))}
         summary = {'config': {'balance_decoder_training_trials': True, 'seed': 42},
                    'scientific_config': {'training_balance': 'balanced_training_trials', 'seed': 42},
                    'state_config': {'z_threshold_off': .842},
+                   'selection_scientific_config': {'check_selectivity': True},
                    'aggregate': {'observed_delay': {'brier': .16, 'log_loss': .51}},
                    'per_session': {'s': {'observed_delay': {'brier': .16, 'log_loss': .51}}}}
         weighted = deepcopy(summary)
@@ -130,12 +131,14 @@ class StatisticalChoicesComparisonTest(unittest.TestCase):
         self.assertEqual(result['sessions_other_has_lower_preferred_only_log_loss'], 1)
 
     def test_uncontrolled_settings_or_population_differences_fail_comparison(self):
-        for field in ('seed', 'state_threshold', 'sessions', 'trial_idx', 'cell_idx', 'times', 'cue'):
+        for field in ('seed', 'state_threshold', 'selection', 'sessions', 'trial_idx', 'cell_idx', 'times', 'cue'):
             runs, datasets = self.contrast_fixture()
             if field == 'seed':
                 runs['b']['scientific_config']['seed'] = 43
             elif field == 'state_threshold':
                 runs['b']['state_config']['z_threshold_off'] = 1
+            elif field == 'selection':
+                runs['b']['selection_scientific_config']['check_selectivity'] = False
             elif field == 'sessions':
                 datasets['b']['other'] = datasets['b'].pop('s')
             elif field == 'cue':
@@ -145,11 +148,98 @@ class StatisticalChoicesComparisonTest(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(AssertionError):
                 comparison.compare_contrast('a', 'b', {'training_balance'}, 'weights', runs, datasets)
 
+    def test_sixth_run_is_a_weighted_fixed_point_01_contrast(self):
+        self.assertEqual(comparison.RUNS[-1], 'next_run_006')
+        baseline, other, expected, label = comparison.CONTRASTS[-1]
+        self.assertEqual((baseline, other), ('next_run_005', 'next_run_006'))
+        self.assertEqual(expected, {'grid_search_for_c', 'classifier_c'})
+        self.assertIn('0.01', label)
+
+    def test_session_bootstrap_and_monkey_means_preserve_the_paired_unit(self):
+        constant = comparison.paired_session_summary([-.1, -.1, -.1], repeats=200)
+        np.testing.assert_allclose(constant['session_bootstrap_95_interval'], [-.1, -.1])
+        self.assertEqual(constant['n_negative'], 3)
+        rows = {'s1': {'brier_difference': -.1}, 's2': {'brier_difference': -.3},
+                's3': {'brier_difference': .2}}
+        result = comparison.session_contrast_inference(rows, {'s1': 'A', 's2': 'A', 's3': 'H'})
+        metric = result['metrics']['brier_difference']
+        self.assertAlmostEqual(metric['mean'], -.2 / 3)
+        self.assertAlmostEqual(metric['per_monkey']['A']['mean'], -.2)
+        self.assertAlmostEqual(metric['per_monkey']['H']['mean'], .2)
+        self.assertAlmostEqual(metric['monkey_equal_mean'], 0)
+        self.assertIn('only three monkeys', result['interval_caveat'])
+        self.assertEqual(result, comparison.session_contrast_inference(rows, {'s1': 'A', 's2': 'A', 's3': 'H'}))
+        with self.assertRaises(AssertionError):
+            comparison.session_contrast_inference(rows, {'s1': 'A'})
+
+    def test_animal_mapping_requires_exact_explicit_coverage_and_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'mapping.json'
+            mapping = {'sessions': {'s1': 'A', 's2': 'H', 's3': 'J'},
+                       'expected_session_counts': {'A': 1, 'H': 1, 'J': 1}}
+            path.write_text(json.dumps(mapping))
+            self.assertEqual(comparison.animal_mapping(['s1', 's2', 's3'], path), mapping['sessions'])
+            with self.assertRaises(AssertionError):
+                comparison.animal_mapping(['s1', 's2'], path)
+            mapping['expected_session_counts']['J'] = 2
+            path.write_text(json.dumps(mapping))
+            with self.assertRaises(AssertionError):
+                comparison.animal_mapping(['s1', 's2', 's3'], path)
+
+    def test_native_unchanged_probability_changes_are_not_classification_changes(self):
+        runs, datasets = self.contrast_fixture()
+        result = comparison.compare_contrast('a', 'b', {'training_balance'}, 'weights', runs, datasets)
+        self.assertEqual(result['native_prediction_disagreement_delay'], 0)
+        self.assertEqual(result['probability_changed_native_prediction_unchanged_delay'], 1)
+        self.assertEqual(result['native_prediction_transition_counts_delay'], [[0, 0], [0, 4]])
+        datasets['b']['s']['p'][0, 0] = .4
+        result = comparison.compare_contrast('a', 'b', {'training_balance'}, 'weights', runs, datasets)
+        self.assertEqual(result['probability_threshold_transition_counts_delay'], [[0, 0], [1, 3]])
+        self.assertEqual(result['native_prediction_transition_counts_delay'], [[0, 0], [0, 4]])
+
+    def test_matching_c_anchor_checks_observed_and_null_entries_exactly(self):
+        row = {'C': np.array([[0, 2]]), 'p': np.array([[.9, .6]]),
+               'C_null': np.array([[[0, 2], [2, 0]]]), 'null': np.array([[[.1, .2], [.3, .4]]])}
+        other = deepcopy(row)
+        other['C'][:] = 2
+        other['C_null'][:] = 2
+        other['p'][0, 0] = .7
+        other['null'][0, 0, 0] = .5
+        result = comparison.matching_c_anchor({'s': row}, {'s': other})
+        self.assertEqual(result['observed_entries'], 1)
+        self.assertEqual(result['null_entries'], 2)
+        self.assertTrue(result['exact_equality_verified'])
+        for key, index in [('p', (0, 1)), ('null', (0, 1, 0))]:
+            mismatched = deepcopy(other)
+            mismatched[key][index] += 1e-8
+            with self.subTest(key=key), self.assertRaisesRegex(AssertionError, 'matched-C probabilities differ'):
+                comparison.matching_c_anchor({'s': row}, {'s': mismatched})
+
+    def test_off_reconstruction_rejects_stale_masks_and_wrong_policy(self):
+        from scripts.next.validate_state_confidence import off_mask, duration_arrays
+        observed = np.array([[.45, .55, .8]])
+        null = np.broadcast_to(np.array([.3, .4, .5, .6, .7]), (1, 3, 5)).copy()
+        times = np.array([500., 510., 520.])
+        mask, _ = off_mask(observed, null)
+        durations = duration_arrays(mask, times)
+        states = {'off_state_mask': mask,
+                  'max_off_state_duration_per_trial': durations['maximum_off_state_duration_ms'],
+                  'off_state_duration_per_trial': durations['total_off_state_duration_ms']}
+        config = {'cp_method_off': 'one_tailed', 'cc_method_off': 'one_tailed',
+                  'cc_alpha_off': .05, 'z_threshold_off': .842, 'cluster_size_threshold_off': 1}
+        self.assertTrue(comparison.verify_cached_off_state(observed, null, states, config, times)['exact_mask_and_durations_verified'])
+        with self.assertRaises(AssertionError):
+            comparison.verify_cached_off_state(observed, null, states, {**config, 'cc_alpha_off': .1}, times)
+        with self.assertRaisesRegex(AssertionError, 'mask differs'):
+            comparison.verify_cached_off_state(observed, null, {**states, 'off_state_mask': ~mask}, config, times)
+        with self.assertRaisesRegex(AssertionError, 'durations differ'):
+            comparison.verify_cached_off_state(observed, null, {**states, 'max_off_state_duration_per_trial': np.array([999.])}, config, times)
+
     def test_factorial_contrasts_keep_calibration_and_C_effects_distinct(self):
         # Hand-chosen losses: calibration helps more at fixed C; C search helps
         # more without calibration. The fifth (weighted) run is not a 2x2 cell.
         runs = {run: {'aggregate': {'observed_delay': {'brier': value, 'log_loss': 2 * value}}}
-                for run, value in zip(comparison.RUNS, (.1, .3, .2, .6, 99))}
+                for run, value in zip(comparison.RUNS, (.1, .3, .2, .6, 99, 101))}
         effects = comparison.calibration_c_effects(runs)
         expected = {'calibration_minus_none_with_C_search': -.2,
                     'calibration_minus_none_with_fixed_C': -.4,
